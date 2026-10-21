@@ -1,9 +1,5 @@
-# aasssMaster and the Havantechno studio
+# Havantechno studio
 
-Two browser-only projects in one repo, with no build step and no dependencies:
-
-- **aasssMaster**, a vertical shoot-'em-up with a hairy-butt alien theme. Every sprite is drawn in code and every sound
-  is synthesised in the browser.
 - **The Havantechno studio**, a Web Audio page that recreates a Guidance-style electro track (126 BPM, key B) one element
   at a time, with a sequencer, a processor rack and WAV export.
 
