@@ -122,3 +122,7 @@ A11 reviewed head 6ab1499 (before A1's and A3's wave-2 edits) and wrote log-A11.
 - A5: defer following the playhead while a pointer gesture is active in the view (A11 saw the view pulled away mid-drag). The editor-extras finding is already resolved by A5's wave-2 hand-back, which A11 reviewed before.
 - A6: window retarget must update the window's device id in main.js (opening the old device focuses the wrong window, traced not run); BPM field applies on change or Enter, not every keystroke; child windows listen for document events instead of the 0.75 s poll (minor, may wait). Window Editor tab: covered by A3's window density change plus the rule below.
 - A3: `face.resize(w, h)` is the whole face area; the hero takes at most about 45 % of the height and the controls lay out below it and scroll; a knob's double-click home is the song's value, not the spec default; mute toggles do not call `hold`.
+
+## 2026-10-23 23:52:51 UTC — A5 deferral verified
+
+`node tools/step-view-check.js` here: OK: 72 checks passed, exit 0, on the real Host (was 64). Section events are deferred while a pointer gesture is active in the Step View and the latest pending section is applied when the gesture ends; a direct click on a section number is not deferred. A5's editor-extras item from A11 is closed by its earlier wave-2 change. Browser behaviour with live audio not checked by anyone yet. A5's files were already in snapshot e5a3355; this entry records the verification.

@@ -682,11 +682,16 @@
         close: function () { try { root.close(); } catch (e) { /* ignore */ } },
         touch: function () { if (rec) rec.z = (ow && ow.nextZ) ? ow.nextZ() : (rec.z || 0) + 1; }
       };
+      subscribe(h);                       // rebuild on the host's 'document' event instead of waiting for the poll
       var chrome = Chrome(h, deviceId, ctl, true);
       container.appendChild(chrome.el);
       api = {
         id: function () { return chrome.id; },
-        retarget: function (nid) { chrome.setDevice(nid); if (rec) rec.id = nid; },
+        retarget: function (nid) {
+          chrome.setDevice(nid); if (rec) rec.id = nid;
+          // keep the shell's id for this OS window current (see main.js retargetDeviceWindow)
+          try { if (root.HavantechnoShell && root.HavantechnoShell.retargetDeviceWindow) root.HavantechnoShell.retargetDeviceWindow(nid); } catch (e) { /* ignore */ }
+        },
         focus: function () { try { root.focus(); } catch (e) { /* ignore */ } },
         close: function () { try { root.close(); } catch (e) { /* ignore */ } },
         isClosed: function () { return !!root.closed; }

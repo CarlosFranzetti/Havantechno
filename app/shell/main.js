@@ -72,11 +72,12 @@ function clampBounds(b) {
   } catch (e) { return null; }
 }
 function track(win, store, key) {
+  win._hvKey = key;                                   // mutable: a retargeted window changes its device id
   function remember() {
     if (win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return;
     var b = win.getBounds();
     if (store === 'main') state.main = { x: b.x, y: b.y, width: b.width, height: b.height, maximized: win.isMaximized() };
-    else state.devices[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
+    else state.devices[win._hvKey] = { x: b.x, y: b.y, width: b.width, height: b.height };
     saveStateSoon();
   }
   win.on('resize', remember);
@@ -160,8 +161,9 @@ function createMainWindow() {
     win.webContents.on('will-navigate', function (ev, url) { if (!sameOrigin(url)) ev.preventDefault(); });
     if (devicesHidden) win.hide();
     win.on('closed', function () {
-      if (deviceWins[id] === win) delete deviceWins[id];
-      if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('shell:deviceClosed', id);
+      var cur = win._hvKey || id;
+      if (deviceWins[cur] === win) delete deviceWins[cur];
+      if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('shell:deviceClosed', cur);
     });
   });
   wc.on('will-navigate', function (ev, url) { if (!sameOrigin(url)) ev.preventDefault(); });
@@ -269,6 +271,25 @@ function registerIpc() {
     // window.open from the main world keeps window.opener, which the bridge needs.
     var js = 'void window.open(' + JSON.stringify(deviceUrl(id)) + ',' + JSON.stringify('hv-device-' + id) + ')';
     await mainWin.webContents.executeJavaScript(js, true);
+    return true;
+  });
+  // retargetDeviceWindow(newId): the calling child window now shows another device (Link: Single follows the
+  // selection). Re-key it so openDeviceWindow(oldId) no longer finds it and its bounds are saved under the new id.
+  ipcMain.handle('shell:retargetDeviceWindow', function (e, newId) {
+    var win = BrowserWindow.fromWebContents(e.sender);
+    newId = String(newId || '');
+    if (!win || !newId || newId.length > 200) return false;
+    var oldId = null;
+    Object.keys(deviceWins).forEach(function (k) { if (deviceWins[k] === win) oldId = k; });
+    if (oldId === null) return false;
+    if (oldId === newId) return true;
+    if (deviceWins[newId] && deviceWins[newId] !== win && !deviceWins[newId].isDestroyed()) return false;
+    delete deviceWins[oldId];
+    deviceWins[newId] = win;
+    win._hvKey = newId;
+    var b = win.getBounds();
+    state.devices[newId] = { x: b.x, y: b.y, width: b.width, height: b.height };
+    saveStateSoon();
     return true;
   });
   ipcMain.handle('shell:closeDeviceWindow', function (e, id) {

@@ -161,6 +161,9 @@
       swing: function () { return host.swing(); },
       totalBars: function () { return typeof host.totalBars === 'function' ? host.totalBars() : 0; },
       mute: function (t, v) { return host.mute(t, v); },
+      bypass: function (id, v) { return typeof host.bypass === 'function' ? host.bypass(id, v) : undefined; },
+      isBypassed: function (id) { return typeof host.isBypassed === 'function' ? host.isBypassed(id) : undefined; },
+      hasBypass: function () { return typeof host.bypass === 'function'; },
       solo: function (t, v) { return host.solo(t, v); },
       transportPos: function () { return host.transport.pos(); },
       playing: function () { return !!host.transport.playing; },
@@ -349,15 +352,16 @@
       g.appendChild(el('span', 'ap-lbl', label));
       var inp = el('input', 'ap-in', null, { type: 'number', min: String(min), max: String(max), step: String(step), id: id });
       inp.setAttribute('aria-label', label);
+      // Apply on change or Enter only (typing 126 must not set 1, then 12). hold() once per edit so the engine
+      // keeps the typed value over arrangement writes and the undo snapshot covers it.
       function push() {
         var v = parseFloat(inp.value);
         if (!isFinite(v)) return;
         v = Math.min(max, Math.max(min, v));
-        try { host.setParam(param, v); } catch (e) { report(param, e); }
+        try { host.hold(param); host.setParam(param, v); } catch (e) { report(param, e); }
       }
-      inp.addEventListener('input', push);
-      inp.addEventListener('change', function () { push(); inp.dataset.dirty = ''; });
-      inp.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { push(); inp.blur(); } });
+      inp.addEventListener('change', push);
+      inp.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { push(); inp.blur(); } else if (ev.key === 'Escape') { inp.blur(); } });
       g.appendChild(inp);
       inp._digits = digits;
       return { wrap: g, input: inp };
@@ -656,6 +660,10 @@
     ['setParam', 'getParam', 'hold', 'release', 'releaseAll', 'heldCount', 'isHeld', 'device', 'devices', 'meter', 'sections', 'tracks', 'sends', 'bpm', 'swing', 'totalBars', 'mute', 'solo'].forEach(function (n) {
       if (typeof bridge[n] === 'function') h[n] = function () { return bridge[n].apply(bridge, arguments); };
     });
+    if (typeof bridge.hasBypass === 'function' && bridge.hasBypass()) {
+      h.bypass = function (id, v) { return bridge.bypass(id, v); };
+      h.isBypassed = function (id) { return bridge.isBypassed(id); };
+    }
     h.on = function (type, fn) { subs.push([type, fn]); bridge.on(type, fn); return h; };
     h.off = function (type, fn) { bridge.off(type, fn); return h; };
     h.transport = { pos: function () { return bridge.transportPos(); } };

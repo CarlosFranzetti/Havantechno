@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('HavantechnoShell', {
   readAppData: function (name) { return ipcRenderer.invoke('shell:readAppData', name); },
   writeAppData: function (name, text) { return ipcRenderer.invoke('shell:writeAppData', name, text); },
   openDeviceWindow: function (id) { return ipcRenderer.invoke('shell:openDeviceWindow', id); },
+  retargetDeviceWindow: function (id) { return ipcRenderer.invoke('shell:retargetDeviceWindow', id); },
   closeDeviceWindow: function (id) { return ipcRenderer.invoke('shell:closeDeviceWindow', id); },
   setDeviceWindowsVisible: function (v) { return ipcRenderer.invoke('shell:setDeviceWindowsVisible', !!v); },
   arrangeDeviceWindows: function (mode) { return ipcRenderer.invoke('shell:arrangeDeviceWindows', mode === 'tile' ? 'tile' : 'cascade'); },

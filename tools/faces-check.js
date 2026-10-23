@@ -230,6 +230,53 @@ devices.forEach(function (d) {
   fl.dispose();
 })();
 
+// ---------------------------------------------------------------- mute is not held; home is the song's value; hero share of the height
+(function () {
+  host.releaseAll(); holds.length = 0; writes.length = 0;
+  var ch = Faces.render(host.device('track:kick:channel'), 'face', host);
+  var mute = all(ch.el, function (x) { return x.tagName === 'button' && /mute/i.test((x.getAttribute('aria-label') || '') + (x.textContent || '')); })[0] || all(ch.el, function (x) { return /mute/i.test(x.getAttribute('aria-label') || ''); })[0];
+  check(!!mute, 'channel face has a mute toggle');
+  if (mute) {
+    fire(mute, 'click', {});
+    check(writes.some(function (w) { return w[0] === 'kick.mute' && w[1] === true; }), 'mute toggle writes kick.mute (' + JSON.stringify(writes) + ')');
+    eq(holds.length, 0, 'mute never calls host.hold');
+    eq(host.heldCount(), 0, 'mute does not count as held');
+    fire(mute, 'click', {});
+  }
+  ch.dispose(); host.setParam('kick.mute', false);
+  // a select or an ordinary toggle still holds
+  writes.length = 0; holds.length = 0;
+  var dl = Faces.render(byType.delay, 'face', host);
+  var pp = all(dl.el, function (x) { return x.getAttribute('aria-label') === 'pingpong'; })[0];
+  if (pp) { fire(pp, 'click', {}); eq(holds.length, 1, 'a pingpong toggle holds its path'); }
+  dl.dispose(); host.releaseAll();
+
+  // home: document value (kick.tune is in the song's kick params), not the spec default
+  var doc = host.document(), kt = doc.tracks.filter(function (t) { return t.name === 'kick'; })[0].params.tune;
+  host.transport.jump('intro');
+  var f = Faces.render(byType.kick, 'face', host);
+  var tune = all(f.el, function (x) { return x.getAttribute('aria-label') === 'tune'; })[0];
+  host.setParam('kick.tune', 70); f.update();
+  writes.length = 0;
+  fire(tune, 'keydown', { key: 'Delete' });
+  check(writes.length === 1 && writes[0][0] === 'kick.tune' && writes[0][1] === kt, 'Delete returns kick.tune to the song value ' + kt + ' (spec default is ' + byType.kick.spec.tune.value + '): ' + JSON.stringify(writes));
+  host.setParam('kick.tune', kt); host.releaseAll();
+  f.dispose();
+  // a section's set value wins over the document value
+  var st = Faces.render(byType.stab, 'face', host), cut = all(st.el, function (x) { return x.getAttribute('aria-label') === 'cutoff'; })[0];
+  writes.length = 0; fire(cut, 'keydown', { key: 'Delete' });
+  eq(writes.length === 1 ? writes[0][1] : null, 500, 'Delete returns stab.cutoff to the intro section value (500)');
+  host.releaseAll(); st.dispose();
+  // resize: the hero is at most ~45% of the face area
+  [['window', 700, 537], ['window', 900, 900], ['face', 400, 300]].forEach(function (a) {
+    var g = Faces.render(byType.bass, a[0], host); g.resize(a[1], a[2]);
+    var cv = all(g.el, function (x) { return x.tagName === 'canvas'; })[0], hgt = Number(cv.getAttribute('height'));
+    check(hgt <= Math.max(60, Math.round(a[2] * 0.45)), a[0] + ' ' + a[1] + 'x' + a[2] + ': hero height ' + hgt + ' is at most 45% of the area');
+    check(Number(cv.getAttribute('width')) < a[1], a[0] + ': hero narrower than the area');
+    g.dispose();
+  });
+})();
+
 // ---------------------------------------------------------------- section markers: set, ramp
 (function () {
   host.releaseAll();

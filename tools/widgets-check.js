@@ -124,6 +124,22 @@ k.set(20); // ignored while dragging
 check(k.get() > 20, 'external set ignored mid-drag');
 fire(e, 'pointerup', { pointerId: 1 });
 fire(e, 'keydown', { key: 'Delete' });
+// knob/slider phases: onInput(v, 'move') while dragging, onGesture start/end around the drag, key = single 'end'
+var kg = [], kgs = [];
+var kph = W.knob({ label: 'Ph', min: 0, max: 100, value: 50, size: 'face', onInput: function (v, ph) { kg.push(ph); }, onGesture: function (ph) { kgs.push(ph); } });
+fire(kph.el, 'pointerdown', { button: 0, clientX: 0, clientY: 100, pointerId: 11, pointerType: 'mouse' });
+eq(kg.length, 0, 'knob pointerdown alone does not call onInput'); eq(kgs.join(','), 'start', 'knob onGesture start on pointerdown');
+fire(kph.el, 'pointermove', { clientX: 0, clientY: 90, pointerId: 11 }); fire(kph.el, 'pointermove', { clientX: 0, clientY: 80, pointerId: 11 });
+fire(kph.el, 'pointerup', { pointerId: 11 });
+eq(kg.join(','), 'move,move', 'knob drag changes are move'); eq(kgs.join(','), 'start,end', 'knob onGesture end on pointerup');
+kg = []; kgs = []; fire(kph.el, 'keydown', { key: 'ArrowUp' });
+eq(kg.join(','), 'end', 'knob key change is a single end'); eq(kgs.join(','), 'end', 'knob key change closes onGesture once');
+kg = []; kgs = []; fire(kph.el, 'pointerdown', { button: 0, clientX: 0, clientY: 50, pointerId: 12, pointerType: 'mouse' }); fire(kph.el, 'pointercancel', { pointerId: 12 });
+eq(kgs.join(','), 'start,end', 'knob pointercancel closes the gesture even with no change');
+var slph = []; var slg = [];
+var slp = W.slider({ label: 'Ph', min: 0, max: 1, value: 0.5, size: 'strip', orientation: 'h', onInput: function (v, ph) { slph.push(ph); }, onGesture: function (ph) { slg.push(ph); } });
+fire(slp.el, 'pointerdown', { button: 0, clientX: 40, clientY: 12, pointerId: 13, pointerType: 'mouse', shiftKey: true }); fire(slp.el, 'pointermove', { clientX: 60, clientY: 12, pointerId: 13, shiftKey: true }); fire(slp.el, 'pointerup', { pointerId: 13 });
+eq(slg.join(','), 'start,end', 'slider onGesture start/end'); check(slph.length >= 1 && slph.every(function (x) { return x === 'move'; }), 'slider drag changes are move');
 // double click returns home, shift+dblclick returns factory
 var kh = W.knob({ label: 'Tune', min: 30, max: 90, value: 50, home: 55, factory: 51, step: 1, unit: 'Hz', size: 'strip', onInput: function () {} });
 kh.set(80); fire(kh.el, 'dblclick', {}); eq(kh.get(), 55, 'double-click -> home');
@@ -147,6 +163,9 @@ doc.activeElement = null; fire(kw.el, 'wheel', { deltaY: -100 }); eq(kw.get(), 0
 kw.el.focus(); var wev = fire(kw.el, 'wheel', { deltaY: -100 });
 check(kw.get() > 0.5, 'wheel up increases when focused'); check(wev.defaultPrevented === true, 'wheel preventDefault');
 fire(kw.el, 'wheel', { deltaY: 100, deltaMode: 0 }); near(kw.get(), 0.5, 1e-6, 'wheel down reverses');
+var wph = [], wg = []; var kw2 = W.knob({ min: 0, max: 1, value: 0.5, onInput: function (v, ph) { wph.push(ph); }, onGesture: function (ph) { wg.push(ph); } });
+kw2.el.focus(); fire(kw2.el, 'wheel', { deltaY: -100 }); fire(kw2.el, 'wheel', { deltaY: -100 });
+eq(wph.join(','), 'move,move', 'wheel burst changes are move'); eq(wg.join(','), 'start', 'wheel burst opens one gesture (end follows when the wheel is idle)');
 // bipolar auto and size window
 var kp = W.knob({ label: 'Pan', min: -1, max: 1, value: 0, size: 'window', onInput: function () {} });
 eq(kp.el.getAttribute('data-size'), 'window', 'size window attribute');
@@ -219,8 +238,31 @@ eq(btns[8].getAttribute('data-lv'), '1', 'soft level 1'); eq(btns[1].getAttribut
 eq(btns[0].getAttribute('aria-pressed'), 'true', 'on step aria-pressed'); eq(btns[1].getAttribute('aria-pressed'), 'false', 'off step aria-pressed');
 fire(btns[1], 'click', { shiftKey: true }); eq(tg2[0][0], 1, 'click toggles step index'); eq(tg2[0][1].shift, true, 'shift passed in mods');
 fire(btns[0], 'pointerdown', { button: 0, clientY: 100, pointerId: 5 }); fire(btns[0], 'pointermove', { clientY: 70, pointerId: 5 });
-check(dr.length === 1 && dr[0][0] === 0 && dr[0][1] > 0.85, 'vertical drag on a lit step raises velocity');
+check(dr.length === 2 && dr[0][0] === 0 && dr[1][0] === 0 && dr[1][1] > 0.85, 'vertical drag on a lit step raises velocity');
 fire(btns[0], 'pointerup', { pointerId: 5 }); fire(btns[0], 'click', {}); eq(tg2.length, 1, 'click after a drag is swallowed');
+// phase sequence: start (pointerdown) -> move per quantised change -> end (pointerup / pointercancel); keys are a single end
+var ph = [];
+var st3 = W.steps({ cells: [{ vel: 0.5 }, null], onDrag: function (i, vel, phase) { ph.push([i, vel, phase]); } });
+var b3 = all(st3.el, function (x) { return x.tagName === 'button'; });
+fire(b3[0], 'pointerdown', { button: 0, clientY: 200, pointerId: 6 });
+eq(ph.length, 1, 'pointerdown on a lit step emits one callback'); eq(ph[0][2], 'start', 'first phase is start'); eq(ph[0][1], 0.5, 'start carries the current velocity');
+for (var yy = 199; yy >= 160; yy--) fire(b3[0], 'pointermove', { clientY: yy, pointerId: 6 });   // a 40 px drag
+var moves = ph.filter(function (x) { return x[2] === 'move'; });
+check(moves.length >= 1 && moves.length <= 14, '40 px drag emits few moves, not one per pixel (got ' + moves.length + ')');
+check(moves.every(function (x, n) { return n === 0 || x[1] !== moves[n - 1][1]; }), 'a move is only emitted when the quantised velocity changes');
+fire(b3[0], 'pointerup', { pointerId: 6 });
+eq(ph[ph.length - 1][2], 'end', 'pointerup emits end'); eq(ph.filter(function (x) { return x[2] === 'end'; }).length, 1, 'exactly one end');
+eq(ph[ph.length - 1][1], moves[moves.length - 1][1], 'end carries the final velocity');
+ph = []; fire(b3[0], 'pointerdown', { button: 0, clientY: 100, pointerId: 7 }); fire(b3[0], 'pointermove', { clientY: 70, pointerId: 7 }); fire(b3[0], 'pointercancel', { pointerId: 7 });
+eq(ph.map(function (x) { return x[2]; }).join(','), 'start,move,end', 'pointercancel also ends the gesture');
+ph = []; fire(b3[1], 'pointerdown', { button: 0, clientY: 100, pointerId: 8 }); fire(b3[1], 'pointermove', { clientY: 50, pointerId: 8 }); fire(b3[1], 'pointerup', { pointerId: 8 });
+eq(ph.length, 0, 'an empty cell emits no drag phases');
+ph = []; fire(b3[0], 'keydown', { key: 'ArrowUp' }); eq(ph.map(function (x) { return x[2]; }).join(','), 'end', 'a key press is a single end');
+// a caller that ignores the phase still works
+var legacy = []; var st4 = W.steps({ cells: [{ vel: 0.5 }], onDrag: function (i, vel) { legacy.push(vel); } });
+var b4 = all(st4.el, function (x) { return x.tagName === 'button'; })[0];
+fire(b4, 'pointerdown', { button: 0, clientY: 100, pointerId: 9 }); fire(b4, 'pointermove', { clientY: 60, pointerId: 9 }); fire(b4, 'pointerup', { pointerId: 9 });
+check(legacy.length >= 2 && legacy[legacy.length - 1] > 0.5, 'phase-ignoring callers still receive velocities');
 fire(btns[0], 'keydown', { key: 'ArrowRight' }); eq(doc.activeElement, btns[1], 'ArrowRight moves focus to next step');
 st.set(new Array(16).fill(null)); eq(btns[0].getAttribute('data-lv'), '0', 'steps.set clears'); st.setCursor(3); eq(btns[3].getAttribute('data-cursor'), 'true', 'cursor');
 st.set([true, 0.5, 1]); eq(btns[0].getAttribute('data-lv'), '2', 'boolean cell'); eq(btns[2].getAttribute('data-lv'), '3', 'numeric velocity 1');

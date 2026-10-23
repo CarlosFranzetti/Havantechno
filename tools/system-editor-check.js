@@ -277,6 +277,23 @@ if (used.widgets) {
   host.off('document', countDoc);
 }
 
+// the same through a widget that passes a gesture phase ('start' | 'move' | 'end'), as A2's next version will
+if (used.widgets) {
+  var realSteps = sb.Widgets.steps, captured = [], phEvents = 0, phCount = function () { phEvents++; };
+  sb.Widgets.steps = function (o) { captured.push(o); return realSteps.apply(this, arguments); };
+  host.loadDocument(host.document());                       // rebuild so the editor creates its step widgets again
+  sb.Widgets.steps = realSteps;
+  rows = mountEl.find(function (n) { return n.attrs['data-track']; });
+  ok(captured.length >= 13, 'captured the step widgets options (' + captured.length + ')');
+  host.on('document', phCount);
+  var pu0 = host.editor()._undo.length;
+  captured[0].onDrag(0, 0.5, 'start'); captured[0].onDrag(0, 0.6, 'move'); captured[0].onDrag(0, 0.7, 'move');
+  ok(host.editor()._undo.length === pu0 && phEvents === 0, 'phase start/move do not commit');
+  captured[0].onDrag(0, 0.7, 'end');
+  ok(host.editor()._undo.length === pu0 + 1 && phEvents === 1, 'phase end commits once (undo +' + (host.editor()._undo.length - pu0) + ', events ' + phEvents + ')');
+  host.off('document', phCount);
+}
+
 // update() x100 with the playhead moving, no DOM rebuild
 var nodesBefore = mountEl.find(function () { return true; }).length;
 var t0 = Date.now();
