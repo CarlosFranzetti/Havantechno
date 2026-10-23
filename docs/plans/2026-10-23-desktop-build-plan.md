@@ -29,6 +29,8 @@ Rough size: 6 to 9 days (F-O2's engine 3 to 5, locks 1, save/load 2 to 3).
 
 ## Milestone 2: the device list and the face registry
 
+**Status (2026-10-23, A10 check of the files on disk, 23:13): in progress. `engine/host.js`, `ui/widgets.js`, `ui/faces.js` and `ui/theme.css` are on disk without a finished log; `engine/project.js` and `ui/facedefs.js` are absent; the face lint is not written.**
+
 1. A device list on the engine: every instrument, insert, send and master unit with its type, spec and parameter path prefix.
 2. `Faces.define(type, layout)` with a generic fallback that reproduces today's sliders and adds select and toggle widgets for non-numeric parameters (`wave`, `mode`, `division`, `pingpong`). Hand-written knob, slider, meter and curve widgets in SVG and Canvas.
 3. One requestAnimationFrame drawing loop; the scheduler's step and section handlers only record events. AnalyserNodes created by the page feed meters.
@@ -39,6 +41,8 @@ Rough size: 12 to 19 days (F-O2's shared base).
 
 ## Milestone 3: the Electron shell
 
+**Status (2026-10-23, A10 check): partial. `app/shell/main.js`, `preload.js` and `app/package.json` are written and `electron` 45.0.0 is installed in `app/node_modules`, but nobody has launched it; file dialogs need `engine/project.js`, which is absent.**
+
 1. Electron main process, one BrowserWindow for the main frame, same-origin child windows for device windows (they share the process and can call the main window's code).
 2. File access: open and save the song document to a user-chosen `.json`; autosave to the app-data folder; recent files.
 3. Audio files: load a source track and stems from disk; `decodeAudioData` into audio tracks.
@@ -48,6 +52,8 @@ Rough size: 12 to 19 days (F-O2's shared base).
 Rough size: about 2 weeks (F-O2 and O2 agree).
 
 ## Milestone 4: the System Editor and the Step View
+
+**Status (2026-10-23, A10 check): in progress. `ui/system-editor.js` and `ui/step-view.js` are on disk but cannot mount until `ui/app.js` (A6) exists; `tools/browser-check.js` fails on the missing pieces, as expected.**
 
 1. System Editor (the voted layout as amended): control bar; overview and proportional section ruler; thirteen compact rows under four stem-group headers; one device row for the selected track (PATTERN, synth, inserts, channel) with RETURNS and MASTER pinned.
 2. Step View: the same frame switched by Tab; every row a one-bar step grid; the bottom band a step editor with velocity, gate, note, probability, nudge and lock lanes; copy-on-write forks with a scope switch.

@@ -1,0 +1,279 @@
+/* Havantechno theme (A2). Neutral chassis + eight family blocks, exactly as F-S4 wrote them
+ * (docs/research/2026-10-23-faceplate-layout/transcripts/round1-FS4-visual-system.md, F.3 and F.10),
+ * then base classes (.face .chip .row .btn) and the widget styles (.hv-*).
+ * Rules: identity = family ink as thin line only; state = fill or shape, never family hue;
+ * focus = 2px --fg outline; brand pink only on the wordmark and Play. */
+
+:root {
+  --bg: #0b0b10;
+  --panel: #15151e;
+  --panel-raised: #1b1b26;
+  --line: #2a2a3a;
+  --fg: #d8d8e6;
+  --dim: #8a8aa0;
+  --on: #75f97f;
+  --arm: #ff4c4d;
+  --solo: #eeeeee;
+  --brand: #ff5fa2;
+  /* unscoped controls fall back to the utility family */
+  --fam-ink: #b0b8c5;
+  --fam-dim: #6a6f77;
+  --fam-wash: #1d1f23;
+  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --u: 4px;            /* 4px grid: gaps 4 / 8 / 12 / 16 */
+  --r-mod: 4px;        /* module radius */
+  --r-ctl: 2px;        /* control radius */
+}
+
+[data-fam="drums"]    { --fam-ink: #fc9b6f; --fam-dim: #9a5d40; --fam-wash: #31180c; }
+[data-fam="fx"]       { --fam-ink: #d8b349; --fam-dim: #836c28; --fam-wash: #281e02; }
+[data-fam="time"]     { --fam-ink: #21d1ca; --fam-dim: #0c7f7a; --fam-wash: #002624; }
+[data-fam="keys"]     { --fam-ink: #55c4fe; --fam-dim: #30779c; --fam-wash: #042232; }
+[data-fam="tone"]     { --fam-ink: #9cb4fe; --fam-dim: #5a6ca4; --fam-wash: #171e35; }
+[data-fam="bass"]     { --fam-ink: #c4a4fe; --fam-dim: #77629c; --fam-wash: #231a32; }
+[data-fam="dynamics"] { --fam-ink: #ea97d8; --fam-dim: #8f5a84; --fam-wash: #2c1628; }
+[data-fam="utility"]  { --fam-ink: #b0b8c5; --fam-dim: #6a6f77; --fam-wash: #1d1f23; }
+
+/* ---------- page base ---------- */
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font: 500 12px/1.35 var(--font-ui); }
+.mono, .hv-val, .hv-tip { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.label {
+  font: 600 10px/1.2 var(--font-ui); text-transform: uppercase; letter-spacing: .07em; color: var(--dim);
+}
+.dim { color: var(--dim); }
+.sr-only {
+  position: absolute !important; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+
+/* ---------- buttons (transport, M, S, bypass, menus) ---------- */
+.btn {
+  appearance: none; box-sizing: border-box; min-width: 24px; min-height: 24px; padding: 0 8px;
+  font: 600 10px/1 var(--font-ui); letter-spacing: .07em; text-transform: uppercase;
+  color: var(--fg); background: var(--panel-raised); border: 1px solid var(--line); border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--dim); }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .4; cursor: default; }
+.btn[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }       /* generic "on": filled */
+.btn-mute[aria-pressed="true"] { background: var(--dim); color: var(--bg); border-color: var(--dim); } /* mute has no hue */
+.btn-solo[aria-pressed="true"] { background: var(--solo); color: var(--bg); border-color: var(--solo); }
+.btn-arm[aria-pressed="true"]  { background: var(--arm); color: var(--bg); border-color: var(--arm); }
+.btn-play { background: var(--brand); color: var(--bg); border-color: var(--brand); }                 /* brand pink: Play only */
+.btn-play[aria-pressed="true"] { background: var(--brand); color: var(--bg); border-color: var(--fg); }
+
+/* ---------- .face : one device panel (flat by default) ----------
+ * <div class="face" data-fam="drums" data-density="strip|face|window" [data-skin="plate"] [data-bypass="true"] [data-mute="true"] [data-selected="true"]>
+ *   <div class="face-head"><span class="face-glyph">svg</span><span class="face-title">Kick</span><span class="face-sub">drums</span><span class="face-actions">buttons</span></div>
+ *   <div class="face-body">
+ *     <div class="face-hero"> canvas from Widgets.curve </div>
+ *     <section class="face-section"><h4 class="face-section-title">Tone</h4><div class="face-controls">knobs...</div></section>
+ *     <details class="face-more"><summary>more</summary><div class="face-controls">...</div></details>
+ *   </div>
+ * </div> */
+.face {
+  box-sizing: border-box; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-mod);
+  color: var(--fg); display: flex; flex-direction: column; min-width: 0;
+}
+.face-head {
+  display: flex; align-items: center; gap: 8px; padding: 4px 8px; min-height: 28px;
+  background: var(--fam-wash); border-bottom: 2px solid var(--fam-ink); border-radius: var(--r-mod) var(--r-mod) 0 0;
+}
+.face-glyph { width: 16px; height: 16px; flex: none; color: var(--fam-ink); display: inline-flex; }
+.face-glyph svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+.face-title { font: 700 13px/1.2 var(--font-ui); color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.face-sub { font: 600 10px/1.2 var(--font-ui); letter-spacing: .07em; text-transform: uppercase; color: var(--dim); white-space: nowrap; }
+.face-actions { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+.face-body { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 12px; padding: 12px; }
+.face-hero { flex: 1 1 100%; background: var(--fam-wash); border-radius: var(--r-ctl); overflow: hidden; line-height: 0; }
+.face-section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.face-section-title { margin: 0; font: 600 10px/1.2 var(--font-ui); letter-spacing: .07em; text-transform: uppercase; color: var(--dim); }
+.face-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.face-more { flex: 1 1 100%; border-top: 1px solid var(--line); padding-top: 8px; }
+.face-more > summary { cursor: pointer; color: var(--dim); font: 600 10px/1.2 var(--font-ui); letter-spacing: .07em; text-transform: uppercase; min-height: 24px; }
+.face-foot { padding: 4px 8px; border-top: 1px solid var(--line); color: var(--dim); font: 500 11px/1.3 var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.face[data-density="strip"] .face-body { gap: 8px; padding: 8px; }
+.face[data-density="window"] .face-body { gap: 16px; padding: 16px; }
+.face[data-density="window"] .face-head { min-height: 36px; }
+
+/* plate: depth earned by the focused or expanded device (lighten, never shadow) */
+.face[data-skin="plate"] {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.04), transparent 40%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+}
+.face[data-selected="true"] { border-color: var(--fam-dim); }
+/* bypass: keep the family, look "off" (underline dims, hatch, hero dashed by the drawing code) */
+.face[data-bypass="true"] .face-head {
+  border-bottom-color: var(--fam-dim);
+  background-image: repeating-linear-gradient(135deg, transparent 0 5px, rgba(255,255,255,.05) 5px 6px);
+}
+.face[data-bypass="true"] .face-glyph { color: var(--fam-dim); }
+/* mute: neutral ink, hatch, readable in greyscale */
+.face[data-mute="true"] { --fam-ink: var(--dim); --fam-dim: var(--line); --fam-wash: var(--panel-raised); }
+.face[data-mute="true"] .face-head {
+  background-image: repeating-linear-gradient(135deg, transparent 0 5px, rgba(255,255,255,.06) 5px 6px);
+}
+
+/* ---------- .chip : 28px device slot, glyph + name only ----------
+ * <button class="chip" data-fam="tone" [data-active="true"] [data-bypass="true"]><span class="chip-glyph">svg</span><span class="chip-name">eq3</span></button> */
+.chip {
+  appearance: none; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; min-width: 24px; padding: 0 8px; margin: 0;
+  background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-bottom: 2px solid var(--fam-ink);
+  border-radius: var(--r-ctl); font: 600 11px/1 var(--font-ui); cursor: pointer; white-space: nowrap;
+}
+.chip:hover { background: var(--panel-raised); }
+.chip-glyph { width: 16px; height: 16px; flex: none; color: var(--fam-ink); display: inline-flex; }
+.chip-glyph svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+.chip-name { overflow: hidden; text-overflow: ellipsis; }
+.chip[data-active="true"] { background: var(--fam-wash); border-color: var(--fam-dim); border-bottom-color: var(--fam-ink); }
+.chip[data-bypass="true"] { border-bottom-color: var(--fam-dim); color: var(--dim); }
+.chip[data-bypass="true"] .chip-glyph { color: var(--fam-dim); }
+.chip[data-pinned="right"] { margin-left: auto; }
+.chip-variant { /* variant letter chip: A B C */
+  display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px;
+  border: 1px solid var(--line); border-radius: var(--r-ctl); font: 700 11px/1 var(--font-mono); color: var(--dim);
+  background: transparent; cursor: pointer; padding: 0 4px; box-sizing: border-box;
+}
+.chip-variant[aria-pressed="true"], .chip-variant[data-current="true"] { color: var(--fg); border-color: var(--fam-ink); background: var(--fam-wash); }
+
+/* ---------- .row : one track row in the System Editor / Step View ----------
+ * <div class="row" data-fam="drums" style="--track:#9a5d40" [data-selected] [data-mute]>
+ *   <span class="row-rail"></span>
+ *   <span class="row-chip">glyph chip</span><span class="row-name">kick</span>
+ *   <span class="row-btns"><button class="btn btn-mute">M</button><button class="btn btn-solo">S</button></span>
+ *   <span class="row-meter">Widgets.meter</span>
+ *   <span class="row-steps">Widgets.steps</span>
+ *   <span class="row-cells"><button class="row-cell">A</button> x9</span>
+ * </div>
+ * --track is the track colour (default: the family dim ink, drawn muted so it is quieter than a device ink). */
+.row {
+  --track: var(--fam-dim);
+  position: relative; box-sizing: border-box; display: flex; align-items: center; gap: 8px;
+  min-height: 32px; padding: 2px 8px 2px 12px; background: var(--panel); border-bottom: 1px solid var(--line); color: var(--fg);
+}
+.row-rail { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--track); }
+.row-chip { flex: none; display: inline-flex; width: 16px; height: 16px; color: var(--fam-ink); }
+.row-chip svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+.row-name { flex: none; width: 76px; font: 600 11px/1.2 var(--font-ui); letter-spacing: .02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-btns { flex: none; display: inline-flex; gap: 4px; }
+.row-meter { flex: none; display: inline-flex; align-items: center; }
+.row-steps { flex: 1 1 auto; min-width: 0; }
+.row-cells { flex: none; display: inline-flex; gap: 2px; }
+.row-cell {
+  appearance: none; box-sizing: border-box; min-width: 24px; height: 24px; padding: 0 4px; margin: 0;
+  background: var(--panel-raised); color: var(--dim); border: 1px solid var(--line); border-radius: var(--r-ctl);
+  font: 700 10px/1 var(--font-mono); cursor: pointer;
+}
+.row-cell[data-current="true"] { color: var(--bg); background: var(--on); border-color: var(--on); }   /* current section: filled --on */
+.row[data-selected="true"] { background: var(--panel-raised); }
+.row[data-mute="true"] { --track: var(--line); }
+.row[data-mute="true"] .row-chip, .row[data-mute="true"] .row-name { color: var(--dim); }
+.row[data-mute="true"] .row-rail { background-image: repeating-linear-gradient(135deg, transparent 0 3px, rgba(0,0,0,.45) 3px 4px); }
+
+/* ---------- widgets ---------- */
+.hv-ctl {
+  position: relative; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 24px; min-height: 24px; color: var(--fg); user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.hv-ctl[data-size="window"] { min-width: 44px; min-height: 44px; }
+.hv-knob, .hv-slider { touch-action: none; cursor: ns-resize; border-radius: var(--r-ctl); }
+.hv-slider[data-orientation="h"] { cursor: ew-resize; }
+.hv-knob { flex-direction: column; gap: 2px; padding: 2px; }
+.hv-slider[data-orientation="h"] { flex-direction: row; gap: 8px; padding: 2px; }
+.hv-slider[data-orientation="v"] { flex-direction: column; gap: 2px; padding: 2px; }
+.hv-ctl[aria-disabled="true"] { opacity: .4; pointer-events: none; }
+
+.hv-svg { display: block; flex: none; overflow: visible; }
+.hv-track { fill: none; stroke: var(--line); stroke-width: 3; stroke-linecap: round; }
+.hv-slider .hv-track { stroke-width: 4; }
+.hv-arc { fill: none; stroke: var(--fam-ink); stroke-width: 3; stroke-linecap: round; }
+.hv-slider .hv-arc { stroke-width: 4; }
+.hv-ghost { fill: none; stroke: var(--dim); stroke-width: 2; stroke-linecap: round; opacity: .8; }
+.hv-stock { stroke: var(--dim); stroke-width: 1.5; fill: none; }
+.hv-knob .hv-body { fill: var(--panel-raised); stroke: var(--line); stroke-width: 1; }
+.hv-slider .hv-body { fill: var(--panel-raised); stroke: var(--fam-ink); stroke-width: 2; }
+.hv-pointer { stroke: var(--fg); stroke-width: 2; stroke-linecap: round; }
+.hv-ctl:hover .hv-body { fill: var(--line); }
+
+.hv-label { font: 600 10px/1.2 var(--font-ui); letter-spacing: .07em; text-transform: uppercase; color: var(--dim); white-space: nowrap; max-width: 9em; overflow: hidden; text-overflow: ellipsis; }
+.hv-val { font-size: 11px; line-height: 1.2; color: var(--fg); min-width: 4.5em; text-align: center; white-space: nowrap; }
+.hv-slider[data-orientation="h"] .hv-val { text-align: right; }
+.hv-ctl[data-size="chip"] .hv-label, .hv-ctl[data-size="chip"] .hv-val { display: none; }
+.hv-ctl[data-size="strip"] .hv-val { display: none; }                        /* strip: value in the tooltip only */
+.hv-ctl[data-size="window"] .hv-label { font-size: 11px; }
+.hv-ctl[data-size="window"] .hv-val { font-size: 12px; }
+
+/* state markers: shapes only, neutral ink (never a family hue) */
+.hv-mark { position: absolute; left: 0; top: 0; width: 14px; height: 14px; pointer-events: none; overflow: visible; }
+.hv-mark-dot { fill: var(--fg); stroke: none; }
+.hv-mark-ring { fill: none; stroke: var(--fg); stroke-width: 1.5; }
+.hv-mark-slant { stroke: var(--fg); stroke-width: 1.5; stroke-linecap: round; }
+.hv-ctl[data-state="held"] .hv-mark { pointer-events: auto; cursor: pointer; }
+.hv-ctl[data-state="held"] .hv-arc { stroke: var(--fg); stroke-dasharray: 3 2.5; stroke-linecap: butt; }
+
+/* value tooltip: while dragging and 800 ms after */
+.hv-tip {
+  position: absolute; left: 50%; bottom: 100%; transform: translate(-50%, -2px); z-index: 20;
+  padding: 2px 6px; font-size: 11px; line-height: 1.3; white-space: nowrap; pointer-events: none;
+  color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-ctl);
+  opacity: 0; visibility: hidden;
+}
+.hv-tip[data-show="true"] { opacity: 1; visibility: visible; }
+
+/* typed value field (Enter / long press) */
+.hv-field {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 30; box-sizing: border-box;
+  width: 6.5em; min-height: 24px; padding: 2px 6px; font: 500 12px/1.2 var(--font-mono);
+  color: var(--fg); background: var(--bg); border: 1px solid var(--fg); border-radius: var(--r-ctl);
+}
+
+/* toggle */
+.hv-toggle {
+  appearance: none; gap: 6px; padding: 0 8px; margin: 0; font: inherit; cursor: pointer;
+  background: var(--panel-raised); border: 1px solid var(--line); border-radius: var(--r-ctl);
+}
+.hv-toggle:hover { border-color: var(--dim); }
+.hv-lamp { width: 10px; height: 10px; flex: none; box-sizing: border-box; border: 1.5px solid var(--dim); border-radius: 50%; background: transparent; }
+.hv-toggle[aria-pressed="true"] .hv-lamp { background: var(--fam-ink); border-color: var(--fam-ink); }  /* on = filled */
+.hv-toggle[aria-pressed="true"] { border-color: var(--fam-dim); }
+.hv-toggle:disabled { opacity: .4; cursor: default; }
+
+/* select */
+.hv-select { flex-direction: column; align-items: flex-start; gap: 2px; justify-content: flex-start; }
+.hv-selectbox {
+  box-sizing: border-box; min-height: 24px; max-width: 12em; padding: 0 6px; font: 500 12px/1.2 var(--font-ui);
+  color: var(--fg); background: var(--panel-raised); border: 1px solid var(--line); border-radius: var(--r-ctl);
+}
+.hv-ctl[data-size="window"].hv-select .hv-selectbox { min-height: 44px; font-size: 13px; }
+
+/* 16-step row: lightness steps of the family ink (soft / on / accent); playhead stays --on */
+.hv-steps { display: flex; gap: 2px; align-items: stretch; width: 100%; min-width: 0; }
+.hv-step {
+  appearance: none; position: relative; box-sizing: border-box; flex: 1 1 0; min-width: 14px; height: 24px; padding: 0; margin: 0;
+  background: var(--panel-raised); border: 1px solid var(--line); border-radius: var(--r-ctl); cursor: pointer; touch-action: none;
+  overflow: hidden;
+}
+.hv-step.hv-beat { margin-left: 4px; }
+.hv-step-fill { position: absolute; left: 0; right: 0; bottom: 0; top: 0; background: var(--step-ink, var(--fam-ink)); opacity: 0; }
+.hv-step[data-lv="1"] .hv-step-fill { opacity: .35; }
+.hv-step[data-lv="2"] .hv-step-fill { opacity: .7; }
+.hv-step[data-lv="3"] .hv-step-fill { opacity: 1; }
+.hv-step[data-lv="3"] { border-color: var(--fg); }
+.hv-step[data-cursor="true"] { outline: 2px solid var(--on); outline-offset: -2px; }
+.hv-step:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; z-index: 1; }
+
+/* canvas displays */
+.hv-canvas { display: block; }
+.hv-ctl.hv-meter, .hv-ctl.hv-gr, .hv-ctl.hv-corr,
+.hv-ctl[data-size].hv-meter, .hv-ctl[data-size].hv-gr, .hv-ctl[data-size].hv-corr { padding: 0; min-width: 0; min-height: 0; line-height: 0; background: transparent; }
+.hv-curve { display: inline-block; line-height: 0; border-radius: var(--r-ctl); overflow: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hv-ctl, .hv-tip, .hv-step, .btn { transition: none !important; }
+}

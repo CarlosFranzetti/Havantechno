@@ -9,6 +9,7 @@
 // Usage:   node tools/browser-check.js
 // Env:     PLAYWRIGHT_PATH   default /opt/node22/lib/node_modules/playwright
 //          CHROMIUM_PATH     default /opt/pw-browsers/chromium
+//          BROWSER_CHECK_ROOT  serve another folder with the same app/index.html layout (for testing the check)
 // Exit:    0 every check passed; 1 a failed check or a page/console error; 2 the harness could not run.
 //
 // Selectors and globals are the CONTRACT defaults. Each check prints the selector or global it tried,
@@ -19,7 +20,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = path.resolve(process.env.BROWSER_CHECK_ROOT || path.join(__dirname, '..'));
 const APP_URL_PATH = '/app/index.html';
 const PLAYWRIGHT_PATH = process.env.PLAYWRIGHT_PATH || '/opt/node22/lib/node_modules/playwright';
 const CHROMIUM_PATH = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium';
@@ -54,21 +55,29 @@ const GLOBALS = [
   ['Windows', 'app/ui/windows.js', 'A6'],
 ];
 
+// Owner of each app file (CONTRACT.md file table), used to annotate HTTP 404s.
+const FILE_OWNERS = {
+  'ui/theme.css': 'A2', 'ui/widgets.js': 'A2', 'ui/faces.js': 'A3', 'ui/facedefs.js': 'A3',
+  'ui/system-editor.js': 'A4', 'ui/step-view.js': 'A5', 'ui/windows.js': 'A6', 'ui/app.js': 'A6',
+  'engine/host.js': 'A1', 'engine/project.js': 'A1', 'engine/selfcheck.js': 'A1',
+  'engine/synths.js': 'A7', 'engine/song.js': 'A7', 'engine/processors.js': 'A8',
+};
+
 // Selector candidates, in order. The first visible match wins.
 const SEL = {
-  start: ['#start', '[data-action="start"]', '#start-overlay button', '.start-overlay button',
-    '.overlay button', 'button:text-is("Start audio")'],
-  play: ['#play', '[data-action="play"]', '[data-transport="play"]', 'button[aria-label="Play"]',
+  start: ['#start-audio', '#start-overlay button', '#start', '[data-action="start"]', '.start-overlay button',
+    'button:text-is("Start audio")'],
+  play: ['#frame [data-action="play"]', '#frame button[aria-label="Play"]', '#frame button:text-is("Play")',
+    '#play', '[data-action="play"]', '[data-transport="play"]', 'button[aria-label="Play"]',
     'button[title="Play"]', 'button:text-is("Play")'],
   stepSwitch: ['[data-view-switch="step"]', '[data-view="step-switch"]', 'button:text-is("Step View")',
     'button:text-is("Step")'],
   stepMark: ['[data-view="step"]', '[data-view="step-view"]', '.step-grid', '[data-role="step-grid"]',
     '.step-view'],
-  systemMark: ['[data-view="system"]', '[data-view="system-editor"]', '.system-editor'],
-  deviceTitle: ['[data-device-title]', '[data-role="device-title"]', '.device-title', '.dev-title',
-    '.device-row .title'],
-  stepCell: ['.step-grid [role="checkbox"]', '.step-grid [data-step]', '[data-step]', '.step-grid button',
-    '.step-cell', '.steps button'],
+  deviceTitle: ['.se-dtitle[title^="Double-click"]', '[data-device-title]', '[data-role="device-title"]',
+    '.device-title', '.dev-title', '.device-row .title'],
+  stepCell: ['.step-grid button.hv-step', 'button.hv-step[aria-pressed]', '.step-grid [role="checkbox"]',
+    '.step-grid [data-step]', '[data-step]', '.step-grid button', '.step-cell', '.steps button'],
   save: ['#save', '[data-action="save"]', 'button[aria-label="Save"]', 'button:text-is("Save")'],
 };
 
@@ -214,7 +223,9 @@ async function run() {
     });
     page.on('response', (r) => {
       if (r.status() >= 400 && r.url().startsWith('http://127.0.0.1:' + port)) {
-        badResponses.push(r.status() + ' ' + r.url().replace('http://127.0.0.1:' + port, ''));
+        const rel = r.url().replace('http://127.0.0.1:' + port + '/app/', '');
+        const owner = FILE_OWNERS[rel] ? ' (owner ' + FILE_OWNERS[rel] + ')' : '';
+        badResponses.push(r.status() + ' ' + r.url().replace('http://127.0.0.1:' + port, '') + owner);
       }
     });
 
@@ -237,7 +248,7 @@ async function run() {
     }
     const hostOk = await page.evaluate(`!!${HOST_EXPR}`).catch(() => false);
     if (hostOk) pass('host handle exposed', 'window.HavantechnoHost or window.HavantechnoApp.host');
-    else fail('host handle not exposed', 'app.js (A6) should set window.HavantechnoApp = {host} or window.HavantechnoHost; transport checks are skipped until it does');
+    else fail('host handle not exposed', 'app.js (A6) should set window.HavantechnoApp = {host} or window.HavantechnoHost; transport and step checks are weaker without it');
 
     // 2. Start audio
     const start = await firstVisible(page, SEL.start);
@@ -300,9 +311,6 @@ async function run() {
     async function inStepView() {
       return !!(await firstVisible(page, SEL.stepMark));
     }
-    async function inSystemView() {
-      return !!(await firstVisible(page, SEL.systemMark));
-    }
     async function goStepView() {
       if (await inStepView()) return true;
       await page.keyboard.press('Tab');
@@ -322,7 +330,6 @@ async function run() {
     else fail('switch to Step View', 'no Step View marker after Tab or the view switch; tried ' + SEL.stepMark.join(', ') + ' (owners A5, A6)');
 
     // 6. Open one device window by double-clicking its title
-    let windowOpened = false;
     const winsBefore = await page.evaluate(() => {
       const w = document.querySelector('#windows');
       return w ? w.children.length : -1;
@@ -348,8 +355,7 @@ async function run() {
           const w = document.querySelector('#windows');
           return w ? w.children.length : -1;
         });
-        windowOpened = winsAfter > Math.max(winsBefore, 0);
-        if (windowOpened) pass('device window opens on double-click', title.sel + ', #windows children ' + winsBefore + ' -> ' + winsAfter);
+        if (winsAfter > Math.max(winsBefore, 0)) pass('device window opens on double-click', title.sel + ', #windows children ' + winsBefore + ' -> ' + winsAfter);
         else fail('device window opens on double-click', 'no new element in #windows after double-click on ' + title.sel + ' (' + winsBefore + ' -> ' + winsAfter + ')');
       } catch (e) {
         fail('device window opens on double-click', String(e).split('\n')[0]);

@@ -1,0 +1,253 @@
+#!/usr/bin/env node
+// tools/render.js: render song sections offline through the page's own engine.
+//
+// Usage:
+//   node tools/render.js [--page studio|app|/path/index.html] [--sections a,b,...] [--bars a:b | --bars N]
+//                        [--sr 44100] [--tail 2.5] [--out tools/out]
+//
+//   --page      studio (default): the archived page "olde Havantechno dub studio/index.html", which
+//               renders with Sequencer.render(function (s) { Song.build(s); }, opts).
+//               app: app/index.html, which renders with Host.create().render({from, to}) (CONTRACT A1).
+//               Any other value is a repo-relative path to a page that exposes one of the two.
+//   --sections  comma-separated section names from the page's own arrangement (default: all).
+//   --bars      a:b renders bars a..b-1 relative to each selected section's start (absolute song bars
+//               when no --sections is given). A single integer N means 0:N.
+//   --tail      seconds of ringing tail rendered after the last bar (default 2.5, the archived default).
+//
+// Output: tools/out/<name>.wav (16-bit PCM, via Sequencer.wav or Host.wav) and tools/out/<name>.json
+// (sidecar: bar range, sample rate, bpm, swing and the sample position of bar `from`, which score.py
+// uses to line the render up with the reference).
+'use strict';
+
+var fs = require('fs');
+var path = require('path');
+var http = require('http');
+
+var REPO = path.resolve(__dirname, '..');
+var DEFAULT_OUT = path.join(__dirname, 'out');
+var CHROMIUM = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium';
+var PAGES = {
+  studio: '/olde Havantechno dub studio/index.html',
+  app: '/app/index.html'
+};
+// The archived engine starts scheduling at t0 = 0.05 s (sequencer.js, render()).
+var SCHEDULE_T0 = 0.05;
+var MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.png': 'image/png',
+  '.svg': 'image/svg+xml', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8'
+};
+var ISOLATION = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+  'Cross-Origin-Resource-Policy': 'same-origin'
+};
+
+function fail(msg) { process.stderr.write('render.js: ' + msg + '\n'); process.exit(2); }
+
+function parseArgs(argv) {
+  var o = { page: 'studio', sections: null, bars: null, sr: 44100, tail: 2.5, out: DEFAULT_OUT };
+  for (var i = 0; i < argv.length; i++) {
+    var a = argv[i];
+    var next = function () { if (i + 1 >= argv.length) fail(a + ' needs a value'); return argv[++i]; };
+    if (a === '--page') o.page = next();
+    else if (a === '--sections') o.sections = next().split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    else if (a === '--bars') {
+      var v = next();
+      if (v.indexOf(':') >= 0) {
+        var p = v.split(':');
+        o.bars = { a: parseInt(p[0], 10), b: parseInt(p[1], 10) };
+      } else {
+        o.bars = { a: 0, b: parseInt(v, 10) };
+      }
+      if (!(o.bars.a >= 0 && o.bars.b > o.bars.a)) fail('bad --bars ' + v);
+    }
+    else if (a === '--sr') o.sr = parseInt(next(), 10);
+    else if (a === '--tail') o.tail = parseFloat(next());
+    else if (a === '--out') o.out = path.resolve(next());
+    else if (a === '-h' || a === '--help') { process.stdout.write(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 17).join('\n') + '\n'); process.exit(0); }
+    else fail('unknown argument ' + a);
+  }
+  if (!(o.sr > 0)) fail('bad --sr');
+  return o;
+}
+
+function pagePath(name) {
+  var p = PAGES[name] || name;
+  if (p.charAt(0) !== '/') p = '/' + p;
+  return p;
+}
+
+function startServer(root) {
+  return new Promise(function (resolve, reject) {
+    var server = http.createServer(function (req, res) {
+      var urlPath;
+      try { urlPath = decodeURIComponent(req.url.split('?')[0]); } catch (e) { res.writeHead(400); return res.end(); }
+      if (urlPath === '/favicon.ico') { res.writeHead(204); return res.end(); }
+      if (urlPath.charAt(urlPath.length - 1) === '/') urlPath += 'index.html';
+      var file = path.normalize(path.join(root, urlPath));
+      if (file.indexOf(root + path.sep) !== 0) { res.writeHead(403); return res.end(); }
+      fs.readFile(file, function (err, data) {
+        if (err) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('not found'); }
+        var headers = Object.assign({ 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' }, ISOLATION);
+        res.writeHead(200, headers);
+        res.end(data);
+      });
+    });
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', function () { resolve(server); });
+  });
+}
+
+// ---- code that runs inside the page -------------------------------------------------------
+// Returns the page's kind, its sections and song-level settings. Bar starts are cumulative.
+function pageLayout() {
+  var kind, sections, totalBars, bpm, swing;
+  if (window.Host && typeof window.Host.create === 'function') {
+    kind = 'app';
+    window.__host = window.Host.create();
+    if (typeof window.__host.render !== 'function') throw new Error('Host.render is missing');
+    var secs = window.__host.sections() || [];
+    var start = 0;
+    sections = secs.map(function (s) { var r = { name: s.name, start: start, bars: s.bars }; start += s.bars; return r; });
+    totalBars = start;
+    bpm = window.__host.bpm();
+    swing = window.__host.swing();
+  } else if (window.Sequencer && window.Song) {
+    kind = 'studio';
+    var dry = window.Sequencer.create(null, {});
+    window.Song.build(dry);
+    sections = dry.sections.map(function (s) { return { name: s.name, start: s.start, bars: s.bars }; });
+    totalBars = dry.totalBars;
+    bpm = dry.bpm;
+    swing = dry.swing;
+  } else {
+    throw new Error('neither Host nor Sequencer+Song is on this page');
+  }
+  return { kind: kind, sections: sections, totalBars: totalBars, bpm: bpm, swing: swing };
+}
+
+// Renders bars [from, to) through the page's own offline renderer; keeps the WAV bytes in the page.
+async function pageRender(job) {
+  var t0 = performance.now();
+  var buf;
+  if (window.__host) {
+    buf = await window.__host.render({ from: job.from, to: job.to, sampleRate: job.sr, tail: job.tail });
+  } else {
+    buf = await window.Sequencer.render(function (s) { window.Song.build(s); },
+      { from: job.from, to: job.to, sampleRate: job.sr, tail: job.tail });
+  }
+  var ab = (window.__host && typeof window.__host.wav === 'function') ? window.__host.wav(buf) : window.Sequencer.wav(buf);
+  window.__wav = new Uint8Array(ab);
+  return { bytes: window.__wav.length, channels: buf.numberOfChannels, sampleRate: buf.sampleRate, length: buf.length, ms: performance.now() - t0 };
+}
+
+// Base64 of one slice of the stored WAV (keeps each transfer small).
+function pageChunk(arg) {
+  var o = arg[0], n = arg[1], u = window.__wav.subarray(o, o + n), s = '';
+  for (var i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, Math.min(i + 0x8000, u.length)));
+  return btoa(s);
+}
+// ----------------------------------------------------------------------------------------------
+
+function selectJobs(layout, opts) {
+  var jobs = [];
+  var names = opts.sections;
+  if (!names && !opts.bars) names = layout.sections.map(function (s) { return s.name; });
+  if (!names) {
+    // --bars alone: absolute song bars
+    jobs.push({ name: 'bars-' + opts.bars.a + '-' + opts.bars.b, section: null, from: opts.bars.a, to: Math.min(opts.bars.b, layout.totalBars) });
+    return jobs;
+  }
+  names.forEach(function (n) {
+    var sec = layout.sections.filter(function (s) { return s.name === n; })[0];
+    if (!sec) fail('unknown section "' + n + '". Page sections: ' + layout.sections.map(function (s) { return s.name; }).join(', '));
+    var a = 0, b = sec.bars;
+    if (opts.bars) { a = Math.min(opts.bars.a, sec.bars); b = Math.min(opts.bars.b, sec.bars); }
+    if (b <= a) fail('empty bar range for section ' + n);
+    var partial = !!opts.bars;
+    jobs.push({
+      name: partial ? (n + '-' + a + '-' + b) : n,
+      section: n, from: sec.start + a, to: sec.start + b
+    });
+  });
+  return jobs;
+}
+
+async function main() {
+  var opts = parseArgs(process.argv.slice(2));
+  var playwright = null, tried = [];
+  ['playwright', '/opt/node22/lib/node_modules/playwright'].some(function (m) {
+    try { playwright = require(m); return true; } catch (e) { tried.push(m); return false; }
+  });
+  if (!playwright) fail('Playwright not found (tried ' + tried.join(', ') + ')');
+  if (!fs.existsSync(CHROMIUM)) fail('Chromium not found at ' + CHROMIUM + ' (set CHROMIUM_PATH)');
+
+  fs.mkdirSync(opts.out, { recursive: true });
+  var server = await startServer(REPO);
+  var port = server.address().port;
+  var pageUrl = 'http://127.0.0.1:' + port + encodeURI(pagePath(opts.page));
+  var browser = await playwright.chromium.launch({
+    executablePath: CHROMIUM, headless: true,
+    args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox']
+  });
+  var pageErrors = [];
+  var exitCode = 0;
+  try {
+    var page = await browser.newPage();
+    page.on('pageerror', function (e) { pageErrors.push('pageerror: ' + e.message); });
+    page.on('console', function (m) { if (m.type() === 'error') pageErrors.push('console.error: ' + m.text()); });
+    var tLoad = performance.now();
+    await page.goto(pageUrl, { waitUntil: 'load', timeout: 60000 });
+    await page.waitForFunction(function () { return !!(window.Sequencer || window.Host); }, null, { timeout: 30000 });
+    var layout = await page.evaluate(pageLayout);
+    console.log('page: ' + pageUrl + ' (' + layout.kind + ', loaded in ' + ((performance.now() - tLoad) / 1000).toFixed(2) + ' s)');
+    console.log('song: ' + layout.totalBars + ' bars at ' + layout.bpm + ' bpm, swing ' + layout.swing +
+      ', sections: ' + layout.sections.map(function (s) { return s.name + ' ' + s.start + '+' + s.bars; }).join(', '));
+
+    var jobs = selectJobs(layout, opts);
+    var gridStart = Math.round(SCHEDULE_T0 * opts.sr);
+    for (var j = 0; j < jobs.length; j++) {
+      var job = jobs[j];
+      job.sr = opts.sr; job.tail = opts.tail;
+      var r = await page.evaluate(pageRender, job);
+      var nBytes = r.bytes, parts = [], CH = 4 * 1024 * 1024;
+      for (var o = 0; o < nBytes; o += CH) {
+        parts.push(Buffer.from(await page.evaluate(pageChunk, [o, Math.min(CH, nBytes - o)]), 'base64'));
+      }
+      var wavPath = path.join(opts.out, job.name + '.wav');
+      fs.writeFileSync(wavPath, Buffer.concat(parts));
+      var barSec = 4 * 60 / layout.bpm;
+      var side = {
+        name: job.name, page: opts.page, kind: layout.kind, section: job.section,
+        from: job.from, to: job.to, bars: job.to - job.from,
+        sampleRate: r.sampleRate, channels: r.channels, lengthSamples: r.length,
+        bpm: layout.bpm, swing: layout.swing, tailSeconds: opts.tail,
+        // sample index of bar `from` (step 0) inside the WAV: the archived engine starts at t0 = 0.05 s
+        gridStartSample: gridStart,
+        barSeconds: barSec,
+        wav: path.relative(REPO, wavPath)
+      };
+      fs.writeFileSync(path.join(opts.out, job.name + '.json'), JSON.stringify(side, null, 2) + '\n');
+      console.log('rendered ' + job.name + ': bars ' + job.from + '..' + (job.to - 1) + ' (' + (job.to - job.from) +
+        ' bars, ' + (r.length / r.sampleRate).toFixed(2) + ' s incl. tail) in ' + (r.ms / 1000).toFixed(2) + ' s -> ' +
+        path.relative(REPO, wavPath));
+    }
+    if (pageErrors.length) {
+      console.log('page errors/console errors during the run:');
+      pageErrors.slice(0, 20).forEach(function (e) { console.log('  ' + e); });
+      if (pageErrors.some(function (e) { return e.indexOf('pageerror') === 0; })) exitCode = 1;
+    } else {
+      console.log('page errors: none');
+    }
+  } catch (e) {
+    console.error('render.js: ' + (e && e.stack || e));
+    exitCode = 1;
+  } finally {
+    await browser.close();
+    server.close();
+  }
+  process.exitCode = exitCode;
+}
+
+main();

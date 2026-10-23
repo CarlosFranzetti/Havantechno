@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Havantechno</title>
+<link rel="stylesheet" href="ui/theme.css">
+<style>
+  /* Page skeleton only. Frame and window styles are injected by ui/app.js and ui/windows.js. */
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg, #111114); color: var(--fg, #e8e8ec); overflow: hidden;
+         font: 13px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  #frame { flex: 0 0 auto; }
+  #view { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; }
+  #windows { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 50; }
+  #start-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
+                   background: rgba(10, 10, 12, .92); }
+  #start-overlay[hidden] { display: none; }
+  body.device-window #app > #frame, body.device-window #app > #view { display: none; }
+  noscript { display: block; padding: 24px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="frame" role="toolbar" aria-label="Transport and project"></div>
+  <div id="view" role="main"></div>
+</div>
+<div id="windows" aria-label="Device windows"></div>
+<div id="start-overlay" role="dialog" aria-modal="true" aria-label="Start audio">
+  <div class="hv-start-card">
+    <div class="hv-start-mark">HAVANTECHNO</div>
+    <p class="hv-start-note">Browsers start audio only after a click.</p>
+    <button type="button" id="start-audio" class="hv-start-btn">Start audio</button>
+    <p id="start-status" class="hv-start-status" role="status" aria-live="polite"></p>
+  </div>
+</div>
+<noscript>Havantechno needs JavaScript.</noscript>
+
+<script src="engine/core.js"></script>
+<script src="engine/synths.js"></script>
+<script src="engine/processors.js"></script>
+<script src="engine/songdoc.js"></script>
+<script src="engine/sequencer.js"></script>
+<script src="engine/song.js"></script>
+<script src="engine/host.js"></script>
+<script src="engine/project.js"></script>
+<script src="ui/widgets.js"></script>
+<script src="ui/faces.js"></script>
+<script src="ui/facedefs.js"></script>
+<script src="ui/windows.js"></script>
+<script src="ui/system-editor.js"></script>
+<script src="ui/step-view.js"></script>
+<script src="ui/app.js"></script>
+</body>
+</html>
