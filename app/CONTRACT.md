@@ -14,7 +14,7 @@ Views: the **System Editor** (the voted layout) and the **Step View** (same fram
 
 ```
 engine/core.js  engine/synths.js  engine/processors.js  engine/songdoc.js  engine/sequencer.js  engine/song.js
-engine/host.js
+engine/host.js  engine/project.js
 ui/theme.css   ui/widgets.js  ui/faces.js  ui/facedefs.js  ui/windows.js  ui/system-editor.js  ui/step-view.js  ui/app.js
 ```
 Every file is an IIFE that reads `root = window` and publishes one global. Style: ES5-ish like the engine (`var`, `function`), `'use strict'`, no classes required, no imports. Nothing throws on a missing AudioContext.
