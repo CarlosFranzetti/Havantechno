@@ -8,8 +8,8 @@ Standing rules, repeated in every brief: cite only URLs actually seen, mark ever
 
 | Group | Date | Question | Folder | Status |
 |-------|------|----------|--------|--------|
-| Gear Crew | 2026-10-23 | What plugins, instruments, effects and analysis tools could recreate a source track inside Havantechno, and what runs in a browser? | `2026-10-23-plugin-gear/` | Round 1 done (12). Round 2: O1 and O2 critiques in progress. Rounds 3 and 4 and REPORT.md to come. |
-| Faceplate | 2026-10-23 | How should the Havantechno DAW be laid out, and how does each device get its own look? Ableton Live and Logic Pro as references. | `2026-10-23-faceplate-layout/` | Round 1 done (12). Round 2 discussion in progress. Vote, REPORT.md and mockups to come. |
+| Gear Crew | 2026-10-23 | What plugins, instruments, effects and analysis tools could recreate a source track inside Havantechno, and what runs in a browser? | `2026-10-23-plugin-gear/` | Rounds 1 to 3 done (12 reports, 2 critiques with measurements, 10 answers). Round 4 syntheses and REPORT.md in progress. |
+| Faceplate | 2026-10-23 | How should the Havantechno DAW be laid out, and how does each device get its own look? Ableton Live and Logic Pro as references. | `2026-10-23-faceplate-layout/` | Complete: 12 reports, 12 discussion files, 12 ballots. Strip Bench won. See REPORT.md, DISCUSSION.md, VOTE.md and the canvas linked in the report. |
 
 Each group folder holds `BRIEF.md`, `transcripts/` (one file per agent per round), and `REPORT.md` by the coordinator. Faceplate also has `DISCUSSION.md` and `VOTE.md`, the separate transcript of the group's debate and ballot.
 
