@@ -579,8 +579,8 @@
   Faces.define('sampler', { glyph: G.sampler, hero: heroSampler, heroPointer: samplerPointer, sigExtra: function (d, host) { var id = P(d, host, 'buffer'); return !!bufferOf(d, host, id) + ':' + (audioInfo(host, id) ? 1 : 0); },
     width: W(176, 460, 620), heroH: { strip: 44, face: 90, window: 200 },
     options: { buffer: bufferOptions, choke: ['', 'A', 'B', 'C', 'D'] },
-    sections: [sec('sample', ['buffer', 'start', 'end', 'pitch']), sec('envelope', ['attack', 'release', { p: 'loop', widget: 'toggle' }, { p: 'reverse', widget: 'toggle' }]), sec('out', ['gain', 'level', 'choke'])],
-    strip: ['start', 'end', 'pitch', 'gain'] });
+    sections: [sec('sample', ['buffer', 'start', 'end', 'pitch']), sec('envelope', ['attack', 'release', { p: 'loop', widget: 'toggle' }, { p: 'reverse', widget: 'toggle' }]), sec('out', ['level', 'choke'])],
+    strip: ['start', 'end', 'pitch', 'level'] });
   Faces.define('channel', { glyph: G.channel, hero: heroChannel, live: true, width: W(176, 280, 400), heroH: { strip: 44, face: 70, window: 110 },
     labels: { gain: 'level' }, sections: [sec('level', ['gain']), sec('pan', ['pan']), sec('mute', ['mute']), { title: 'sends', match: '^send\\.' }], strip: ['gain', 'pan', 'mute'] });
 })();

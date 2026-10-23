@@ -126,3 +126,24 @@ A11 reviewed head 6ab1499 (before A1's and A3's wave-2 edits) and wrote log-A11.
 ## 2026-10-23 23:52:51 UTC — A5 deferral verified
 
 `node tools/step-view-check.js` here: OK: 72 checks passed, exit 0, on the real Host (was 64). Section events are deferred while a pointer gesture is active in the Step View and the latest pending section is applied when the gesture ends; a direct click on a section number is not deferred. A5's editor-extras item from A11 is closed by its earlier wave-2 change. Browser behaviour with live audio not checked by anyone yet. A5's files were already in snapshot e5a3355; this entry records the verification.
+
+## 2026-10-23 23:54:52 UTC — wave 2 hand-backs verified: A1 part 1, A2, A3, A4, A7
+
+All checks run here on one tree, exit codes read directly:
+
+| Check | Result |
+|---|---|
+| `node app/engine/selfcheck.js` | OK: 297 (263 + A1's section 6, 34 checks: audio map, sampler track round trip, decode before start, missing files silent) |
+| `node tools/synths-check.js` | OK: 74 (A7: sampler without own gain; level and stab hp scheduled at the event time, 8 checks, mutants fail) |
+| `node tools/processors-check.js` | OK: 54 |
+| `node tools/widgets-check.js` | OK: 157 (A2: gesture phases start/move/end on steps, onGesture on knob and slider) |
+| `node tools/faces-check.js` | OK: 1167 (A3: window density hero + sections, hero ≤ 45 % height, knob home = song value, mute/solo never hold, sampler face with waveform hero; 25 definitions) |
+| `node tools/system-editor-check.js` | OK: 50 (A4: a drag previews locally and commits once on release inside ed.group; one undo entry, one document event) |
+| `node tools/step-view-check.js` | OK: 72 |
+| `node tools/browser-check.js` | PASS (26) |
+
+A1 part 1: Host builds every sampler with `getBuffer`; `loadAudio`, `audio()`, `buffer(id)`, `unloadAudio`, `reloadAudio`, `audioReady`, `addSampler`, an `'audio'` event; decode through an OfflineAudioContext before Start; `doc.audio` as references only; `ed.addTrack`/`removeTrack`; `Project.open({shell, host})` resolves relative paths from the project folder through A6's `readFile`. A1's own Chromium run heard the sampler (meter peak 0.68); not reproduced here. CONTRACT.md now carries the wave-1 Host extras and the sampler amendments (no own gain, `ev.midi`). A1's faces-check failure (sampler.gain in the layout) was a race with A3's edit; green now.
+
+Two transient failures reported by owners (A2's faces-check "lint got 2", A1's synths-check exit 1) happened while another owner was mid-edit of the file under test; both pass on the settled tree. Rule noted for REPORT.md: run cross-module checks only on a snapshot.
+
+Open from these hand-backs: A3 asks A1 for a `sampler` family (suggests drums); A1 asks A6 to call `Project.open({shell, host})` and expose `pathForFile` (Electron 32+ dropped `File.path`); A4 says nothing changes on its side now that A2's phases exist, and its check passes here with them. Committed all five; A6 part 2 still in progress (main.js, app.js snapshotted as WIP).

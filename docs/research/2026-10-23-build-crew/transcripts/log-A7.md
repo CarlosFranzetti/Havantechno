@@ -127,3 +127,44 @@ Saved outputs: `/tmp/claude-0/-home-user/341aa418-0695-5408-80be-331d2fec6cae/sc
 - **A1:** `Synths.create(ctx, 'sampler', {buffer, ..., getBuffer: fn})` is the path. `inst._getBuffer` is kept on the instance; a rebuild needs the same resolver passed again. `Synths.types()` does not list `sampler` (decision 1). The `ev.midi` offset (decision 2) is in synths.js; the sequencer does not change.
 - **A8:** nothing new from me in processors.js.
 - **Coordinator:** the choke fade and the `midi` fallback are the two places I went past the text. Both are in the decisions list above.
+
+---
+
+## Wave 2 follow-up: A11 findings E2 and C1, coordinator ruling (sampler gain)
+
+Read `log-A11.md` (E2 at line 66, C1 at line 84) and the coordinator's follow-up.
+
+**E2 (major): instrument level and stab hp ignored the scheduled time.** Confirmed in the code: `defineParams` passes `(name, v, opts)` to its callback, and `makeInst` dropped `opts`, so `K.target(inst.out.gain, v, ctx.currentTime, 0.01)` ran at the current time for every write. The sequencer writes section sets and ramps with `{at: t}` (sequencer.js:233 routes `<track>.<param>` to `inst.set(name, v, o)`; lines 299 and 336 pass `{at: t}`). Effect: the break's kick at 0.6 and the build's clap at 0.7 were applied at t = 0 in an export, and up to the 120 ms lookahead early in playback.
+
+Fix (synths.js, `makeInst` and the stab hook):
+- `makeInst`'s setter takes `(name, v, o)`. `at = o.at` when it is a number, else `ctx.currentTime`. The level is `K.target(inst.out.gain, v, at, 0.01)`. The same `o` is passed to `inst.onParam(name, v, o)`.
+- The stab `hp` hook takes `(n, x, o)` and uses the same `at` (time constant 0.02).
+- Every instrument goes through `makeInst`, so the fix covers all of them. Drive (shaper curve) and the other params are not time-based and are unchanged.
+- Live writes (no `at`) still apply at `currentTime`, so UI knob moves are unchanged.
+
+Checks (new section 8, 8 checks): `kick.set('level', 0.6, {at: 5})` gives `setTargetAtTime(0.6, 5, 0.01)` and nothing at t = 0; a live write still applies at `currentTime`; `stab.set('hp', 500, {at: 3})` schedules the highpass at t = 3; through a real sequencer with two sections (`kick.level` 1 then 0.6, `stab.hp` 180 then 900), the 0.6 and 900 writes land at `seq.barSec()` (1.9048 s) and not at 0.
+
+Mutation check (scratch copy, not in the repo): with the old time-blind setter, synths-check exits 1 with 5 FAILs (the level cases). With the stab hook also reverted it adds 2 FAILs (the hp cases). So the new cases do detect the bug.
+
+**C1 and the coordinator ruling: sampler `gain` removed.** The sampler spec has no `gain`. `<track>.gain` is the channel's path (sequencer.js:233 resolves against the instrument spec first; a sampler `gain` would have shadowed the channel fader). The sampler's amplitude is now the hit velocity times the common instrument `level`. The envelope is unchanged otherwise (attack, release, end). Checks updated: the envelope case uses velocity 0.5; the lock case uses `pitch` and `attack` (`level` is not lockable, and `gain` no longer exists); a new check asserts the spec has no `gain` and has `level`; a sampler `level` written at a future time is scheduled at that time.
+
+`ev.midi` stays as built (`ev.note` if a number, else `ev.midi - 48`, else 0).
+
+### Verification (exit codes read directly)
+
+```
+$ node --check app/engine/synths.js     -> exit 0
+$ node --check app/engine/song.js       -> exit 0
+$ node --check tools/synths-check.js    -> exit 0
+$ node tools/synths-check.js            -> OK: 74 checks passed   exit 0
+$ node app/engine/selfcheck.js          -> OK: 297 checks passed  exit 0
+```
+
+74 = 36 wave-1 + 30 sampler (the 28 from before, plus "no own gain" and "level at a future time") + 8 scheduled-write checks (section 8). The selfcheck count is 297; it was 263 when I ran it an hour ago, so A1 has added checks to its file since. Nothing of mine changed selfcheck. Saved outputs are in the scratchpad (`synths-check.final.out.txt`, `selfcheck.final.out.txt`).
+
+### Not verified
+
+- No offline export or playback run, so the audible effect of the fix (the break's kick and the build's clap) is not measured. A9's render is where that shows.
+- The `setTargetAtTime` event time is asserted on the fake context. Real browsers apply the same schedule, but nothing here runs a real AudioContext.
+- A11's E3 (jump and partial render do not chase the arrangement) is A1's (sequencer.js) and not touched.
+- The ramps on `stab.cutoff` write through `inst.set` with `{at}` but the cutoff is read at trigger time, so a ramp does not change the sound mid-note. Out of scope here, unchanged.
