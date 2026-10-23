@@ -37,6 +37,7 @@ var deviceWins = {};          // device id -> BrowserWindow
 var devicesHidden = false;
 var state = { main: null, devices: {} };
 var saveTimer = null;
+var openCounter = 0;
 
 // ------------------------------------------------------------------ remembered bounds
 function statePath() { return path.join(app.getPath('userData'), 'window-state.json'); }
@@ -269,7 +270,7 @@ function registerIpc() {
     var ex = deviceWins[id];
     if (ex && !ex.isDestroyed()) { devicesHidden = false; ex.show(); ex.focus(); return true; }
     // window.open from the main world keeps window.opener, which the bridge needs.
-    var js = 'void window.open(' + JSON.stringify(deviceUrl(id)) + ',' + JSON.stringify('hv-device-' + id) + ')';
+    var js = 'void window.open(' + JSON.stringify(deviceUrl(id)) + ',' + JSON.stringify('hv-device-' + (++openCounter) + '-' + id) + ')';   // unique name: a reused name would navigate an existing (maybe retargeted) child
     await mainWin.webContents.executeJavaScript(js, true);
     return true;
   });

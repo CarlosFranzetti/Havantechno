@@ -358,8 +358,11 @@
         var v = parseFloat(inp.value);
         if (!isFinite(v)) return;
         v = Math.min(max, Math.max(min, v));
+        if (inp._last === v) return;           // Enter and the change event both arrive: apply once
+        inp._last = v;
         try { host.hold(param); host.setParam(param, v); } catch (e) { report(param, e); }
       }
+      inp.addEventListener('focus', function () { inp._last = undefined; });
       inp.addEventListener('change', push);
       inp.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { push(); inp.blur(); } else if (ev.key === 'Escape') { inp.blur(); } });
       g.appendChild(inp);
