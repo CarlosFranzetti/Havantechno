@@ -2,7 +2,7 @@
 
 Dumps of the working context, each with a UTC date and time stamp. A new dump is written every 7 to 8 user updates, then the context window is compacted. New dumps are appended under the marker at the bottom; older dumps stay as they are.
 
-Cadence tracker: last dump at 2026-10-23 16:37:59 UTC. Updates since: 2. Next dump due at update 7.
+Cadence tracker: last dump at 2026-10-23 23:23:16 UTC. Updates since: 0. Next dump due at update 7.
 
 Earlier dumps from before this file existed: `context.md` (2026-10-21) and `memory.md` (2026-10-21 and 2026-10-23).
 
@@ -51,5 +51,44 @@ Named and documented in `docs/research/README.md`. Multi-model agent teams resea
 - Licence for the repo (decides which open-source engines can be ported).
 - Whether the analysis pipeline may run offline in Python.
 - Whether the stale model-name attribution on commit `546a2c6` should be rewritten.
+
+## Dump 2 at 2026-10-23 23:23:16 UTC
+
+Covers the owner's updates 1 to 7 after Dump 1: "can I see what the agents have been talking about", "update all .md files and the readme", the desktop redirect (Mac/PC DAW, Logic-shaped, floating per-device windows, the voted layout is named System Editor, add a Step View), the four decisions (Electron shell, a licence that lets GPL/AGPL code in, version 1 edits and saves songs, audio files at runtime), "start to build this as both a web and desktop app" with a Fable-led crew that researches, codes and talks, and the clarification that sample-based elements of a provided track stay samples.
+
+### Repos
+
+- **Havantechno** (`/home/user/havantechno`, remote `CarlosFranzetti/Havantechno`, branch `claude/song-synths-sequencer-processors-e79zyb`). Head at this dump: `46190a5`. Everything below lives here.
+- **AassMaster** untouched since Dump 1 (head `5f4419f`), game only.
+
+### Research closed since Dump 1
+
+- **Gear Crew** done: rounds 2 to 4 and `docs/research/2026-10-23-plugin-gear/REPORT.md` (36 transcripts). Headline: the measured facts of the reference are 126 BPM, 21,000 samples per beat, kick glide 51+213·e^(−t/24 ms) Hz, sub a 34.47 Hz drone ducked −15 dB, −10.7 LUFS, section starts at bars 24/40/104/120/136/184.
+- **Faceplate** done: rounds 1 to 5, `DISCUSSION.md`, `VOTE.md`, `REPORT.md` with the round-5 addendum for the desktop redirect. Strip Bench won with 28 points and is now called the **System Editor**; Matrix Bench 20; Stem Bench 9. Voters' amendments: returns and master pinned right, stem group headers, PATTERN face first in the chain, state markers are shapes not hues (dot set, arc ramp, ring held), channel strip last in signal order.
+- Layout canvas artifact (7 boards: System Editor, Matrix Bench, Stem Bench, Tracks and Editors, Faces, FloatingWindows, StepView): https://claude.ai/artifact/Wy3gZLnLoShp6uzxrNVfP7. Sources in the scratchpad `canvas/project/`.
+
+### Decisions taken (prd.md 6b)
+
+- Electron shell. Licence AGPL-3.0-or-later (`LICENSE` is the full text from the spdx-license-list package; `THIRD_PARTY.md` lists ports). Version 1 edits the Guidance recreation and saves it as a named, editable song. Audio files allowed at runtime; none in the repo. **D8**: when a provided track is separated into elements, sample-based elements (vocals and the like) become sampler tracks, not synth recreations; every provided track is different. Milestone 5b in the plan.
+- Knob gestures go on the undo stack in wave 2, one snapshot per gesture taken on the first `hold`; until then knob moves are not undoable.
+
+### The build (plan: `docs/plans/2026-10-23-desktop-build-plan.md`)
+
+- `app/` is the live DAW: `app/engine/` (archived files plus `songdoc.js`, `host.js`, `project.js`; `selfcheck.js` 263 checks), `app/ui/` (`widgets.js`, `theme.css`, `faces.js`, `facedefs.js`, `system-editor.js`, `step-view.js`, `windows.js`, `app.js`), `app/index.html`, `app/shell/` (Electron `main.js`, `preload.js`), `app/package.json`. `app/CONTRACT.md` is the module contract the crew builds to. `tools/` holds `serve.js` (COOP/COEP), `browser-check.js`, `render.js`, `score.py` and one `*-check.js` per module.
+- Song document: variants `{bars, cells}`, sparse step records `{vel, acc, len, nudge, note, prob, cond, rep, locks}`, copy-on-write forks, snapshot undo, v1 JSON save/load, schedule-equivalent with the archived engine.
+- **Build Crew** (`docs/research/2026-10-23-build-crew/`, logs per agent in `transcripts/`): A1 Host and Project (verified, 263), A2 widgets and theme (134), A3 faces (982), A4 System Editor (its check is red: the check's ruler click moves the transport; fix sent), A5 Step View (53), A6 windows, app frame, shell (in progress), A7 synth fixes (36), A8 processor fixes (54), A9 render and score loop (in progress), A10 browser-check (3 failures, all A6/A4 items). Wave-1 gate: `node tools/browser-check.js` once A6 lands.
+- Wave 2 planned: A11 (Opus) integration review, owners fix their own files, sampler (A7 instrument, A1 `Host.loadAudio`, A4/A5 UI), CONTRACT.md updated with A1's additions, then `DISCUSSION.md` and `REPORT.md` for the Build Crew.
+
+### Rules in force
+
+- Commits: `Co-Authored-By: Claude <noreply@anthropic.com>` and the Claude-Session trailer, never a model name. No history rewrite or force-push without the owner.
+- Verify every hand-back by running its check and reading the exit code directly (a pipe hid one exit code once; logged in `log-coordinator.md`). Unverified agent files are committed only as clearly labelled WIP snapshots.
+- Transcripts are records: never edited after the fact; corrections are appended.
+
+### Open with the owner
+
+- Confirm AGPL-3.0-or-later (GPL-3.0 is the alternative if the app must stay usable in closed network services).
+- A stray cloud session `session_01YQ55qJkgnsfKmjr7VmKc1y` was opened by an agent by mistake; it has no task and can be archived.
+- The stale model-name attribution on commit `546a2c6` is still in history.
 
 <!-- next dump goes here -->
