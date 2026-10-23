@@ -12,7 +12,7 @@ Date: 2026-10-23. Derived from the Roundtable reports (`docs/research/2026-10-23
 
 ## Milestone 1: the song document and the step record (engine data)
 
-**Status (2026-10-23): engine part done in `app/engine/` (songdoc.js, sequencer.js, song.js; 193 self-checks, schedule-equivalent to the archived engine). Saving to a file under a name waits for the Electron shell (milestone 3); `SongDoc.save` already produces the JSON.**
+**Status (2026-10-23, end of Build Crew wave 1): done. `app/engine/` has songdoc.js, sequencer.js, song.js, host.js and project.js; 263 self-checks, schedule-equivalent to the archived engine. Save and open work on the web (download and file input) and through the Electron dialogs; autosave restores after reload (browser-check). Knob moves are not yet on the undo stack (wave 2, A1).**
 
 Goal: the song becomes editable and saveable data, with every step addressable, and the engine still sounds the same.
 
@@ -29,7 +29,7 @@ Rough size: 6 to 9 days (F-O2's engine 3 to 5, locks 1, save/load 2 to 3).
 
 ## Milestone 2: the device list and the face registry
 
-**Status (2026-10-23, A10 check of the files on disk, 23:15): in progress. `engine/host.js`, `ui/widgets.js`, `ui/faces.js` and `ui/theme.css` are on disk; `ui/facedefs.js` is absent; the face lint is not written.**
+**Status (2026-10-23, end of wave 1): done. 49 devices from the Host; `ui/widgets.js` (134 checks), `ui/theme.css`, `ui/faces.js` and `ui/facedefs.js` with 24 definitions at four densities and `Faces.lint` at 0 problems (982 checks). Hero graphs are the owner agent's reading of the engine, not measured; hero end points are not draggable yet.**
 
 1. A device list on the engine: every instrument, insert, send and master unit with its type, spec and parameter path prefix.
 2. `Faces.define(type, layout)` with a generic fallback that reproduces today's sliders and adds select and toggle widgets for non-numeric parameters (`wave`, `mode`, `division`, `pingpong`). Hand-written knob, slider, meter and curve widgets in SVG and Canvas.
@@ -41,7 +41,7 @@ Rough size: 12 to 19 days (F-O2's shared base).
 
 ## Milestone 3: the Electron shell
 
-**Status (2026-10-23, A10 check, 23:15): partial. `app/shell/main.js`, `preload.js` and `app/package.json` are written, `electron` 45.0.0 is installed in `app/node_modules`, and `engine/project.js` and `ui/windows.js` are on disk; nobody has launched the shell.**
+**Status (2026-10-23, end of wave 1): built and launched once under Xvfb by A6 (page loads, child device window opens, setParam from the child reaches the host, Single link retargets, Space in the child toggles the transport, hide-all and close-all, app-data round trip). Not tested: native open and save dialogs, bounds persistence across launches, macOS and Windows. Not built: Mixer, A/B and preset menus. The coordinator has not reproduced the Electron run.**
 
 1. Electron main process, one BrowserWindow for the main frame, same-origin child windows for device windows (they share the process and can call the main window's code).
 2. File access: open and save the song document to a user-chosen `.json`; autosave to the app-data folder; recent files.
@@ -53,7 +53,7 @@ Rough size: about 2 weeks (F-O2 and O2 agree).
 
 ## Milestone 4: the System Editor and the Step View
 
-**Status (2026-10-23, A10 check): in progress. `ui/system-editor.js` and `ui/step-view.js` are on disk but cannot mount until `ui/app.js` (A6) exists; `tools/browser-check.js` fails on the missing pieces, as expected.**
+**Status (2026-10-23, end of wave 1): done for the first build. Both views mount from `ui/app.js`, switch with Tab and Alt+1/2, follow the playhead, edit steps while playing (in-place patch of the running engine), fork a shared variant on first edit, and open device windows from the face title. Checks: system-editor 40, step-view 53, browser-check 26, all against the real Host. Wave 2 adds the hold/release audit result and the sampler track UI.**
 
 1. System Editor (the voted layout as amended): control bar; overview and proportional section ruler; thirteen compact rows under four stem-group headers; one device row for the selected track (PATTERN, synth, inserts, channel) with RETURNS and MASTER pinned.
 2. Step View: the same frame switched by Tab; every row a one-bar step grid; the bottom band a step editor with velocity, gate, note, probability, nudge and lock lanes; copy-on-write forks with a scope switch.
@@ -64,9 +64,13 @@ Rough size: System Editor 7 to 10 days; Step View UI 5 to 8; floating windows on
 
 ## Milestone 5: the audio fixes from the Gear Crew (can run beside milestones 2 to 4)
 
+**Status (2026-10-23, end of wave 1): steps 0 to 3 and 5 to 7 are in. Scoring loop (`tools/render.js`, `tools/score.py`, matches O1's loudness within 0.05 LU per A9); kick `tau`/`hold`; sub drone mode with release; sidechain curve and click-free retrigger (offset not done); delay loop filters and modulation; Freeverb (approximation, not gain-matched) and seeded IR; widener `monoBelow`, chorus `base`/`invert`; hat `metalHp`. Not done: S1 offset, S2 IR envelope and buffer-swap click, step 4 bass, 8 hat choke and clap tail, 9 EQ match, 10 to 14. A9 found the V2 sub duck 14 to 15 dB too deep at 100 to 150 ms and the baseline intro about 14 dB hot in the mids: wave-2 items. Offline render runs at about 1 s per mainA bar; A11 is measuring why.**
+
 In O2's order: 0 scoring loop (export section WAVs, run O1's measurements on render and reference, seed the reverb IR); 1 kick envelope (`setTargetAtTime` approach with `tau`, hold-then-decay amplitude, click 0); 2 sub as a ducked drone (C#1 with B0 once in eight) in the duck list; 3 sidechain extension (curve, retrigger, offset); 4 bass filter envelope and drive placement, then slope and keytrack; 5 delay filters in the feedback loop; 6 Freeverb with RT60; 7 band-limited widener and chorus `base`/`invert`; 8 hat choke and clap tail; 9 parametric EQ and the offline match script. Steps 10 to 13 (AudioWorklet: meter device, keyed glue compressor, true-peak limiter) follow once the worklet infrastructure exists. Step 14, bundle import from the offline Python front end, follows milestone 3's file access.
 
 ## Milestone 5b: the sampler (owner's clarification, 2026-10-23)
+
+**Status: not started; scheduled for wave 2 (A7 instrument, A1 `Host.loadAudio` and the `audio` map, A4/A5 UI).**
 
 A `sampler` instrument in `app/engine/synths.js`: plays a user-provided AudioBuffer or a slice of one (start, end, pitch in semitones, gain, attack, release, loop, choke group), triggered like any synth so steps, locks and probability apply. `Host` gains `loadAudio(file|url) -> bufferId` and the song document gains an `audio` map of named buffers (stored as file references, not bytes). A stem becomes a sampler track by slicing it at section and step boundaries (`SongDoc.sliceToTrack`). Vocal samples are the first use. Sizes: sampler device small to medium; slicing and Host audio loading medium.
 

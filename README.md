@@ -6,12 +6,23 @@ plugins. Today the repo holds the first step: a Web Audio studio that recreates 
 (126 BPM) one element at a time, with one synth per element, a 16-step sequencer, a 200-bar arrangement, a
 processor rack and WAV export. It runs in a browser with no audio files.
 
-The next version has three faces, all researched and mocked up, none built yet: the **System Editor** (the voted
-layout: a section ruler, compact track rows, and the selected track's device chain), the **Step View** (the same
-shape, with every step of every track editable), and **floating windows per device**, each with its own look.
+The next version lives in `app/` and runs both in a browser and as an Electron desktop app. Its first build (the
+Build Crew's wave 1, 2026-10-23) has the three faces the research voted for: the **System Editor** (a section ruler,
+compact track rows, and the selected track's device chain), the **Step View** (the same shape, with every step of
+every track editable: velocity, accent, length, nudge, probability, condition, repeats and parameter locks), and
+**floating windows per device**, each with its own face. It edits the Guidance recreation as a song document, saves
+and reopens it, and exports WAV. See `app/README.md` for how to run it and what is verified.
 
-The studio as first built is archived unchanged in `olde Havantechno dub studio/`. The next version is being designed
-through the research in `docs/research/` (see **Roundtable** below).
+The studio as first built is archived unchanged in `olde Havantechno dub studio/`. The design came out of the
+research in `docs/research/` (see **Roundtable** below).
+
+![The System Editor playing the intro: section ruler, track rows, the kick's device chain](docs/screenshots/app-system-editor.png)
+
+![The Step View: every step of every track, with the step editor lanes for the kick](docs/screenshots/app-step-view.png)
+
+![A device window floating over the System Editor](docs/screenshots/app-device-window.png)
+
+The archived studio, for comparison:
 
 ![The studio playing a section](docs/screenshots/studio-playing.png)
 
@@ -25,6 +36,15 @@ python3 -m http.server 8000
 
 - Studio: <http://localhost:8000/olde%20Havantechno%20dub%20studio/>. Press **Play**, then click a section to jump to it.
 - Self-check, no browser needed: `node "olde Havantechno dub studio/selfcheck.js"`
+
+The new app needs COOP/COEP headers, so it has its own server:
+
+```bash
+node tools/serve.js            # then open http://localhost:8000/app/
+cd app && npm install && npm start   # the Electron desktop app
+node app/engine/selfcheck.js   # engine self-check, 263 checks
+node tools/browser-check.js    # opens the app in headless Chromium, 26 checks
+```
 
 Each strip is one synth from the sequencer, with its level, pan, sends, duck depth and synth parameters. Tweak any of
 them while the track plays. The processor rack at the bottom holds the send effects and the master chain.
@@ -62,6 +82,7 @@ writes every finding to a transcript, reads each other's work, argues in writing
 |-------|----------|--------|
 | Gear Crew | What gear could recreate a source track, and what runs where? | `docs/research/2026-10-23-plugin-gear/REPORT.md`. The reference was re-measured and parts of the original spec overturned; a gear list by licence; a 15-step build order; an Electron-first desktop recommendation. |
 | Faceplate | How should the DAW be laid out, and how does each device get its own look? Ableton Live and Logic Pro as references. | `docs/research/2026-10-23-faceplate-layout/REPORT.md`. Strip Bench won the vote and became the System Editor; a round-5 follow-up covers floating windows, the Step View and the desktop shell. Mockups: https://claude.ai/artifact/Wy3gZLnLoShp6uzxrNVfP7 (private until shared). |
+| Build Crew | Build it: ten agents coding to one contract (`app/CONTRACT.md`), talking through the coordinator, each verifying its own module. | `docs/research/2026-10-23-build-crew/`: brief, one log per agent, the coordinator's log, `DISCUSSION.md` (the compiled conversation) and, after wave 2, `REPORT.md`. Wave 1 shipped `app/` with every check green; wave 2 (integration review, fixes, the sampler) is running. |
 
 Each group's folder holds its brief, every agent's transcript per round, and the report; Faceplate also has
 `DISCUSSION.md` and `VOTE.md`. The transcripts state their own verification limits: page fetches often failed from
@@ -71,11 +92,15 @@ reference track come from numpy measurements with the method stated per row.
 ## Repo layout
 
 ```
+app/                           the DAW: engine, UI, Electron shell; app/README.md and app/CONTRACT.md
+tools/                         serve.js (COOP/COEP), browser-check.js, render.js and score.py, per-module checks
 olde Havantechno dub studio/   the studio, archived as it was on 2026-10-23
 docs/screenshots/              screenshots used in this README
 docs/superpowers/specs/        the studio design spec and the analysis of the reference track
 docs/research/                 Roundtable research: briefs, transcripts, discussion, votes, reports
 prd.md                         product requirements, with the remix-DAW direction in section 4b
+docs/plans/                    the desktop build plan, milestones 1 to 6
+LICENSE, THIRD_PARTY.md        AGPL-3.0-or-later, and the list of ported code
 future.md                      open items and ideas
 context history.md             timestamped context dumps, written every 7 to 8 updates
 memory.md, context.md          earlier timestamped dumps
