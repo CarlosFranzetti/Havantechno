@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The repo has no package.json, no build step and no linter. The studio is plain browser JS that loads as globals.
 
-- Serve the folder over HTTP: `python3 -m http.server 8000`. The studio is at `http://localhost:8000/studio/`.
-- Studio smoke test: `node studio/selfcheck.js`. It prints `OK: N checks passed` and exits 0 on success. It is the only automated test, and it has no flag to run one section, so to isolate a check you edit the script.
+- Serve the folder over HTTP: `python3 -m http.server 8000`. The studio is at `http://localhost:8000/olde%20Havantechno%20dub%20studio/`.
+- Studio smoke test: `node "olde Havantechno dub studio/selfcheck.js"`. It prints `OK: N checks passed` and exits 0 on success. It is the only automated test, and it has no flag to run one section, so to isolate a check you edit the script.
 
 ## Architecture
 

@@ -8,8 +8,8 @@ The Havantechno studio is a Web Audio page that recreates a Guidance-style elect
 
 ## 2. Users
 
-- **Producers and tinkerers** open `studio/` to listen to the track, change any synth or processor parameter live, and export a section or the whole song.
-- **Developers and coding agents** change the track's patterns in `studio/song.js` or the processors in `studio/processors.js` and reload. They need no toolchain.
+- **Producers and tinkerers** open `olde Havantechno dub studio/` to listen to the track, change any synth or processor parameter live, and export a section or the whole song.
+- **Developers and coding agents** change the track's patterns in `olde Havantechno dub studio/song.js` or the processors in `olde Havantechno dub studio/processors.js` and reload. They need no toolchain.
 
 ## 3. Constraints
 
@@ -33,7 +33,7 @@ The Havantechno studio is a Web Audio page that recreates a Guidance-style elect
 | S8 | Mute and solo per track. | Built |
 | S9 | Jump to a section, loop it, and play, pause, stop, rewind. | Built |
 | S10 | Export the current section or the whole song as 16-bit PCM WAV, rendered offline. | Built |
-| S11 | `node studio/selfcheck.js` runs without a browser and passes its checks. | Built (161 checks pass) |
+| S11 | `node "olde Havantechno dub studio/selfcheck.js"` runs without a browser and passes its checks. | Built (161 checks pass) |
 | S12 | The lead melody and the chord progression are transcribed from the reference track. | **Not built.** The current material is an inspired version |
 
 ## 4b. Direction set on 2026-10-23 (not built)
@@ -49,8 +49,8 @@ The owner set a longer-term direction for the studio. None of it is built; it is
 
 ## 5. Acceptance criteria
 
-- `node studio/selfcheck.js` exits 0 and prints `OK: N checks passed`.
-- Opening `/studio/` and pressing Play plays audio with no page errors, and jumping to `mainA` keeps it playing.
+- `node "olde Havantechno dub studio/selfcheck.js"` exits 0 and prints `OK: N checks passed`.
+- Opening `/olde%20Havantechno%20dub%20studio/` and pressing Play plays audio with no page errors, and jumping to `mainA` keeps it playing.
 - Exported section and song WAV files open in an audio editor at the stated length and sample rate.
 
 ## 6. Out of scope

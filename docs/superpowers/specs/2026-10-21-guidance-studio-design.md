@@ -1,6 +1,6 @@
 # Guidance-style studio: synths, sequencer, processors (design)
 
-Date: 2026-10-21. Status: implemented in `studio/`.
+Date: 2026-10-21. Status: implemented in `studio/`, moved to `olde Havantechno dub studio/` on 2026-10-23.
 
 ## Goal
 

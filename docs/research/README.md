@@ -16,3 +16,7 @@ Each group folder holds `BRIEF.md`, `transcripts/` (one file per agent per round
 ## Known limits of the sandbox
 
 Page fetches often fail from the research container (DNS errors, proxy denials), so most "verified" marks rest on search-result excerpts rather than on the page itself. The transcripts say which. Web search has a shared per-turn budget, so late searches in a round can fail; the transcripts list what was not covered.
+
+## Note on paths
+
+On 2026-10-23 the `studio/` folder was moved to `olde Havantechno dub studio/`. Briefs and transcripts written before that refer to `studio/...`; read those paths against the new folder.

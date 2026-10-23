@@ -14,8 +14,8 @@ Serve the folder over HTTP, then open the studio:
 python3 -m http.server 8000
 ```
 
-- Studio: <http://localhost:8000/studio/>. Press **Play**, then click a section to jump to it.
-- Self-check, no browser needed: `node studio/selfcheck.js`
+- Studio: <http://localhost:8000/olde%20Havantechno%20dub%20studio/>. Press **Play**, then click a section to jump to it.
+- Self-check, no browser needed: `node "olde Havantechno dub studio/selfcheck.js"`
 
 Each strip is one synth from the sequencer, with its level, pan, sends, duck depth and synth parameters. Tweak any of
 them while the track plays. The processor rack at the bottom holds the send effects and the master chain.
@@ -31,14 +31,14 @@ break (24), breakEnd (8), mainB (48) and outro (16). Click a section to jump to 
 
 | File | What it does |
 |------|--------------|
-| `studio/index.html` | The studio page: transport, sections, the track strips, the processor rack and the export buttons. |
-| `studio/core.js` | Global `Kit`. Shared helpers: AudioParam scheduling (`setV`, `lin`, `expo`, `target`), note and chord parsing, the noise buffer, impulse responses, and `defineParams`, which builds sliders from spec objects. |
-| `studio/synths.js` | Global `Synths`. Thirteen instruments: kick, sub, bass, stab, clap, closed and open hats, shaker, perc, lead, pad, riser and impact. Each instrument has `trigger`, `set`/`get`, `panic` and `dispose`. |
-| `studio/processors.js` | Global `Processors`. Ten processors: filter, saturator, delay, reverb, eq3, compressor, limiter, sidechain ducker, widener and chorus. Also `chain`, `channel` (a track's strip) and `master` (the master chain). |
-| `studio/sequencer.js` | Global `Sequencer`. The transport, the 16-step scheduler with swing, pattern and melody notation, the arrangement, mixer state, the parameter paths, and offline rendering to WAV. |
-| `studio/song.js` | Global `Song`. The track's patterns, chords, lead melody and the nine-section, 200-bar arrangement. Edit the track here. |
-| `studio/studio.js` | Page logic only: builds the strips and the rack from the spec, wires the controls, and runs the WAV export. |
-| `studio/selfcheck.js` | A Node smoke test with a fake AudioContext. Checks that every module loads, the song schedules all 200 bars, ducking fires, parameters clamp, and the WAV encoder works. |
+| `olde Havantechno dub studio/index.html` | The studio page: transport, sections, the track strips, the processor rack and the export buttons. |
+| `olde Havantechno dub studio/core.js` | Global `Kit`. Shared helpers: AudioParam scheduling (`setV`, `lin`, `expo`, `target`), note and chord parsing, the noise buffer, impulse responses, and `defineParams`, which builds sliders from spec objects. |
+| `olde Havantechno dub studio/synths.js` | Global `Synths`. Thirteen instruments: kick, sub, bass, stab, clap, closed and open hats, shaker, perc, lead, pad, riser and impact. Each instrument has `trigger`, `set`/`get`, `panic` and `dispose`. |
+| `olde Havantechno dub studio/processors.js` | Global `Processors`. Ten processors: filter, saturator, delay, reverb, eq3, compressor, limiter, sidechain ducker, widener and chorus. Also `chain`, `channel` (a track's strip) and `master` (the master chain). |
+| `olde Havantechno dub studio/sequencer.js` | Global `Sequencer`. The transport, the 16-step scheduler with swing, pattern and melody notation, the arrangement, mixer state, the parameter paths, and offline rendering to WAV. |
+| `olde Havantechno dub studio/song.js` | Global `Song`. The track's patterns, chords, lead melody and the nine-section, 200-bar arrangement. Edit the track here. |
+| `olde Havantechno dub studio/studio.js` | Page logic only: builds the strips and the rack from the spec, wires the controls, and runs the WAV export. |
+| `olde Havantechno dub studio/selfcheck.js` | A Node smoke test with a fake AudioContext. Checks that every module loads, the song schedules all 200 bars, ducking fires, parameters clamp, and the WAV encoder works. |
 
 The sound design decisions, the analysis of the reference track and the tuning notes are in
 [`docs/superpowers/specs/2026-10-21-guidance-studio-design.md`](docs/superpowers/specs/2026-10-21-guidance-studio-design.md).
@@ -46,7 +46,7 @@ The sound design decisions, the analysis of the reference track and the tuning n
 ## Repo layout
 
 ```
-studio/              the studio
+"olde Havantechno dub studio/"   the studio, archived as it was on 2026-10-23
 docs/                design notes, the spec and screenshots
 prd.md               product requirements
 future.md            open items and ideas
