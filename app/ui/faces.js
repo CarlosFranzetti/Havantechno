@@ -18,8 +18,12 @@
  * }
  * Every control writes host.setParam(device.pathPrefix + '.' + param, v) and calls host.hold(path) when a drag starts.
  * Hold is released only by the host's "re-enable arranged", not here. Spec params that no section names go to a "more"
- * drawer, so no parameter is ever unreachable. Styling: colours come from theme.css custom properties; a small layout
- * stylesheet (classes hv-face*) is injected once from here.
+ * drawer, so no parameter is ever unreachable. A section may give `match: '^send\\.'` (a regexp source) instead of
+ * `params`, to take every spec param whose name matches (used by the channel strip for its per-send levels).
+ * Markup uses theme.css (A2) classes: .face[data-density] > .face-head (.face-glyph .face-title .face-sub) + .face-body
+ * (.face-hero, .face-section > .face-section-title + .face-controls, details.face-more); head and title also carry
+ * hv-head / hv-title (A4 hooks a double-click on them). The chip density is inline glyph + name with no border
+ * (wrap it in button.chip for a slot). No stylesheet is injected from here.
  * Works in Node with a fake document; nothing throws on a missing host method.
  */
 (function () {
@@ -46,7 +50,7 @@
   var OPTIONS = {
     wave: ['sine', 'square', 'sawtooth', 'triangle'],
     mode: ['lowpass', 'highpass', 'bandpass', 'notch', 'peaking', 'lowshelf', 'highshelf', 'allpass'],
-    division: ['', '1/32', '1/16', '1/16d', '1/16t', '1/8', '3/16', '1/8d', '1/8t', '1/4', '1/4d', '1/4t', '1/2', '1/1'],
+    division: [{ value: '', label: 'free' }, '1/32', '1/16', '1/16d', '1/16t', '1/8', '3/16', '1/8d', '1/8t', '1/4', '1/4d', '1/4t', '1/2', '1/1'],
     algo: ['ir', 'freeverb'], curve: ['lin', 'db']
   };
 
@@ -115,35 +119,6 @@
   }
   function fmt(v, unit) { return (Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 1000) / 1000) + (unit ? ' ' + unit : ''); }
   function widget(name) { var W = root.Widgets; return (W && typeof W[name] === 'function') ? W[name] : NATIVE[name]; }
-
-  // ------------------------------------------------------------------ css (layout only; colours are theme.css tokens)
-  var styled = false;
-  var CSS =
-    '.hv-face{box-sizing:border-box;background:var(--panel,#15151e);border:1px solid var(--line,#2a2a3a);border-radius:4px;color:var(--fg,#d8d8e6);' +
-    'display:flex;flex-direction:column;gap:6px;padding:6px;font:11px system-ui,sans-serif;min-width:0}' +
-    '.hv-face>.hv-head{display:flex;align-items:center;gap:6px;background:var(--fam-wash,#1d1f23);border-bottom:2px solid var(--fam-ink,#b0b8c5);margin:-6px -6px 0;padding:4px 6px}' +
-    '.hv-face[data-bypassed="1"]>.hv-head,.hv-face[data-muted="1"]>.hv-head{border-bottom-color:var(--fam-dim,#6a6f77);background-image:repeating-linear-gradient(135deg,transparent 0 4px,rgba(255,255,255,.06) 4px 5px)}' +
-    '.hv-glyph{display:inline-flex;width:16px;height:16px;color:var(--fam-ink,#b0b8c5);flex:none}.hv-glyph svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}' +
-    '.hv-title{font-weight:700;font-size:13px;color:var(--fg,#d8d8e6);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-    '.hv-type{color:var(--dim,#8a8aa0);font-size:10px;text-transform:uppercase;letter-spacing:.07em}' +
-    '.hv-hero{background:var(--fam-wash,#1d1f23);border-radius:3px;overflow:hidden;line-height:0}.hv-hero canvas{max-width:100%}' +
-    '.hv-secs{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:flex-start}' +
-    '.hv-sec{display:flex;flex-direction:column;gap:4px;min-width:0}' +
-    '.hv-sec>h4{margin:0;font:600 10px system-ui,sans-serif;text-transform:uppercase;letter-spacing:.07em;color:var(--dim,#8a8aa0)}' +
-    '.hv-ctls{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:flex-end}' +
-    '.hv-strip-ctls{display:flex;flex-wrap:wrap;gap:4px 6px}' +
-    '.hv-more{border-top:1px solid var(--line,#2a2a3a);padding-top:4px}.hv-more>summary{cursor:pointer;color:var(--dim,#8a8aa0);font-size:10px;text-transform:uppercase;letter-spacing:.07em}' +
-    '.hv-more .hv-ctls,.hv-list{display:flex;flex-direction:column;align-items:stretch;gap:4px;margin-top:4px}' +
-    '.hv-chip{flex-direction:row;align-items:center;gap:6px;padding:0 8px;height:28px;border-radius:14px;cursor:pointer}' +
-    '.hv-chip>.hv-head{background:none;border:0;margin:0;padding:0}' +
-    '.hv-chip[data-bypassed="1"],.hv-chip[data-muted="1"]{opacity:.7}' +
-    '.hv-nat{display:flex;gap:6px;align-items:center}';
-  function injectStyle() {
-    if (styled || !root.document || !root.document.head) return;
-    styled = true;
-    var s = h('style'); s.id = 'hv-faces-css'; s.textContent = CSS;
-    root.document.head.appendChild(s);
-  }
 
   // ------------------------------------------------------------------ palette for hero code
   function readPalette(R) {
@@ -240,7 +215,6 @@
     return '<svg viewBox="0 0 16 16" aria-hidden="true">' + ((d && d.glyph) || '<circle cx="8" cy="8" r="5"/>') + '</svg>';
   }
   function glyph(typeOrDevice, px) {
-    injectStyle();
     var type = typeof typeOrDevice === 'string' ? typeOrDevice : typeOrDevice.type;
     var el = h('span', 'hv-glyph');
     if (px) { el.style.width = px + 'px'; el.style.height = px + 'px'; }
@@ -362,7 +336,6 @@
   }
 
   function make(device, density, host, layout, generic) {
-    injectStyle();
     if (DENSITIES.indexOf(density) < 0) density = 'face';
     var R = stateOf(device, host || {}, layout, density);
     var el = density === 'chip' ? renderChip(R) : renderBody(R, generic);

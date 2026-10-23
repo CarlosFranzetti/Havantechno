@@ -291,5 +291,196 @@ console.log('4. song document, step record, equivalence with the archived engine
   ok(typeof leg.tracks[0].patterns.A === 'string' && typeof leg.tracks[2].patterns.D === 'string' && typeof leg.tracks[2].patterns.B === 'object' && leg.tracks[2].patterns.B.cells[0].vel === 1, 'toLegacy keeps plain variants readable (D, cleared back to plain) and per-step data as cells (B)');
 })();
 
-console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
-process.exit(fails ? 1 : 0);
+// ------------------------------------------------------------------ 5. Host and Project (A1, Build Crew)
+// Host with no AudioContext: devices, editor + commit, hold / release, events; Project round trips; then a Host on
+// the fake context: start, transport events, meters. Async parts (start, save, open) finish before the summary.
+console.log('5. Host and Project');
+function loadHost(sb) {
+  ['host', 'project'].forEach(function (f) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, f + '.js'), 'utf8'), sb, { filename: f + '.js' });
+  });
+}
+var section5 = (function () {
+  var sb = sandbox(); load(sb); loadHost(sb);
+  var H = sb.Host, P = sb.Project, SDoc = sb.SongDoc, G = sb.Song.GUIDANCE;
+  ok(H && P && typeof H.create === 'function' && typeof P.serialize === 'function', 'Host and Project globals defined');
+  var host = H.create();
+  var events = { step: [], section: [], play: [], stop: [], document: [], param: [] };
+  Object.keys(events).forEach(function (t) { host.on(t, function (e) { events[t].push(e); }); });
+  ok(host.started() === false && host.context() === null && host.meter('track:kick').level === 0 && host.meter('track:kick').reduction === null, 'a new Host has no audio and silent meters');
+
+  // 5a. devices: every instrument, insert, sidechain, channel, send and master unit of the Guidance song
+  var devs = host.devices(), byId = {};
+  devs.forEach(function (d) { byId[d.id] = d; });
+  var FAM = { kick: 'drums', clap: 'drums', hat_closed: 'drums', hat_open: 'drums', shaker: 'drums', perc: 'drums', sub: 'bass', bass: 'bass',
+              stab: 'keys', lead: 'keys', pad: 'keys', riser: 'fx', impact: 'fx', compressor: 'dynamics', limiter: 'dynamics', sidechain: 'dynamics',
+              delay: 'time', reverb: 'time', chorus: 'time', filter: 'tone', eq3: 'tone', saturator: 'tone', widener: 'utility', channel: 'utility' };
+  var want = [];
+  G.tracks.forEach(function (t) {
+    want.push(['track:' + t.name, t.inst, 'instrument', t.name, t.name]);
+    (t.chain || []).forEach(function (c) { want.push(['track:' + t.name + ':' + (c.name || c.type), c.type, 'insert', t.name, t.name + '.' + (c.name || c.type)]); });
+    want.push(['track:' + t.name + ':sc', 'sidechain', 'sidechain', t.name, t.name + '.sc']);
+    want.push(['track:' + t.name + ':channel', 'channel', 'channel', t.name, t.name]);
+  });
+  Object.keys(G.sends).forEach(function (n) { want.push(['send:' + n, G.sends[n].type, 'send', null, 'send.' + n]); });
+  [['eq', 'eq3'], ['hp', 'filter'], ['lp', 'filter'], ['glue', 'compressor'], ['sat', 'saturator'], ['limiter', 'limiter']].forEach(function (m) { want.push(['master:' + m[0], m[1], 'master', null, 'master.' + m[0]]); });
+  ok(devs.length === want.length && want.length === 49, 'devices() lists ' + devs.length + ' devices (want ' + want.length + ': 13 instruments, 2 inserts, 13 sidechains, 13 channels, 2 sends, 6 master units)');
+  var bad = want.filter(function (w) { var d = byId[w[0]]; return !d || d.type !== w[1] || d.kind !== w[2] || d.track !== w[3] || d.pathPrefix !== w[4] || d.family !== FAM[w[1]] || !d.ref || !d.spec; });
+  ok(bad.length === 0, 'device ids, types, kinds, tracks, path prefixes and families match' + (bad.length ? ' (bad: ' + bad.map(function (w) { return w[0]; }).join(', ') + ')' : ''));
+  ok(sb.Synths.types().every(function (t) { return devs.some(function (d) { return d.kind === 'instrument' && d.type === t; }); }), 'every instrument type has a device');
+  ok(host.device('track:kick').ref.type === 'kick' && host.device('master:glue').ref.node === undefined && host.device('track:bass:eq').ref.type === 'eq3' && host.device('nope') === null, 'device(id) returns the live engine object');
+  var unreachable = [];
+  devs.forEach(function (d) {
+    Object.keys(d.spec).forEach(function (k) {
+      var v = host.getParam(d.pathPrefix + '.' + k), home = d.spec[k].value;
+      if (v === undefined || (typeof home !== 'string' && typeof v !== typeof home)) unreachable.push(d.id + ' ' + k);
+    });
+  });
+  ok(unreachable.length === 0, 'every spec param of every device reads through pathPrefix.param' + (unreachable.length ? ' (' + unreachable.slice(0, 6).join('; ') + ')' : ''));
+  ok(byId['track:stab:channel'].spec['send.delay'].value === 0.15 && host.getParam('stab.send.delay') === 0.15 && host.getParam('kick.send.reverb') === 0, 'the channel device carries the send levels');
+  ok(host.tracks().length === 13 && host.sends().map(function (s) { return s.name; }).join() === 'delay,reverb' && host.sections().length === 9 && host.sections()[3].start === 40 && host.bpm() === 126 && host.swing() === 0.06, 'tracks, sends, sections, bpm, swing');
+
+  // 5b. parameters: live value, document value, 'param' events
+  events.param.length = 0;
+  ok(host.setParam('kick.decay', 0.5) && host.getParam('kick.decay') === 0.5 && host.document().tracks[0].params.decay === 0.5, 'setParam reaches the engine and the document (kick.decay)');
+  ok(events.param.length === 1 && events.param[0].path === 'kick.decay' && events.param[0].value === 0.5 && events.param[0].source === 'ui', "'param' event with source 'ui'");
+  ok(host.setParam('stab.width.width', 1.4) && host.getParam('stab.width.width') === 1.4 && host.document().tracks[3].chain[0].width === 1.4, 'insert param in the engine and the document');
+  ok(host.setParam('bass.sc.depth', 0.7) && host.document().tracks[2].sidechain.depth === 0.7 && host.setParam('kick.gain', 0.9) && host.document().tracks[0].gain === 0.9, 'sidechain and channel params in the document');
+  ok(host.setParam('send.reverb.mix', 0.8) && host.document().sends.reverb.mix === 0.8 && host.setParam('master.hp.cutoff', 40) && host.document().master.hp.cutoff === 40, 'send and master params in the document');
+  ok(host.setParam('kick.send.reverb', 0.2) && host.getParam('kick.send.reverb') === 0.2 && host.document().tracks[0].sends.reverb === 0.2, 'track send level without a context');
+  var dmax = host.device('track:kick').spec.decay.max;
+  ok(host.setParam('kick.decay', 99) && host.getParam('kick.decay') === dmax && host.document().tracks[0].params.decay === dmax && host.setParam('kick.decay', 0.5), 'values clamp to the spec before they reach the document');
+  ok(host.setParam('nope.x', 1) === false && host.setParam('kick.nope', 1) === false && host.setParam('kick.send.reverb', 'abc') === false, 'bad paths and values are refused');
+  ok(host.setParam('clap.mute', true) && host.getParam('clap.mute') === true && host.tracks()[4].muted === true && host.setParam('clap.mute', false) && host.getParam('clap.mute') === false, 'track mute through setParam');
+  ok(host.setParam('bpm', 128) && host.bpm() === 128 && host.document().bpm === 128 && host.setParam('bpm', 126), 'bpm through setParam');
+
+  // 5c. editor + commit: an in-place schedule change (fork a bass variant, add a step)
+  var seq0 = host.engine();
+  function hits(track) { var s = host.engine(), h0 = s.hits()[track]; s.scheduleAll(0, null, 0); return s.hits()[track] - h0; }
+  var bassBefore = hits('bass'), kickBefore = hits('kick');
+  var ed = host.editor();
+  var letter = ed.forkVariant('bass', 'B');
+  ok(letter === 'D' && ed.setPlay('mainB', 'bass', letter), 'fork bass B -> ' + letter + ' and play it in mainB');
+  ed.setStep('bass', letter, 0, { vel: 1 });
+  events.document.length = 0;
+  var rebuilt = host.commit();
+  ok(rebuilt === false && host.engine() === seq0 && events.document.length === 1 && events.document[0].reason === 'commit' && events.document[0].rebuilt === false, "a step edit commits in place and emits 'document'");
+  var bassAfter = hits('bass');
+  ok(bassAfter === bassBefore + 48 && hits('kick') === kickBefore, 'the schedule changed: bass ' + bassBefore + ' -> ' + bassAfter + ' hits (+1 per bar of mainB), kick unchanged');
+  ok(host.engine().tracks.bass.variants.D.cells[0].vel === 1 && host.sections()[7].play.bass === 'D', 'the running engine plays the fork in mainB');
+  ok(ed.undo() && ed.undo() && ed.undo() && host.commit() === false && hits('bass') === bassBefore && !host.engine().tracks.bass.variants.D, 'undo + commit restores the schedule');
+  // a structural edit rebuilds, keeping position, held paths, mute and solo
+  host.transport.jump('mainA'); host.hold('stab.cutoff'); host.mute('clap', true); host.solo('kick', false);
+  ok(ed.setTrackParam('kick', 'decay', 0.6), 'setTrackParam');
+  rebuilt = host.commit();
+  ok(rebuilt === true && host.engine() !== seq0 && events.document[events.document.length - 1].rebuilt === true, 'a track param edit rebuilds the engine');
+  ok(host.getParam('kick.decay') === 0.6 && host.transport.pos().bar === 40 && host.isHeld('stab.cutoff') && host.heldCount() === 1 && host.tracks()[4].muted === true, 'the rebuild keeps the position, held paths and mute');
+  ok(host.getParam('stab.width.width') === 1.4 && host.getParam('master.hp.cutoff') === 40 && host.getParam('send.reverb.mix') === 0.8 && host.getParam('kick.send.reverb') === 0.2, 'the rebuild keeps the knob values (stored in the document)');
+  ok(host.device('track:kick').ref === host.engine().tracks.kick.inst, 'devices() follow the rebuilt engine');
+  host.mute('clap', false);
+
+  // 5d. hold / release round trip
+  host.setParam('stab.cutoff', 3000);
+  host.engine().scheduleAll(40, 41, 0);              // mainA's section start sets stab.cutoff 1500, skipped while held
+  ok(host.getParam('stab.cutoff') === 3000, 'a held path ignores the section set');
+  events.param.length = 0;
+  host.release('stab.cutoff');
+  ok(host.heldCount() === 0 && !host.isHeld('stab.cutoff') && host.getParam('stab.cutoff') === 1500, 'release returns the path to the arranged value (1500 at mainA)');
+  ok(events.param.length === 1 && events.param[0].source === 'arrangement' && events.param[0].value === 1500, "release emits 'param' with source 'arrangement'");
+  host.hold('kick.level'); host.hold('stab.cutoff'); host.releaseAll();
+  ok(host.heldCount() === 0, 'releaseAll');
+  events.param.length = 0;
+  host.engine().scheduleAll(16, 17, 0);              // intro2 ramps stab.cutoff
+  ok(events.param.some(function (e) { return e.path === 'stab.cutoff' && e.source === 'arrangement'; }), "section ramps emit 'param' with source 'arrangement'");
+
+  // 5e. events without a context: stop emits a step; listeners can be removed
+  events.step.length = 0;
+  host.transport.stop();
+  ok(events.step.length === 1 && events.step[0].bar === 40 && events.step[0].name === 'mainA' && host.transport.playing === false, "transport.stop() emits 'step' at the section start");
+  var n0 = 0, f = function () { n0++; }; host.on('step', f); host.off('step', f); host.transport.stop();
+  ok(n0 === 0 && host.transport.play() === false, 'off() removes a listener; play() is a no-op without audio');
+
+  // 5f. Project: serialize / parse round trips; autosave / restore; loadDocument
+  var doc = host.document(), json = P.serialize(doc), env = JSON.parse(json);
+  ok(env.app === 'havantechno' && env.format === 1 && typeof env.savedAt === 'string' && env.song && env.song.v === 1 && P.savedAt(json) === env.savedAt, 'serialize wraps the SongDoc as {app, format, savedAt, song}');
+  var back = P.parse(json);
+  ok(SDoc.save(back) === SDoc.save(doc), 'parse(serialize(doc)) gives back the same document');
+  ok(SDoc.save(P.parse(SDoc.save(doc))) === SDoc.save(doc), 'parse accepts a bare SongDoc');
+  var threw = 0; ['{"app":"other"}', '{"app":"havantechno","format":9,"song":{}}', 'not json', '{"v":2,"tracks":[]}'].forEach(function (j) { try { P.parse(j); } catch (e) { threw++; } });
+  ok(threw === 4, 'parse rejects other files, unknown formats and bad JSON');
+  ok(P.fileName('Guidance edit / v2') === 'Guidance edit - v2.havantechno.json' && P.fileName('') === 'song.havantechno.json', 'file names are safe');
+  ok(P.restore() === null && P.autosave(doc) === false, 'no localStorage: autosave and restore do nothing');
+  var store = {}; sb.localStorage = { getItem: function (k) { return store.hasOwnProperty(k) ? store[k] : null; }, setItem: function (k, v) { store[k] = String(v); }, removeItem: function (k) { delete store[k]; } };
+  ok(P.autosave(doc) === true && SDoc.save(P.restore()) === SDoc.save(doc), 'autosave / restore through localStorage');
+  P.clearAutosave(); ok(P.restore() === null, 'clearAutosave');
+  events.document.length = 0;
+  host.transport.jump('break'); host.hold('kick.level'); host.solo('kick', true);
+  host.loadDocument(back);
+  ok(events.document.length === 1 && events.document[0].reason === 'load' && host.transport.pos().bar === 0 && host.heldCount() === 0 && !host.tracks()[0].solo, "loadDocument rebuilds stopped at bar 0, nothing held, emits 'document'");
+  ok(host.devices().length === 49 && host.getParam('master.hp.cutoff') === 40 && host.getParam('kick.decay') === 0.6 && host.document().tracks[2].variants.D === undefined, 'a saved and loaded project keeps its knob values');
+  host.loadDocument(sb.Song.document());
+  ok(host.getParam('master.hp.cutoff') === 24 && host.getParam('kick.decay') === 0.3, 'loadDocument(Song.document()) is the stock song again');
+  threw = false; try { host.loadDocument({ v: 1 }); } catch (e) { threw = true; }
+  ok(threw && host.devices().length === 49, 'a bad document throws and leaves the current song running');
+
+  // 5g. async: the shell hooks, render without OfflineAudioContext, and a Host on the fake context
+  var shellCalls = [];
+  var shell = {
+    saveFile: function (o) { shellCalls.push(['save', o.name, o.text.length]); return Promise.resolve({ path: '/songs/' + o.name }); },
+    openFile: function () { shellCalls.push(['open']); return Promise.resolve({ path: '/songs/x.havantechno.json', text: json }); }
+  };
+  var cancel = { saveFile: function () { return Promise.resolve(null); }, openFile: function () { return Promise.resolve({ canceled: true }); } };
+  var ctx = new FakeContext(48000);
+  ctx.createAnalyser = function () {                  // a steady 0.5 / -0.5 signal, identical on both channels
+    var n = FakeContext.prototype.createAnalyser.call(this);
+    n.getFloatTimeDomainData = function (b) { for (var i = 0; i < b.length; i++) b[i] = (i % 2) ? -0.5 : 0.5; };
+    return n;
+  };
+  var live = H.create({ context: ctx }), lev = { play: 0, stop: 0, document: [] };
+  live.on('play', function () { lev.play++; }); live.on('stop', function () { lev.stop++; }); live.on('document', function (e) { lev.document.push(e.reason); });
+  return Promise.all([
+    P.save(doc, { shell: shell, name: 'My song' }),
+    P.open({ shell: shell }),
+    P.save(doc, { shell: cancel }),
+    P.open({ shell: cancel }),
+    P.save(doc, {}).then(function () { return 'saved'; }, function (e) { return 'rejected'; }),
+    host.render({ from: 'intro', to: 'intro' }).then(function () { return 'rendered'; }, function (e) { return e.message; }),
+    host.render({ from: 'nope' }).then(function () { return 'rendered'; }, function (e) { return e.message; }),
+    live.start()
+  ]).then(function (r) {
+    ok(r[0] && r[0].path === '/songs/My song.havantechno.json' && r[0].name === 'My song.havantechno.json' && shellCalls[0][0] === 'save', 'save goes through HavantechnoShell.saveFile');
+    ok(r[1] && SDoc.save(r[1]) === SDoc.save(back) && shellCalls[1][0] === 'open', 'open goes through HavantechnoShell.openFile and parses the file');
+    ok(r[2] === null && r[3] === null, 'a cancelled dialog resolves null');
+    ok(r[4] === 'rejected', 'save without a shell or a document rejects');
+    ok(r[5] === 'OfflineAudioContext unavailable' && /unknown section/.test(r[6]), 'render rejects cleanly without OfflineAudioContext and for an unknown section');
+    ok(r[7] === true && live.started() && live.context() === ctx && lev.document[0] === 'start', "start() on a context resolves true, rebuilds live, emits 'document'");
+    ok(live.engine().ctx === ctx && live.device('track:kick').ref.out && live.analyser(), 'the live engine runs on the context');
+    var m = live.meter('track:kick');
+    ok(Math.abs(m.level - 0.5) < 1e-9 && m.reduction === null && m.correlation === null, 'meter(): peak level of the device output (' + m.level + ')');
+    var mm = live.meter('master');
+    ok(Math.abs(mm.level - 0.5) < 1e-9 && Math.abs(mm.correlation - 1) < 1e-9, 'master meter: level and L/R correlation (' + mm.correlation + ')');
+    live.device('master:glue').ref.node.reduction = -4.5;
+    live.device('track:bass:sc').ref.node.gain.value = 0.5;
+    ok(live.meter('master:glue').reduction === -4.5 && live.meter('master:limiter').reduction === null && live.meter('master:limiter').correlation === 1, 'compressor reduction from p.node.reduction');
+    ok(Math.abs(live.meter('track:bass:sc').reduction + 6.0206) < 1e-3, 'sidechain reduction from its gain (' + live.meter('track:bass:sc').reduction.toFixed(2) + ' dB)');
+    ok(live.meter('nope').level === 0 && live.meter('nope').reduction === null, 'an unknown meter id is silent');
+    ok(live.transport.play() === true && live.transport.playing && lev.play === 1, "transport.play() emits 'play'");
+    var s0 = live.engine();
+    live.editor().setTrackParam('bass', 'cutoff', 300);
+    ok(live.commit() === true && live.engine() !== s0 && live.transport.playing && lev.stop === 0 && lev.play === 1, 'a rebuild while playing keeps playing without stop / play events');
+    ok(live.getParam('bass.cutoff') === 300 && live.meter('track:kick').level > 0, 'meters reattach after a rebuild');
+    live.transport.pause();
+    ok(!live.transport.playing && lev.stop === 1, "transport.pause() emits 'stop'");
+    live.dispose();
+    var st = 0; s0 = H.create(); s0.start().then(function (v) { st = v; });
+    return Promise.resolve().then(function () { ok(s0.started() === false, 'start() without any AudioContext resolves false and stays dry'); });
+  });
+})();
+
+section5.then(function () {
+  console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
+  process.exit(fails ? 1 : 0);
+}, function (e) {
+  console.log('  FAIL section 5 threw: ' + (e && e.stack));
+  process.exit(1);
+});

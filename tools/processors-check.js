@@ -1,0 +1,253 @@
+#!/usr/bin/env node
+/* Havantechno - processors-check.js (A8)
+ * Node check for app/engine/processors.js with a fake AudioContext. Run: node tools/processors-check.js
+ *
+ * The fake context is not copied: the section "fake Web Audio" of app/engine/selfcheck.js is read and run here.
+ * Regression: for every processor, the automation calls of the parameters that existed before (the spec of the archived
+ * olde Havantechno dub studio/processors.js, which is byte-identical to the first app file) must match the new file.
+ * Only connected nodes are compared, so helper nodes that a default build leaves unused do not count.
+ * Checks of the new parameters: loop and modulation topology, the Freeverb network (node count, lengths at 44.1 and 48 kHz,
+ * comb gains from size), seeded impulse, chorus base and invert, widener monoBelow, sidechain curve and retrigger.
+ * What it cannot check: the sound. Filters, the Freeverb tail, the impulse shape and the ducking curve are not rendered here.
+ */
+'use strict';
+var fs = require('fs'), path = require('path'), vm = require('vm');
+
+var ROOT = path.join(__dirname, '..');
+var ENGINE = path.join(ROOT, 'app', 'engine');
+var ARCHIVE = path.join(ROOT, 'olde Havantechno dub studio');
+
+var fails = 0, checks = 0;
+function ok(cond, msg) { checks++; if (!cond) { fails++; console.log('  FAIL ' + msg); } else console.log('  ok   ' + msg); }
+
+// ------------------------------------------------------------------ fake Web Audio, from selfcheck.js
+var sc = fs.readFileSync(path.join(ENGINE, 'selfcheck.js'), 'utf8');
+var fakeStart = sc.indexOf('// ------------------------------------------------------------------ fake Web Audio');
+var fakeEnd = sc.indexOf('function load(sandbox)');
+if (fakeStart < 0 || fakeEnd < 0) { console.log('FAILED: the fake Web Audio section was not found in selfcheck.js'); process.exit(1); }
+var fake = vm.runInNewContext(sc.slice(fakeStart, fakeEnd) + '\n;({ FakeContext: FakeContext, Param: Param });', {});
+var Fake = fake.FakeContext;
+
+// ------------------------------------------------------------------ engine loading
+function loadProcessors(file) {
+  var sb = { console: console, Float32Array: Float32Array, Uint8Array: Uint8Array, ArrayBuffer: ArrayBuffer };
+  sb.window = sb; sb.globalThis = sb;
+  var ctx = vm.createContext(sb);
+  vm.runInContext(fs.readFileSync(path.join(ENGINE, 'core.js'), 'utf8'), ctx, { filename: 'core.js' });
+  vm.runInContext(fs.readFileSync(file, 'utf8'), ctx, { filename: path.basename(file) });
+  return sb.Processors;
+}
+var P = loadProcessors(path.join(ENGINE, 'processors.js'));           // the file under test
+var B = loadProcessors(path.join(ARCHIVE, 'processors.js'));          // the archived baseline
+
+// ------------------------------------------------------------------ helpers
+function nodesOf(proc, type) { return proc.nodes.filter(function (n) { return n.type_ === type; }); }
+// is there a path from `from` to `to`? noDelay: the path may not pass a DelayNode
+function reaches(from, to, opts) {
+  var stack = [from], seen = [from];
+  while (stack.length) {
+    var n = stack.pop();
+    if (n === to) return true;
+    var outs = n.connections || [];
+    for (var i = 0; i < outs.length; i++) {
+      var c = outs[i];
+      if (!c || seen.indexOf(c) >= 0) continue;
+      if (opts && opts.noDelay && c.type_ === 'delay') continue;
+      seen.push(c); stack.push(c);
+    }
+  }
+  return false;
+}
+function callsOf(param, method) { return (param.calls || []).filter(function (c) { return c[0] === method; }); }
+function sameBuffer(a, b) {
+  if (!a || !b || a.numberOfChannels !== b.numberOfChannels || a.length !== b.length) return false;
+  for (var c = 0; c < a.numberOfChannels; c++) {
+    var x = a.getChannelData(c), y = b.getChannelData(c);
+    for (var i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+  }
+  return true;
+}
+// every automation call of every connected node's parameters, as a sorted list (order-free comparison)
+function signature(proc) {
+  var out = [];
+  proc.nodes.forEach(function (n) {
+    if (!n.connections || n.connections.length === 0) return;
+    Object.keys(n).forEach(function (k) {
+      var v = n[k];
+      if (v && typeof v === 'object' && Array.isArray(v.calls)) out.push(n.type_ + '.' + k + ' ' + JSON.stringify(v.calls));
+    });
+  });
+  return out.sort();
+}
+function near(a, b, eps) { return Math.abs(a - b) <= (eps || 1e-9); }
+
+// ------------------------------------------------------------------ 1. regression against the archived processors
+console.log('1. defaults and existing parameters match the archived processors.js');
+(function () {
+  var TYPES = ['filter', 'saturator', 'delay', 'reverb', 'eq3', 'compressor', 'limiter', 'widener', 'chorus', 'sidechain'];
+  TYPES.forEach(function (t) {
+    var spec = B.spec(t), ops = [], k;
+    for (k in spec) if (spec.hasOwnProperty(k)) {
+      var s = spec[k];
+      if (typeof s.value === 'number') { ops.push([k, s.max]); ops.push([k, s.min, { at: 2, ramp: 1 }]); ops.push([k, s.value]); }
+      else if (typeof s.value === 'boolean') { ops.push([k, !s.value]); ops.push([k, s.value]); }
+      else if (k === 'mode') { ops.push([k, 'highpass']); ops.push([k, 'lowpass']); }
+    }
+    function run(mod) {
+      var c = new Fake(44100), proc = mod.create(c, t);
+      ops.forEach(function (o) { proc.set(o[0], o[1], o[2]); });
+      if (t === 'sidechain') { proc.trigger(100); proc.trigger(110); proc.trigger(120); }   // spaced past any release: no retrigger
+      return proc;
+    }
+    var a = signature(run(P)), b = signature(run(B));
+    ok(JSON.stringify(a) === JSON.stringify(b), t + ': ' + ops.length + ' existing-parameter operations, ' + a.length + ' automation lists identical');
+    if (JSON.stringify(a) !== JSON.stringify(b)) {
+      var i = 0; while (i < a.length && a[i] === b[i]) i++;
+      console.log('     first difference: new ' + a[i] + ' | old ' + b[i]);
+    }
+  });
+})();
+
+// ------------------------------------------------------------------ 2. delay: loop and modulation
+console.log('2. delay: loop (filters in the feedback path) and modRate / modDepth');
+(function () {
+  var c1 = new Fake(44100), d = P.create(c1, 'delay');
+  var dL = nodesOf(d, 'delay')[0], bq = nodesOf(d, 'biquad'), lp = bq[0], hp = bq[1];
+  var fbL = dL.connections.filter(function (n) { return n.type_ === 'gain'; })[0];
+  ok(reaches(d.input, lp, { noDelay: true }) && !reaches(fbL, lp, { noDelay: true }), 'loop off: the input is filtered on the way in, the feedback is not');
+
+  var c2 = new Fake(44100), dl = P.create(c2, 'delay', { loop: true });
+  var dL2 = nodesOf(dl, 'delay')[0], dR2 = nodesOf(dl, 'delay')[1], bq2 = nodesOf(dl, 'biquad');
+  var lp2 = bq2[0], hp2 = bq2[1], lpR2 = bq2[2], hpR2 = bq2[3];
+  var fbL2 = dL2.connections.filter(function (n) { return n.type_ === 'gain'; })[0];
+  var fbR2 = dR2.connections.filter(function (n) { return n.type_ === 'gain'; })[0];
+  ok(!reaches(dl.input, lp2, { noDelay: true }), 'loop on: the input does not reach the tone filter without a delay');
+  ok(reaches(fbL2, hp2, { noDelay: true }) && reaches(fbL2, lp2, { noDelay: true }), 'loop on: left feedback goes through hp then the tone filter');
+  ok(reaches(fbR2, hpR2, { noDelay: true }) && reaches(fbR2, lpR2, { noDelay: true }) && !reaches(fbR2, lp2, { noDelay: true }), 'loop on: right feedback uses its own pair of filters');
+  dl.set('loop', false);
+  ok(reaches(dl.input, lp2, { noDelay: true }), 'loop switched off again: the input path is restored');
+
+  var c3 = new Fake(44100), dm = P.create(c3, 'delay', { modRate: 3, modDepth: 0.004 });
+  var osc = nodesOf(dm, 'osc')[0], dmL = nodesOf(dm, 'delay')[0], dmR = nodesOf(dm, 'delay')[1];
+  var lfoG = nodesOf(dm, 'gain').filter(function (n) { return n.connections.indexOf(dmL.delayTime) >= 0; })[0];
+  ok(callsOf(osc.frequency, 'setTargetAtTime').some(function (x) { return x[1] === 3; }), 'modRate 3 Hz drives the oscillator frequency');
+  ok(lfoG && callsOf(lfoG.gain, 'setTargetAtTime').some(function (x) { return x[1] === 0.004; }), 'modDepth 4 ms sets the LFO gain');
+  ok(reaches(osc, dmL.delayTime) && reaches(osc, dmR.delayTime), 'the oscillator reaches both delay-time parameters through the gain');
+  var c4 = new Fake(44100), d0 = P.create(c4, 'delay');
+  ok(d0.params.modRate === 0 && d0.params.modDepth === 0 && d0.params.loop === false, 'defaults: modRate 0, modDepth 0, loop off');
+})();
+
+// ------------------------------------------------------------------ 3. reverb: Freeverb network
+console.log('3. reverb: algo freeverb on native nodes');
+var FV_LEFT = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617, 556, 441, 341, 225];
+var FV_RIGHT = [1139, 1211, 1300, 1379, 1445, 1514, 1580, 1640, 579, 464, 364, 248];   // 44.1 kHz, spread 23
+var FV_LEFT_48 = [1215, 1293, 1390, 1476, 1548, 1623, 1695, 1760, 605, 480, 371, 245];
+var FV_RIGHT_48 = [1240, 1318, 1415, 1501, 1573, 1648, 1720, 1785, 630, 505, 396, 270]; // 48 kHz, spread 25
+(function () {
+  [[44100, FV_LEFT.concat(FV_RIGHT)], [48000, FV_LEFT_48.concat(FV_RIGHT_48)]].forEach(function (cfg) {
+    var sr = cfg[0], want = cfg[1];
+    var c = new Fake(sr), r = P.create(c, 'reverb', { algo: 'freeverb' });
+    var delays = nodesOf(r, 'delay');
+    var lens = delays.slice(1).map(function (d) { return Math.round(d.delayTime.value * sr); });   // [0] is the predelay
+    ok(delays.length === 25, 'freeverb at ' + sr + ' Hz: ' + delays.length + ' delay nodes = 1 predelay + 12 per channel x 2');
+    ok(nodesOf(r, 'convolver').length === 0, 'freeverb at ' + sr + ' Hz: no convolver');
+    ok(JSON.stringify(lens) === JSON.stringify(want), 'freeverb at ' + sr + ' Hz: line lengths ' + lens.join(' ') + (JSON.stringify(lens) === JSON.stringify(want) ? '' : ' (want ' + want.join(' ') + ')'));
+    ok(reaches(r.input, r._wet), 'freeverb at ' + sr + ' Hz: input reaches the output');
+    ok(nodesOf(r, 'merger').length === 1 && nodesOf(r, 'splitter').length === 1, 'freeverb at ' + sr + ' Hz: one splitter and one merger for the stereo sum');
+  });
+  // comb feedback from RT60: g = 10^(-3 * T / RT60), T = length / sampleRate
+  var c2 = new Fake(44100), r2 = P.create(c2, 'reverb', { algo: 'freeverb', size: 2 });
+  var want2 = Math.pow(10, -3 * (1116 / 44100) / 2);
+  ok(nodesOf(r2, 'gain').some(function (n) { return callsOf(n.gain, 'setTargetAtTime').some(function (x) { return near(x[1], want2, 1e-12); }); }),
+     'size 2 s sets comb 1 feedback to ' + want2.toFixed(6) + ' (RT60 relation)');
+  r2.set('size', 0.5);
+  var want3 = Math.pow(10, -3 * (1116 / 44100) / 0.5);
+  ok(nodesOf(r2, 'gain').some(function (n) { return callsOf(n.gain, 'setTargetAtTime').some(function (x) { return near(x[1], want3, 1e-12); }); }), 'size is automatable: 0.5 s gives ' + want3.toFixed(6));
+  // switching back to the impulse drops the network
+  r2.set('algo', 'ir');
+  ok(nodesOf(r2, 'delay').length === 1 && nodesOf(r2, 'convolver').length === 1, 'algo back to ir: network removed, one convolver');
+  ok(P.create(new Fake(44100), 'reverb').params.algo === 'ir', 'default algo is ir');
+})();
+
+// ------------------------------------------------------------------ 4. reverb: seeded impulse
+console.log('4. reverb: seed');
+(function () {
+  var c = new Fake(44100);
+  var a = nodesOf(P.create(c, 'reverb', { seed: 7 }), 'convolver')[0].buffer;
+  var b = nodesOf(P.create(c, 'reverb', { seed: 7 }), 'convolver')[0].buffer;
+  var e = nodesOf(P.create(c, 'reverb', { seed: 8 }), 'convolver')[0].buffer;
+  var u = nodesOf(P.create(c, 'reverb'), 'convolver')[0].buffer, v = nodesOf(P.create(c, 'reverb'), 'convolver')[0].buffer;
+  ok(a && sameBuffer(a, b), 'seed 7 twice: the two impulse buffers are identical');
+  ok(a && !sameBuffer(a, e), 'seed 8 differs from seed 7');
+  ok(u && v && !sameBuffer(u, v), 'seed 0 (default) keeps Math.random: two builds differ');
+})();
+
+// ------------------------------------------------------------------ 5. chorus: base and invert
+console.log('5. chorus: base and invert');
+(function () {
+  var c = new Fake(44100);
+  var d0 = P.create(c, 'chorus'), dl0 = nodesOf(d0, 'delay');
+  ok(near(dl0[0].delayTime.value, 0.014) && near(dl0[1].delayTime.value, 0.021), 'default lines are 14 ms and 21 ms, as before');
+  var inv0 = nodesOf(d0, 'gain').filter(function (n) { return n.connections.some(function (x) { return x.type_ === 'merger'; }); });
+  ok(inv0.length === 1 && inv0[0].gain.value === 1, 'default: the right wet is not inverted (gain 1)');
+  var di = P.create(c, 'chorus', { invert: true }), invI = nodesOf(di, 'gain').filter(function (n) { return n.connections.some(function (x) { return x.type_ === 'merger'; }); })[0];
+  ok(callsOf(invI.gain, 'setTargetAtTime').some(function (x) { return x[1] === -1; }), 'invert: the right wet gain goes to -1');
+  var db = P.create(c, 'chorus', { base: 3.5 }), dbl = nodesOf(db, 'delay');
+  ok(callsOf(dbl[0].delayTime, 'setTargetAtTime').some(function (x) { return near(x[1], 0.0035); }) && callsOf(dbl[1].delayTime, 'setTargetAtTime').some(function (x) { return near(x[1], 0.00525); }),
+     'base 3.5 ms: left line 3.5 ms, right line 5.25 ms (1.5 x base)');
+})();
+
+// ------------------------------------------------------------------ 6. widener: monoBelow
+console.log('6. widener: monoBelow');
+(function () {
+  var c = new Fake(44100);
+  var w0 = P.create(c, 'widener'), hp0 = nodesOf(w0, 'biquad')[0];
+  var side0 = nodesOf(w0, 'gain').filter(function (n) { return n.connections.indexOf(hp0) >= 0; })[0];
+  var sA0 = side0.connections.filter(function (n) { return n.type_ === 'gain'; })[0];
+  var sB0 = hp0.connections[0];
+  ok(sA0.gain.value === 1 && sB0.gain.value === 0, 'default: the side goes through unfiltered (direct gate 1, high-pass gate 0)');
+  var w1 = P.create(c, 'widener', { monoBelow: 150 }), hp1 = nodesOf(w1, 'biquad')[0];
+  var side1 = nodesOf(w1, 'gain').filter(function (n) { return n.connections.indexOf(hp1) >= 0; })[0];
+  var sA1 = side1.connections.filter(function (n) { return n.type_ === 'gain'; })[0], sB1 = hp1.connections[0];
+  ok(hp1.type === 'highpass' && callsOf(hp1.frequency, 'setTargetAtTime').some(function (x) { return x[1] === 150; }), 'monoBelow 150: side high-passed at 150 Hz');
+  ok(callsOf(sA1.gain, 'setTargetAtTime').some(function (x) { return x[1] === 0; }) && callsOf(sB1.gain, 'setTargetAtTime').some(function (x) { return x[1] === 1; }),
+     'monoBelow 150: the filtered side replaces the direct side');
+  ok(near(hp1.Q.value, -3), 'high-pass Q is -3 (dB, Butterworth)');
+  ok(P.create(c, 'widener').params.monoBelow === 0, 'default monoBelow 0 (off)');
+})();
+
+// ------------------------------------------------------------------ 7. sidechain: curve and retrigger
+console.log('7. sidechain: curve and retrigger from the current level');
+function duck(opts, t1, t2) {
+  var c = new Fake(44100), s = P.create(c, 'sidechain', opts);
+  s.trigger(t1); s.trigger(t2);
+  return s.node.gain.calls;
+}
+function hasCall(calls, method, v, t) {
+  return calls.some(function (x) { return x[0] === method && (v === null || near(x[1], v, 1e-9)) && (t === null || near(x[2], t, 1e-9)); });
+}
+(function () {
+  // 1 s spacing: no retrigger, as before
+  var calm = duck({}, 1, 2);
+  ok(hasCall(calm, 'linearRampToValueAtTime', 0.4, 1.004), 'default: dip to 1 - depth at the attack end (unchanged)');
+  // 10 ms apart, default timing: the second kick lands in the hold, so the level is the dip
+  var def10 = duck({ curve: 'db' }, 1, 1.010);
+  ok(hasCall(def10, 'setValueAtTime', 0.4, 1.010), 'retrigger 10 ms apart in the hold: starts from the dip level 0.4');
+  // 10 ms apart, release already running: the level must be read from the curve, not stepped to 0.4
+  var lo = 0.4, f = (1.010 - 1.006) / 0.22;
+  var expDb = lo * Math.pow(1 / lo, f), expLin = lo + (1 - lo) * f;
+  var db10 = duck({ curve: 'db', hold: 0.002 }, 1, 1.010);
+  ok(hasCall(db10, 'setValueAtTime', expDb, 1.010), 'curve db, retrigger in the release: starts from ' + expDb.toFixed(5) + ' (not the step 0.4)');
+  ok(hasCall(db10, 'cancelScheduledValues', null, 1.010), 'the old schedule from the retrigger on is cancelled');
+  ok(hasCall(db10, 'exponentialRampToValueAtTime', 1, 1.236), 'curve db: the new recovery is exponentialRampToValueAtTime(1) at t + len');
+  ok(!hasCall(db10, 'linearRampToValueAtTime', 1, 1.236), 'curve db: no linear recovery is scheduled');
+  var lin10 = duck({ curve: 'lin', hold: 0.002 }, 1, 1.010);
+  ok(hasCall(lin10, 'setValueAtTime', expLin, 1.010) && hasCall(lin10, 'linearRampToValueAtTime', 1, 1.236), 'curve lin, same retrigger: ramps from ' + expLin.toFixed(5) + ' linearly');
+  ok(Math.abs(expDb - 0.4) > 0.005, 'the dB curve differs from the old step by ' + (expDb - 0.4).toFixed(4));
+  var dd = P.create(new Fake(44100), 'sidechain');
+  ok(dd.params.curve === 'lin', 'default curve lin');
+})();
+
+// ------------------------------------------------------------------ result
+console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
+process.exit(fails ? 1 : 0);

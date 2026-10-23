@@ -6,10 +6,13 @@
  *   d.set('mix', 0.3); d.set('mix', 0, {at: t, ramp: 4});   // ramps are scheduled on the AudioParam
  *   d.bypass(true); d.dispose();
  *
- * Types: filter, saturator, delay (stereo ping-pong, tempo-synced), reverb (generated impulse),
- *        eq3, compressor, limiter, sidechain (ducker: proc.trigger(t)), widener (mid/side), chorus.
+ * Types: filter, saturator, delay (stereo ping-pong, tempo-synced; loop = filters in the feedback path; modRate/modDepth),
+ *        reverb (generated impulse, or algo 'freeverb' on native nodes; seed makes the impulse repeatable),
+ *        eq3, compressor, limiter, sidechain (ducker: proc.trigger(t); curve 'lin'|'db'),
+ *        widener (mid/side; monoBelow keeps the low end mono), chorus (base delay; invert the right channel).
  * Helpers: Processors.chain(ctx, specs), Processors.channel(ctx), Processors.master(ctx).
  * Nothing throws: without an AudioContext every unit is an inert object with the same API.
+ * Every parameter added after the first version defaults to the old behaviour.
  */
 (function () {
   'use strict';
@@ -41,6 +44,36 @@
     var whole = 4 * 60 / bpm, s = whole * parseInt(m[1], 10) / parseInt(m[2], 10);
     if (m[3] === 'd') s *= 1.5; else if (m[3] === 't') s *= 2 / 3;
     return s;
+  }
+
+  // seeded generator (mulberry32): the same seed gives the same stream, so a seeded impulse repeats exactly
+  function seededRandom(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // same envelope and high-pass as K.impulse (core.js, not owned here), with the seeded generator instead of Math.random
+  function impulseSeeded(ctx, seconds, decay, hp, seed) {
+    try {
+      var sr = ctx.sampleRate || 44100, n = Math.max(1, Math.floor(sr * seconds));
+      var buf = ctx.createBuffer(2, n, sr), ch, i, d, k = 2.5 + 6 * (1 - clamp(decay, 0, 1)), rnd = seededRandom(seed);
+      var a = hp ? Math.exp(-2 * Math.PI * hp / sr) : 0;
+      for (ch = 0; ch < 2; ch++) {
+        d = buf.getChannelData(ch);
+        var px = 0, py = 0;
+        for (i = 0; i < n; i++) {
+          var x = (rnd() * 2 - 1) * Math.pow(1 - i / n, k);
+          if (hp) { py = a * (py + x - px); px = x; d[i] = py; } else d[i] = x;
+        }
+      }
+      return buf;
+    } catch (e) { return null; }
   }
 
   // ------------------------------------------------------------ base
@@ -116,33 +149,51 @@
     }
   };
 
+  // loop: false (default) puts tone and hp on the input, so only the first echo is filtered as well.
+  //       true puts them in the feedback path (left and right each have their own pair), so every repeat darkens.
+  // modRate/modDepth: a sine LFO (Hz) scaled by modDepth (s) and added to both delay times.
   BUILD.delay = {
     spec: { time: { min: 0.01, max: 2, value: 0.357, unit: 's' }, division: { value: '' }, bpm: { min: 40, max: 300, value: 126 },
             feedback: { min: 0, max: 0.95, value: 0.4 }, mix: { min: 0, max: 1, value: 0.25 }, tone: { min: 300, max: 20000, value: 3500, unit: 'Hz' },
-            pingpong: { value: true }, hp: { min: 20, max: 5000, value: 200, unit: 'Hz' } },
+            pingpong: { value: true }, hp: { min: 20, max: 5000, value: 200, unit: 'Hz' },
+            loop: { value: false }, modRate: { min: 0, max: 20, value: 0, unit: 'Hz' }, modDepth: { min: 0, max: 0.05, value: 0, unit: 's' } },
     build: function (p) {
       var ctx = p.ctx, P = p.params;
+      var src = p.track(ctx.createGain());                                        // fan-out of the input
       var dL = p.track(ctx.createDelay(2.1)), dR = p.track(ctx.createDelay(2.1));
       var fbL = p.track(ctx.createGain()), fbR = p.track(ctx.createGain());
-      var lp = p.track(ctx.createBiquadFilter()), hp = p.track(ctx.createBiquadFilter());
+      var lp = p.track(ctx.createBiquadFilter()), hp = p.track(ctx.createBiquadFilter());     // input filters (loop off), left loop filters (loop on)
+      var lpR = p.track(ctx.createBiquadFilter()), hpR = p.track(ctx.createBiquadFilter());   // right loop filters (loop on)
       var wet = p.track(ctx.createGain()), dry = p.track(ctx.createGain()), inR = p.track(ctx.createGain());
       var merger = p.track(ctx.createChannelMerger(2));
-      lp.type = 'lowpass'; val(lp.frequency, P.tone); val(lp.Q, 0.5);
-      hp.type = 'highpass'; val(hp.frequency, P.hp); val(hp.Q, 0.5);
+      var lfo = p.track(ctx.createOscillator()), lfoG = p.track(ctx.createGain());
+      lp.type = 'lowpass'; lpR.type = 'lowpass'; hp.type = 'highpass'; hpR.type = 'highpass';
+      val(lp.frequency, P.tone); val(lpR.frequency, P.tone); val(lp.Q, 0.5); val(lpR.Q, 0.5);
+      val(hp.frequency, P.hp); val(hpR.frequency, P.hp); val(hp.Q, 0.5); val(hpR.Q, 0.5);
       val(dL.delayTime, P.time); val(dR.delayTime, P.time);
       val(fbL.gain, P.feedback); val(fbR.gain, P.feedback); val(wet.gain, P.mix); val(dry.gain, 1 - P.mix);
-      val(inR.gain, P.pingpong ? 0 : 1);
-      // input -> hp -> lp -> dL ; input -> inR -> dR (only when not ping-pong)
-      p.input.connect(hp); hp.connect(lp); lp.connect(dL); lp.connect(inR); inR.connect(dR);
-      dL.connect(fbL); dR.connect(fbR);
-      fbL.connect(P.pingpong ? dR : dL); fbR.connect(P.pingpong ? dL : dR);
-      dL.connect(merger, 0, 0); dR.connect(merger, 0, 1);
-      merger.connect(wet); wet.connect(p._wet);
-      p.input.connect(dry); dry.connect(p._wet);
-      function rewire() {
-        disc(fbL); disc(fbR);
-        fbL.connect(P.pingpong ? dR : dL); fbR.connect(P.pingpong ? dL : dR);
-        val(inR.gain, P.pingpong ? 0 : 1);
+      lfo.type = 'sine'; val(lfo.frequency, P.modRate); val(lfoG.gain, P.modDepth);
+      lfo.connect(lfoG); lfoG.connect(dL.delayTime); lfoG.connect(dR.delayTime);
+      try { lfo.start(); } catch (e) {}
+      p.input.connect(src);
+      // The routing is set again whenever loop or pingpong changes: disconnect the nodes below, then connect the mode's graph.
+      function wire() {
+        var pp = !!P.pingpong;
+        [src, dry, inR, lp, hp, lpR, hpR, fbL, fbR, dL, dR, merger, wet].forEach(disc);
+        src.connect(dry); dry.connect(p._wet);
+        if (P.loop) { src.connect(dL); src.connect(inR); }                       // the input enters unfiltered
+        else { src.connect(hp); hp.connect(lp); lp.connect(dL); lp.connect(inR); }
+        inR.connect(dR);
+        if (P.loop) {
+          dL.connect(fbL); fbL.connect(hp); hp.connect(lp); lp.connect(pp ? dR : dL);          // tone and hp inside the loop
+          dR.connect(fbR); fbR.connect(hpR); hpR.connect(lpR); lpR.connect(pp ? dL : dR);
+        } else {
+          dL.connect(fbL); fbL.connect(pp ? dR : dL);
+          dR.connect(fbR); fbR.connect(pp ? dL : dR);
+        }
+        dL.connect(merger, 0, 0); dR.connect(merger, 0, 1);
+        merger.connect(wet); wet.connect(p._wet);
+        val(inR.gain, pp ? 0 : 1);
       }
       function retime(o) {
         var s = P.division ? divSeconds(P.division, P.bpm) : null;
@@ -154,29 +205,107 @@
         if (n === 'time' || n === 'division' || n === 'bpm') retime(o);
         else if (n === 'feedback') { auto(ctx, fbL.gain, v, o); auto(ctx, fbR.gain, v, o); }
         else if (n === 'mix') { auto(ctx, wet.gain, v, o); auto(ctx, dry.gain, 1 - v, o); }
-        else if (n === 'tone') auto(ctx, lp.frequency, v, o);
-        else if (n === 'hp') auto(ctx, hp.frequency, v, o);
-        else if (n === 'pingpong') rewire();
+        else if (n === 'tone') { auto(ctx, lp.frequency, v, o); auto(ctx, lpR.frequency, v, o); }
+        else if (n === 'hp') { auto(ctx, hp.frequency, v, o); auto(ctx, hpR.frequency, v, o); }
+        else if (n === 'pingpong' || n === 'loop') wire();
+        else if (n === 'modRate') auto(ctx, lfo.frequency, v, o);
+        else if (n === 'modDepth') auto(ctx, lfoG.gain, v, o);
       };
+      wire();
+      var d0 = p.dispose; p.dispose = function () { try { lfo.stop(); } catch (e) {} d0(); };
     }
   };
 
+  // Freeverb (Jezar, public domain): per channel 8 parallel lowpass-feedback combs, then 4 series allpasses.
+  // Lengths are at 44.1 kHz and scale with sampleRate; the right channel adds `spread` to every length.
+  // input: Freeverb's fixed input gain 0.015 times its output scale 3, folded into one gain (the network is linear).
+  var FV = { comb: [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617], ap: [556, 441, 341, 225], spread: 23, input: 0.045 };
+
+  // reverb. algo 'ir' (default): a generated stereo impulse in a ConvolverNode; decay, seed and hp shape the impulse.
+  //         algo 'freeverb': 8 combs + 4 allpasses per channel on native nodes (about 90 nodes per instance). size is
+  //         the RT60 in seconds (comb feedback set per comb from its length, so it automates without a buffer swap),
+  //         damp is the comb damping, decay and seed do not apply. predelay, hp and mix apply to both.
+  // Switching algo drops the old nodes and builds the new ones.
   BUILD.reverb = {
     spec: { size: { min: 0.2, max: 8, value: 2.2, unit: 's' }, decay: { min: 0, max: 1, value: 0.6 }, damp: { min: 500, max: 20000, value: 5000, unit: 'Hz' },
-            predelay: { min: 0, max: 0.2, value: 0.012, unit: 's' }, mix: { min: 0, max: 1, value: 0.25 }, hp: { min: 20, max: 2000, value: 160, unit: 'Hz' } },
+            predelay: { min: 0, max: 0.2, value: 0.012, unit: 's' }, mix: { min: 0, max: 1, value: 0.25 }, hp: { min: 20, max: 2000, value: 160, unit: 'Hz' },
+            algo: { value: 'ir' }, seed: { min: 0, max: 999999, value: 0 } },
     build: function (p) {
-      var ctx = p.ctx, P = p.params;
-      var pre = p.track(ctx.createDelay(0.25)), conv = p.track(ctx.createConvolver()), lp = p.track(ctx.createBiquadFilter());
+      var ctx = p.ctx, P = p.params, sr = ctx.sampleRate;
+      var pre = p.track(ctx.createDelay(0.25));
       var wet = p.track(ctx.createGain()), dry = p.track(ctx.createGain());
-      lp.type = 'lowpass'; val(lp.frequency, P.damp); val(lp.Q, 0.5);
+      var algoNodes = [], conv = null, lp = null, hpF = null, combs = [];
       val(pre.delayTime, P.predelay); val(wet.gain, P.mix); val(dry.gain, 1 - P.mix);
-      function regen() { var ir = K.impulse(ctx, P.size, P.decay, P.hp); if (ir) { try { conv.buffer = ir; } catch (e) {} } }
-      regen();
-      p.input.connect(pre); pre.connect(conv); conv.connect(lp); lp.connect(wet); wet.connect(p._wet);
-      p.input.connect(dry); dry.connect(p._wet);
+      p.input.connect(pre); p.input.connect(dry); dry.connect(p._wet); wet.connect(p._wet);
+
+      function own(n) { algoNodes.push(p.track(n)); return n; }
+      function clear() {
+        for (var i = 0; i < algoNodes.length; i++) {
+          disc(algoNodes[i]);
+          var j = p.nodes.indexOf(algoNodes[i]); if (j >= 0) p.nodes.splice(j, 1);
+        }
+        algoNodes = []; conv = null; lp = null; hpF = null; combs = [];
+      }
+      function fbGain(len, rt) { return Math.pow(10, -3 * (len / sr) / rt); }   // loop gain giving -60 dB after rt seconds
+      function regen() {
+        if (!conv) return;
+        var ir = (P.seed > 0) ? impulseSeeded(ctx, P.size, P.decay, P.hp, Math.floor(P.seed)) : K.impulse(ctx, P.size, P.decay, P.hp);
+        if (ir) { try { conv.buffer = ir; } catch (e) {} }
+      }
+      function buildIR() {
+        conv = own(ctx.createConvolver()); lp = own(ctx.createBiquadFilter());
+        lp.type = 'lowpass'; val(lp.frequency, P.damp); val(lp.Q, 0.5);
+        pre.connect(conv); conv.connect(lp); lp.connect(wet);
+        regen();
+      }
+      function buildFreeverb() {
+        var sc = sr / 44100, c, i, k, len, D, lpC, g, G, N, O, prev, off, fed;
+        hpF = own(ctx.createBiquadFilter()); hpF.type = 'highpass'; val(hpF.frequency, P.hp); val(hpF.Q, 0.5);
+        try { hpF.channelCount = 2; hpF.channelCountMode = 'explicit'; } catch (e) {}
+        var spl = own(ctx.createChannelSplitter(2)), gl = own(ctx.createGain()), gr = own(ctx.createGain());
+        var mg = own(ctx.createChannelMerger(2));
+        val(gl.gain, FV.input); val(gr.gain, FV.input);
+        pre.connect(hpF); hpF.connect(spl); spl.connect(gl, 0); spl.connect(gr, 1);
+        mg.connect(wet);
+        for (c = 0; c < 2; c++) {
+          off = c ? Math.round(FV.spread * sc) : 0;
+          fed = [];
+          for (i = 0; i < FV.comb.length; i++) {
+            // comb: the delay's input sums (L+R) and the loop gain g; loop = delay -> lowpass (damp) -> g -> delay
+            len = Math.round(FV.comb[i] * sc) + off;
+            D = own(ctx.createDelay(1)); val(D.delayTime, len / sr);
+            lpC = own(ctx.createBiquadFilter()); lpC.type = 'lowpass'; val(lpC.frequency, P.damp); val(lpC.Q, -3);
+            g = own(ctx.createGain()); val(g.gain, fbGain(len, P.size));
+            gl.connect(D); gr.connect(D); D.connect(lpC); lpC.connect(g); g.connect(D);
+            combs.push({ g: g, f: lpC, len: len });
+            fed.push(D);
+          }
+          prev = fed;
+          for (i = 0; i < FV.ap.length; i++) {
+            // allpass (feedback 0.5): input + 0.5 * delayed into the delay, output = delayed - input
+            len = Math.round(FV.ap[i] * sc) + off;
+            D = own(ctx.createDelay(1)); val(D.delayTime, len / sr);
+            G = own(ctx.createGain()); val(G.gain, 0.5);
+            N = own(ctx.createGain()); val(N.gain, -1);
+            O = own(ctx.createGain());
+            for (k = 0; k < prev.length; k++) { prev[k].connect(D); prev[k].connect(N); }
+            D.connect(G); G.connect(D); D.connect(O); N.connect(O);
+            prev = [O];
+          }
+          prev[0].connect(mg, 0, c);
+        }
+      }
+      function setAlgo() {
+        clear(); disc(pre);
+        if (P.algo === 'freeverb') buildFreeverb(); else buildIR();
+      }
+      setAlgo();
       p.onParam = function (n, v, o) {
-        if (n === 'size' || n === 'decay' || n === 'hp') regen();
-        else if (n === 'damp') auto(ctx, lp.frequency, v, o);
+        if (n === 'algo') setAlgo();
+        else if (n === 'size') { regen(); for (var i = 0; i < combs.length; i++) auto(ctx, combs[i].g.gain, fbGain(combs[i].len, v), o); }
+        else if (n === 'decay' || n === 'seed') regen();
+        else if (n === 'hp') { regen(); if (hpF) auto(ctx, hpF.frequency, v, o); }
+        else if (n === 'damp') { if (lp) auto(ctx, lp.frequency, v, o); for (var j = 0; j < combs.length; j++) auto(ctx, combs[j].f.frequency, v, o); }
         else if (n === 'predelay') auto(ctx, pre.delayTime, v, o);
         else if (n === 'mix') { auto(ctx, wet.gain, v, o); auto(ctx, dry.gain, 1 - v, o); }
       };
@@ -233,66 +362,100 @@
     }
   };
 
-  // sidechain ducker: a gain that dips on trigger(t) (the kick calls it), Web Audio has no key input
+  // sidechain ducker: a gain that dips on trigger(t) (the kick calls it), Web Audio has no key input.
+  // curve 'lin' (default): the recovery is a linear ramp to 1. curve 'db': exponentialRampToValueAtTime (linear in dB).
+  // Retrigger: the level the envelope has reached at t is read from the breakpoints scheduled so far (pts), the old
+  // schedule from t onwards is cancelled (cancelScheduledValues), and the new dip starts with setValueAtTime at that
+  // level. The gain therefore ramps from where it is and never steps. Without a retrigger that level is 1, as before.
   BUILD.sidechain = {
     spec: { depth: { min: 0, max: 1, value: 0.6 }, attack: { min: 0.001, max: 0.1, value: 0.004, unit: 's' }, hold: { min: 0, max: 0.5, value: 0.02, unit: 's' },
-            release: { min: 0.01, max: 2, value: 0.22, unit: 's' } },
+            release: { min: 0.01, max: 2, value: 0.22, unit: 's' }, curve: { value: 'lin' } },
     build: function (p) {
-      var ctx = p.ctx, P = p.params, g = p.track(ctx.createGain()), last = -1;
+      var ctx = p.ctx, P = p.params, g = p.track(ctx.createGain()), pts = [];
       p.node = g;
       p.input.connect(g); g.connect(p._wet);
+      // gain value at time t from the scheduled breakpoints {t, v, c}; c is how the segment ending at that point is drawn
+      function levelAt(t) {
+        var a = null, b = null, i, f;
+        for (i = 0; i < pts.length; i++) { if (pts[i].t <= t) a = pts[i]; else { b = pts[i]; break; } }
+        if (!a) return 1;
+        if (!b || b.c === 'set') return a.v;
+        f = (t - a.t) / (b.t - a.t);
+        if (b.c === 'exp' && a.v > 0 && b.v > 0) return a.v * Math.pow(b.v / a.v, f);
+        return a.v + (b.v - a.v) * f;
+      }
       p.trigger = function (t) {
         if (P.depth <= 0) return;
-        var len = P.attack + P.hold + P.release;
+        var lo = 1 - P.depth, end = P.attack + P.hold, len = end + P.release;
+        var from = levelAt(t), rec = (P.curve === 'db' && lo > 0) ? 'exp' : 'lin';
         cancel(g.gain, t);
-        setV(g.gain, (t - last) >= len ? 1 : 1 - P.depth, t);
-        lin(g.gain, 1 - P.depth, t + P.attack);
-        setV(g.gain, 1 - P.depth, t + P.attack + P.hold);
-        lin(g.gain, 1, t + len);
-        last = t;
+        setV(g.gain, from, t);
+        lin(g.gain, lo, t + P.attack);
+        setV(g.gain, lo, t + end);
+        if (rec === 'exp') expo(g.gain, 1, t + len); else lin(g.gain, 1, t + len);
+        pts = [{ t: t, v: from, c: 'set' }, { t: t + P.attack, v: lo, c: 'lin' }, { t: t + end, v: lo, c: 'set' }, { t: t + len, v: 1, c: rec }];
       };
-      p.onParam = function (n, v) { if (n === 'depth' && v <= 0) { cancel(g.gain, ctx.currentTime); target(g.gain, 1, ctx.currentTime, 0.02); } };
+      p.onParam = function (n, v) { if (n === 'depth' && v <= 0) { cancel(g.gain, ctx.currentTime); target(g.gain, 1, ctx.currentTime, 0.02); pts = []; } };
     }
   };
 
-  // mid/side width: 0 = mono, 1 = as is, 2 = twice the side signal
+  // mid/side width: 0 = mono, 1 = as is, 2 = twice the side signal.
+  // monoBelow (Hz): above 0 the side signal is high-passed at that frequency (Butterworth, Q -3 dB), so the low end stays mono.
+  // Off (0), the side goes through unchanged: the high-pass path is gated to 0 and the direct path to 1.
   BUILD.widener = {
-    spec: { width: { min: 0, max: 3, value: 1 } },
+    spec: { width: { min: 0, max: 3, value: 1 }, monoBelow: { min: 0, max: 500, value: 0, unit: 'Hz' } },
     build: function (p) {
       var ctx = p.ctx, P = p.params;
       var sp = p.track(ctx.createChannelSplitter(2)), mg = p.track(ctx.createChannelMerger(2));
       var lHalf = p.track(ctx.createGain()), rHalf = p.track(ctx.createGain()), lHalf2 = p.track(ctx.createGain()), rNeg = p.track(ctx.createGain());
       var mid = p.track(ctx.createGain()), side = p.track(ctx.createGain()), sW = p.track(ctx.createGain()), sWn = p.track(ctx.createGain());
+      var sA = p.track(ctx.createGain()), sB = p.track(ctx.createGain()), hpS = p.track(ctx.createBiquadFilter());
       val(lHalf.gain, 0.5); val(rHalf.gain, 0.5); val(lHalf2.gain, 0.5); val(rNeg.gain, -0.5);
       val(sW.gain, P.width); val(sWn.gain, -P.width);
+      hpS.type = 'highpass'; val(hpS.frequency, Math.max(P.monoBelow, 20)); val(hpS.Q, -3);
+      val(sA.gain, P.monoBelow > 0 ? 0 : 1); val(sB.gain, P.monoBelow > 0 ? 1 : 0);
       p.input.connect(sp);
       sp.connect(lHalf, 0); sp.connect(rHalf, 1); lHalf.connect(mid); rHalf.connect(mid);
       sp.connect(lHalf2, 0); sp.connect(rNeg, 1); lHalf2.connect(side); rNeg.connect(side);
-      side.connect(sW); side.connect(sWn);
-      mid.connect(mg, 0, 0); mid.connect(mg, 0, 1); sW.connect(mg, 0, 0); sWn.connect(mg, 0, 1);
+      side.connect(sA); side.connect(hpS); hpS.connect(sB);
+      sA.connect(sW); sA.connect(sWn); sB.connect(sW); sB.connect(sWn);
+      sW.connect(mg, 0, 0); sWn.connect(mg, 0, 1);
+      mid.connect(mg, 0, 0); mid.connect(mg, 0, 1);
       mg.connect(p._wet);
-      p.onParam = function (n, v, o) { if (n === 'width') { auto(ctx, sW.gain, v, o); auto(ctx, sWn.gain, -v, o); } };
+      p.onParam = function (n, v, o) {
+        if (n === 'width') { auto(ctx, sW.gain, v, o); auto(ctx, sWn.gain, -v, o); }
+        else if (n === 'monoBelow') { auto(ctx, hpS.frequency, Math.max(v, 20), o); auto(ctx, sA.gain, v > 0 ? 0 : 1, o); auto(ctx, sB.gain, v > 0 ? 1 : 0, o); }
+      };
     }
   };
 
+  // Juno-style stereo chorus. The left line sits at `base` ms and the right at 1.5 x base (14 and 21 ms at the default,
+  // as before), both swept by one LFO in opposite senses (depth in s). invert flips the right channel's wet signal.
+  // Juno-60 analysis figures (base 3.5 ms, depth 1.85 ms) can be dialled in, but the right line is 1.5 x base, not equal to it.
+  var CHORUS_SECOND_LINE = 1.5;
   BUILD.chorus = {
-    spec: { rate: { min: 0.05, max: 10, value: 0.8, unit: 'Hz' }, depth: { min: 0, max: 0.01, value: 0.003, unit: 's' }, mix: { min: 0, max: 1, value: 0.4 } },
+    spec: { rate: { min: 0.05, max: 10, value: 0.8, unit: 'Hz' }, depth: { min: 0, max: 0.01, value: 0.003, unit: 's' }, mix: { min: 0, max: 1, value: 0.4 },
+            base: { min: 2, max: 30, value: 14, unit: 'ms' }, invert: { value: false } },
     build: function (p) {
       var ctx = p.ctx, P = p.params;
       var d1 = p.track(ctx.createDelay(0.1)), d2 = p.track(ctx.createDelay(0.1)), lfo = p.track(ctx.createOscillator());
       var g1 = p.track(ctx.createGain()), g2 = p.track(ctx.createGain()), wet = p.track(ctx.createGain()), dry = p.track(ctx.createGain());
-      var mg = p.track(ctx.createChannelMerger(2));
-      val(d1.delayTime, 0.014); val(d2.delayTime, 0.021); val(g1.gain, P.depth); val(g2.gain, -P.depth);
+      var invR = p.track(ctx.createGain()), mg = p.track(ctx.createChannelMerger(2));
+      val(d1.delayTime, P.base / 1000); val(d2.delayTime, P.base * CHORUS_SECOND_LINE / 1000);
+      val(g1.gain, P.depth); val(g2.gain, -P.depth);
+      val(invR.gain, P.invert ? -1 : 1);
       lfo.type = 'sine'; val(lfo.frequency, P.rate);
       lfo.connect(g1); lfo.connect(g2); try { g1.connect(d1.delayTime); g2.connect(d2.delayTime); } catch (e) {}
       try { lfo.start(); } catch (e) {}
       val(wet.gain, P.mix); val(dry.gain, 1 - P.mix);
-      p.input.connect(d1); p.input.connect(d2); d1.connect(mg, 0, 0); d2.connect(mg, 0, 1); mg.connect(wet); wet.connect(p._wet);
+      p.input.connect(d1); p.input.connect(d2); d1.connect(mg, 0, 0); d2.connect(invR); invR.connect(mg, 0, 1); mg.connect(wet); wet.connect(p._wet);
       p.input.connect(dry); dry.connect(p._wet);
       p.onParam = function (n, v, o) {
         if (n === 'rate') auto(ctx, lfo.frequency, v, o);
         else if (n === 'depth') { auto(ctx, g1.gain, v, o); auto(ctx, g2.gain, -v, o); }
         else if (n === 'mix') { auto(ctx, wet.gain, v, o); auto(ctx, dry.gain, 1 - v, o); }
+        else if (n === 'base') { auto(ctx, d1.delayTime, v / 1000, o); auto(ctx, d2.delayTime, v * CHORUS_SECOND_LINE / 1000, o); }
+        else if (n === 'invert') auto(ctx, invR.gain, v ? -1 : 1, o);
       };
       var d0 = p.dispose; p.dispose = function () { try { lfo.stop(); } catch (e) {} d0(); };
     }
