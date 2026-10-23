@@ -330,7 +330,39 @@ async function run() {
     if (stepOk) pass('switch to Step View', 'Tab key (or view switch button); marker ' + (await firstVisible(page, SEL.stepMark)).sel);
     else fail('switch to Step View', 'no Step View marker after Tab or the view switch; tried ' + SEL.stepMark.join(', ') + ' (owners A5, A6)');
 
-    // 6. Open one device window by double-clicking its title
+    // 6. Toggle one step in the Step View grid (before the device panel can cover the grid)
+    await goStepView();
+    const cell = await firstVisible(page, SEL.stepCell);
+    if (!cell) {
+      fail('step cell', 'no step cell in the Step View; tried ' + SEL.stepCell.join(', ') + ' (owner A5)');
+    } else {
+      const before = await hostState(page);
+      const gridBefore = await page.evaluate(() => {
+        const g = document.querySelector('.step-grid') || document.querySelector('#view');
+        return g ? g.innerHTML.length + ':' + g.innerHTML.slice(0, 4000).replace(/\s+/g, '') : '';
+      });
+      try {
+        await cell.loc.click({ timeout: 5000 });
+        await page.waitForTimeout(400);
+        const after = await hostState(page);
+        const gridAfter = await page.evaluate(() => {
+          const g = document.querySelector('.step-grid') || document.querySelector('#view');
+          return g ? g.innerHTML.length + ':' + g.innerHTML.slice(0, 4000).replace(/\s+/g, '') : '';
+        });
+        if (before && after && before.doc && after.doc) {
+          if (before.doc !== after.doc) pass('step toggled', cell.sel + ' changed host.document()');
+          else fail('step toggled', 'host.document() unchanged after clicking ' + cell.sel + ' (owner A5 or A4 write path)');
+        } else if (gridBefore !== gridAfter) {
+          pass('step toggled', cell.sel + ' changed the grid DOM (no host handle to compare the document)');
+        } else {
+          fail('step toggled', 'no change after clicking ' + cell.sel);
+        }
+      } catch (e) {
+        fail('step toggled', String(e).split('\n')[0]);
+      }
+    }
+
+    // 7. Open one device window by double-clicking its title (the Step View is already checked)
     const winsBefore = await page.evaluate(() => {
       const w = document.querySelector('#windows');
       return w ? w.children.length : -1;
@@ -374,38 +406,6 @@ async function run() {
         else fail('device window opens on double-click', 'double-click on ' + title.sel + ' did not reach Windows.open (' + openCalls + ' calls) or put a panel in #windows (' + winsBefore + ' -> ' + winsAfter + ')');
       } catch (e) {
         fail('device window opens on double-click', String(e).split('\n')[0]);
-      }
-    }
-
-    // 7. Toggle one step in the Step View grid
-    await goStepView();
-    const cell = await firstVisible(page, SEL.stepCell);
-    if (!cell) {
-      fail('step cell', 'no step cell in the Step View; tried ' + SEL.stepCell.join(', ') + ' (owner A5)');
-    } else {
-      const before = await hostState(page);
-      const gridBefore = await page.evaluate(() => {
-        const g = document.querySelector('.step-grid') || document.querySelector('#view');
-        return g ? g.innerHTML.length + ':' + g.innerHTML.slice(0, 4000).replace(/\s+/g, '') : '';
-      });
-      try {
-        await cell.loc.click({ timeout: 5000 });
-        await page.waitForTimeout(400);
-        const after = await hostState(page);
-        const gridAfter = await page.evaluate(() => {
-          const g = document.querySelector('.step-grid') || document.querySelector('#view');
-          return g ? g.innerHTML.length + ':' + g.innerHTML.slice(0, 4000).replace(/\s+/g, '') : '';
-        });
-        if (before && after && before.doc && after.doc) {
-          if (before.doc !== after.doc) pass('step toggled', cell.sel + ' changed host.document()');
-          else fail('step toggled', 'host.document() unchanged after clicking ' + cell.sel + ' (owner A5 or A4 write path)');
-        } else if (gridBefore !== gridAfter) {
-          pass('step toggled', cell.sel + ' changed the grid DOM (no host handle to compare the document)');
-        } else {
-          fail('step toggled', 'no change after clicking ' + cell.sel);
-        }
-      } catch (e) {
-        fail('step toggled', String(e).split('\n')[0]);
       }
     }
 

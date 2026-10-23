@@ -46,3 +46,24 @@ Owner files: `tools/browser-check.js`, `app/README.md` (rewrite at the end), sta
 - The status table in the README comes from the files on disk, not from owner logs. Correct each row when a log says otherwise.
 - Other owners' logs read at the end (23:14): `log-A1.md`, `log-A4.md`, `log-A7.md`. None is addressed to A10. A4 and A7 had not read the requests above when they wrote their logs.
 - Nothing committed.
+
+## Coordinator request: device title and exit 0 (23:33)
+
+Request: the device title check failed ("device title", `.se-dtitle` only). Fix it to use A3's `.hv-head`, look in whichever view is active, keep asserting that a double-click reaches `Windows.open` or a panel in `#windows`, note that the page exposes `window.HavantechnoApp = {host, app}`, run the check, and report the exit code read directly.
+
+Changes to `tools/browser-check.js`:
+- `deviceTitle` candidates now start with `.hv-head`, then the System Editor `.se-dtitle` fallback and the older names.
+- The title is looked for in the active view first. If it is not there, one Tab switches views and the search repeats. The view is not switched back before the double-click (the earlier version switched back first, which hid the title and made `dblclick` time out).
+- The device window step wraps `Windows.open` in the page to count calls. It passes if a double-click gives a `Windows.open` call and a panel in `#windows`; the detail names both counts. If the wrap is not possible it passes on the panel alone and says so.
+- The step toggle now runs before the device window. The first order failed: the opened panel covered the step grid and the cell click timed out.
+- The host is still read from `window.HavantechnoApp.host` (the `app` member is not used).
+
+Runs (exit read from `$?`, output redirected to a file, no pipe):
+- Before the fix: `exit code: 1`, one failure: device title (`.hv-head` found in the System Editor, but the view had already switched back, so the double-click timed out).
+- After the view-order fix: `exit code: 1`, step toggle click timed out behind the panel.
+- After moving the step toggle first: `exit code: 0`, `RESULT: PASS (26 checks)`.
+- Second run: `exit code: 0`, `RESULT: PASS (26 checks)`.
+
+The device window check output: `device window opens on double-click - .hv-head, Windows.open called 1x, #windows children 0 -> 1`.
+
+Not committed. `app/README.md` snapshot and status row updated to match this run.

@@ -56,7 +56,7 @@ Environment for the browser check: `PLAYWRIGHT_PATH` (default `/opt/node22/lib/n
 
 The browser check needs these from `app.js` and the frame: `#start-audio` (the overlay button), `#frame` with a Play button, `#view`, `#windows` (device panels on the web), and the host on `window.HavantechnoApp.host` (or `window.HavantechnoHost`). Without the host it can only check the DOM.
 
-Browser-check snapshot (2026-10-23, 23:15, the last run before this file was written): 10 failed checks, 0 page errors, 2 console errors. The two console errors are HTTP 404s for files not yet on disk: `ui/facedefs.js` (A3) and `ui/app.js` (A6). Because `app.js` is missing, nothing is mounted: the start button click works, but there is no Play button, no `#view` content, no host handle and no Step View. The engine globals and `Host`, `Project`, `Widgets`, `Faces`, `SystemEditor`, `StepView` and `Windows` are defined. The same script's happy path passes against a stub page outside the repo (20 checks), which tests the script and not the app.
+Browser-check snapshot (2026-10-23, 23:33): `node tools/browser-check.js` exits 0 with 26 checks passed on the current tree (run twice). It covers the globals, Start audio, Play, the transport advancing, the Step View, one step toggled (checked through `host.document()`), one device window opened from its `hv-head` title (`Windows.open` called and a panel in `#windows`), Save (a `.havantechno.json` download containing `havantechno`), and no page, console or HTTP errors. The host is read from `window.HavantechnoApp.host` (A6 `app.js` also exposes `window.HavantechnoApp.app`). The same script passes its own logic against a stub page outside the repo (20 checks), which is a test of the script; the real app is the run above.
 
 ## Scoring loop
 
@@ -116,13 +116,13 @@ Source for each row: the files on disk at this snapshot. No owner had written a 
 | `index.html`, `package.json` | A6 | partial | written; loads 2 files that are absent (`ui/facedefs.js`, `ui/app.js`) |
 | `shell/main.js`, `shell/preload.js` | A6 | partial | written (23:10); `electron` 45.0.0 installed; never launched |
 | `tools/serve.js` | A6 | partial | written; not run by A10 |
-| `tools/browser-check.js` | A10 | partial | runs; fails on the missing modules above; happy path checked against a stub outside the repo |
+| `tools/browser-check.js` | A10 | shipped | exits 0 on the current tree, 26 checks (23:33); also checked against a stub outside the repo |
 | `tools/render.js`, `score.py`, `tools/README.md` | A9 | not started | files absent |
 
 ## What is unverified
 
 - The Electron shell has not been launched in this sandbox. `npm install` put Electron in `app/node_modules`; `npm start` was not run.
-- The browser check has not passed on the real app: `ui/app.js` and `ui/facedefs.js` are not on disk. Its happy path was run against a stub page outside the repo, which checks the script and not the app.
+- The browser check covers the web app only. It does not test the Electron shell, audio by ear, or the device window's controls beyond the open. Its happy path was run against a stub page outside the repo, which checks the script and not the app.
 - `tools/serve.js` was not run by A10.
 - The audio changes from A7 and A8 are not verified by ear or by the scoring loop. The engine self-check covers schedule equivalence and nothing about sound.
 - Saving to a file: `SongDoc.save` produces the JSON and `project.js` (A1) is on disk, but nothing has run the save path through the shell or the browser yet.
