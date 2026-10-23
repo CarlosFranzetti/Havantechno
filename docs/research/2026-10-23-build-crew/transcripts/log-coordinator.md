@@ -67,3 +67,27 @@ Wave 1 is complete: A1 to A10 handed back, every check green and run here (selfc
 Ran the app in headless Chromium (viewport 1440×900, tools/serve.js): Start audio, Play, System Editor, Tab to Step View, double-click on a face title. No page errors. Screenshots saved to docs/screenshots/app-system-editor.png, app-step-view.png, app-device-window.png and added to README.md. Observation for wave 2 (owners A3 and A6): the device window's Editor tab shows only the hero graph, scaled to the window, with no parameter controls; the knobs are behind the Controls tab (Faces.fallback). The round-5 design and the FloatingWindows mockup show the hero with the section controls below it in the window density. Either facedefs' window layout should include the sections or windows.js should render the face density under the hero. Also for A11 to confirm: a second double-click on another title retargeted the same window (Link: Single), which is the contract's behaviour.
 
 Updated README.md (app section, quick start, Build Crew row, layout), CLAUDE.md (263 checks, app checks, serve, render and score), docs/research/README.md (status), docs/plans/2026-10-23-desktop-build-plan.md (milestone statuses 1 to 5b).
+
+## 2026-10-23 23:43:46 UTC — DISCUSSION.md compiled; rulings on what the scribe found
+
+The scribe compiled `DISCUSSION.md` (22 threads) from the ten logs and this one, and listed what the logs leave inconsistent or unanswered. Records are not edited; the corrections and rulings are here.
+
+**Corrections.**
+- Browser-check counts: I wrote "22 of 23" at the A6 gate; A10's revision then reordered and merged steps (the step toggle moved before the device window, the title and window checks became one assertion with a Windows.open spy), and the final run reports 26. A11 saw 27 (26 pass, 1 fail) on an intermediate tree. The counts differ because the check changed, not because results were misreported. The "FAIL, 10 checks" I wrote earlier meant 10 failed checks on the first tree.
+- System-editor-check: my 23:14 entry called the red check an interface mismatch between A4 and A6. A4's log and my 23:23 entry show it was the check's fake DOM. The 43 → 40 change is A4 merging assertions in its revision; A4's log does not say so, and I did not ask. Noted, not reopened.
+- tools/out/ was ignored by me in an earlier gitignore commit (f5c1beb's neighbour), before A9 looked; A9's "not added" means A9 did not add it. Both true.
+- Render time: A9's rate (about 1 s per mainA bar) gives about 50 s for 48 bars, not the "over 100 s" A6 reported; A6's number may include page start, the tail and WAV encoding, or a slower moment of the sandbox. More important, the scribe points out that the archived page renders mainA at the same speed as the app (17.3 s against 16.9 s for 16 bars, A9's log), and Freeverb and the seeded IR exist only in the app and are off by default. So those two suspects I named are unlikely to be the cause; forwarded to A11.
+- A3's "15 new params" is 14 by the names listed. Count error, no effect.
+- BRIEF.md names A11's file `review-A11.md`; the file is `log-A11.md`. The log name stands; BRIEF.md is amended by this note, not by editing the brief.
+
+**Rulings on A7's four open decisions** (log-A7.md, lines 20, 23, 29, 30).
+1. **B0 bar**: unmeasured, so do not guess a bar. Keep C#1 and the TODO; the sampler and remix pipeline will bring measured notes. Not a wave-2 item.
+2. **Sub attack**: A7's reading is right. The values are the sidechain processor's, not the instrument's attack. No change.
+3. **Lowpass restore at bar 136, not 128**: keep 136, the reference's measured section start. Bars 128 to 135 are unmeasured; a future render-versus-reference score of that window decides it.
+4. **choke**: not now. It arrives with the sampler (milestone 5b lists choke groups), where it is needed for one-shots; the hats can wait for the same mechanism.
+
+**Rulings on the rest.**
+- Step View follow: A5 defaulted follow to off, A6 calls `selectSection` on every section event. Ruling: following the playhead while playing is the behaviour the owner asked for ("modify every step ... in that view" while the song runs), so follow defaults on; A5 flips its default and its button turns it off, and `selectSection` honours the flag. Wave 2, A5.
+- Rulers: both views draw their own ruler (A6's reading). Acceptable for now; a shared ruler widget is a wave-3 simplification, not a bug.
+- A5 and the editor extras: whether step-view.js uses `ed.group`, `ed.setFx`, `ed.setVariantBars` is for A11 to check and A5 to state in its wave-2 log.
+- A6's note that the face head repeats the window title bar at window density, unanswered by A3: joins the window Editor-tab item (hero only, no controls). A3 and A6 settle it in wave 2: the window shows one title bar (the window's), and the face's window density carries the hero and the section controls.
