@@ -15,8 +15,11 @@ import math
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # quiet exit when piped into head
 
 import numpy as np
 from scipy import signal
@@ -498,7 +501,7 @@ def print_report(out, labels):
         t = out['tracks'][lab]
         print('%s: %s (decoder %s), %.2f s measured' % (lab, t['path'], t['decoder'], t['window_seconds']))
     print()
-    has_ref = 'reference' in labels
+    has_ref = len(labels) > 1
     head = '%-62s %12s' % ('measure', labels[0])
     if has_ref:
         head += ' %12s %12s' % ('reference', 'diff')
@@ -671,7 +674,7 @@ def json_default(o):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('render', nargs='?', help='render WAV (from tools/render.js)')
+    ap.add_argument('render', nargs='?', help='render WAV (from tools/render.js); omit to score --ref alone')
     ap.add_argument('--ref', help='reference audio (MP3 or WAV), decoded with ffmpeg')
     ap.add_argument('--section', help='archived section name; compares its bars (SECTIONS table)')
     ap.add_argument('--bars', type=parse_bars, help='a:b bars relative to --section, or absolute song bars')
@@ -682,15 +685,17 @@ def main():
     args = ap.parse_args()
     if args.selftest:
         sys.exit(selftest())
-    if not args.render:
-        ap.error('a render WAV is required')
-    if not os.path.isfile(args.render):
-        die('no such file ' + args.render)
-
-    side = load_sidecar(args.render)
+    if not args.render and not args.ref:
+        ap.error('a render WAV or --ref is required')
+    side = None
+    if args.render:
+        if not os.path.isfile(args.render):
+            die('no such file ' + args.render)
+        side = load_sidecar(args.render)
     win = window_bars(args, side)
-    rend = load_track(args.render, side, True)
-    tracks = [rend]
+    tracks = []
+    if args.render:
+        tracks.append(load_track(args.render, side, True))
     if args.ref:
         tracks.append(load_track(args.ref, None, False))
     ranges = {tr.label: sample_range(tr, win, args.tail) for tr in tracks}
@@ -698,6 +703,9 @@ def main():
     out = {'window': None if win is None else {'bars': list(win), 'section': args.section, 'tail_s': args.tail},
            'tracks': {}}
     ref_lufs = None
+    if not args.render:
+        # reference alone: its own loudness is the A reference
+        pass
     for tr in tracks:
         s0, s1 = ranges[tr.label]
         m = measure(tr, s0, s1)

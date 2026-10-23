@@ -74,7 +74,8 @@ const SEL = {
     'button:text-is("Step")'],
   stepMark: ['[data-view="step"]', '[data-view="step-view"]', '.step-grid', '[data-role="step-grid"]',
     '.step-view'],
-  deviceTitle: ['.se-dtitle[title^="Double-click"]', '[data-device-title]', '[data-role="device-title"]',
+  // A3's face title bar (hv-head) is used in both views; A4's System Editor title is the fallback.
+  deviceTitle: ['.hv-head', '.se-dtitle[title^="Double-click"]', '[data-device-title]', '[data-role="device-title"]',
     '.device-title', '.dev-title', '.device-row .title'],
   stepCell: ['.step-grid button.hv-step', 'button.hv-step[aria-pressed]', '.step-grid [role="checkbox"]',
     '.step-grid [data-step]', '[data-step]', '.step-grid button', '.step-cell', '.steps button'],
@@ -349,14 +350,27 @@ async function run() {
       fail('device title', 'not found; tried ' + SEL.deviceTitle.join(', ') + ' (owners A4, A5, A6)');
     } else {
       try {
+        // count Windows.open calls, so the check sees the call as well as the panel
+        await page.evaluate(() => {
+          window.__bcOpenCalls = 0;
+          const W = window.Windows;
+          if (W && typeof W.open === 'function' && !W.__bcWrapped) {
+            const orig = W.open;
+            W.open = function () { window.__bcOpenCalls++; return orig.apply(this, arguments); };
+            W.__bcWrapped = true;
+          }
+        }).catch(() => {});
         await title.loc.dblclick({ timeout: 5000 });
         await page.waitForTimeout(600);
         const winsAfter = await page.evaluate(() => {
           const w = document.querySelector('#windows');
           return w ? w.children.length : -1;
         });
-        if (winsAfter > Math.max(winsBefore, 0)) pass('device window opens on double-click', title.sel + ', #windows children ' + winsBefore + ' -> ' + winsAfter);
-        else fail('device window opens on double-click', 'no new element in #windows after double-click on ' + title.sel + ' (' + winsBefore + ' -> ' + winsAfter + ')');
+        const openCalls = await page.evaluate(() => window.__bcOpenCalls || 0).catch(() => 0);
+        const panel = winsAfter > Math.max(winsBefore, 0);
+        if (panel && openCalls > 0) pass('device window opens on double-click', title.sel + ', Windows.open called ' + openCalls + 'x, #windows children ' + winsBefore + ' -> ' + winsAfter);
+        else if (panel) pass('device window opens on double-click', title.sel + ', #windows children ' + winsBefore + ' -> ' + winsAfter + ' (Windows.open not spied: Windows.open is not a writable property)');
+        else fail('device window opens on double-click', 'double-click on ' + title.sel + ' did not reach Windows.open (' + openCalls + ' calls) or put a panel in #windows (' + winsBefore + ' -> ' + winsAfter + ')');
       } catch (e) {
         fail('device window opens on double-click', String(e).split('\n')[0]);
       }

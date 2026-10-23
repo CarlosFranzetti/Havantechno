@@ -12,7 +12,13 @@
 //   --sections  comma-separated section names from the page's own arrangement (default: all).
 //   --bars      a:b renders bars a..b-1 relative to each selected section's start (absolute song bars
 //               when no --sections is given). A single integer N means 0:N.
+//   --song      baseline (default: Song.GUIDANCE on the archived page, Song.document() in the app) or v2
+//               (Song.GUIDANCE_V2 on the archived page if it exists, Song.documentV2() in the app). V2 renders
+//               get a -v2 file suffix.
 //   --tail      seconds of ringing tail rendered after the last bar (default 2.5, the archived default).
+//   --seed      seed for Math.random in the page (default 1). The archived engine draws its noise and
+//               jitter from Math.random (core.js, synths.js), so each job re-seeds it: the same bars with
+//               the same seed render to identical bytes.
 //
 // Output: tools/out/<name>.wav (16-bit PCM, via Sequencer.wav or Host.wav) and tools/out/<name>.json
 // (sidecar: bar range, sample rate, bpm, swing and the sample position of bar `from`, which score.py
@@ -46,7 +52,7 @@ var ISOLATION = {
 function fail(msg) { process.stderr.write('render.js: ' + msg + '\n'); process.exit(2); }
 
 function parseArgs(argv) {
-  var o = { page: 'studio', sections: null, bars: null, sr: 44100, tail: 2.5, out: DEFAULT_OUT };
+  var o = { page: 'studio', song: 'baseline', sections: null, bars: null, sr: 44100, tail: 2.5, seed: 1, out: DEFAULT_OUT };
   for (var i = 0; i < argv.length; i++) {
     var a = argv[i];
     var next = function () { if (i + 1 >= argv.length) fail(a + ' needs a value'); return argv[++i]; };
@@ -64,11 +70,14 @@ function parseArgs(argv) {
     }
     else if (a === '--sr') o.sr = parseInt(next(), 10);
     else if (a === '--tail') o.tail = parseFloat(next());
+    else if (a === '--seed') o.seed = parseInt(next(), 10);
+    else if (a === '--song') o.song = next();
     else if (a === '--out') o.out = path.resolve(next());
     else if (a === '-h' || a === '--help') { process.stdout.write(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 17).join('\n') + '\n'); process.exit(0); }
     else fail('unknown argument ' + a);
   }
   if (!(o.sr > 0)) fail('bad --sr');
+  if (o.song !== 'baseline' && o.song !== 'v2') fail('--song must be baseline or v2');
   return o;
 }
 
@@ -101,22 +110,26 @@ function startServer(root) {
 
 // ---- code that runs inside the page -------------------------------------------------------
 // Returns the page's kind, its sections and song-level settings. Bar starts are cumulative.
-function pageLayout() {
+function pageLayout(song) {
   var kind, sections, totalBars, bpm, swing;
   if (window.Host && typeof window.Host.create === 'function') {
     kind = 'app';
-    window.__host = window.Host.create();
+    if (song === 'v2') {
+      if (!window.Song || typeof window.Song.documentV2 !== 'function') throw new Error('Song.documentV2 is missing');
+      window.__host = window.Host.create({ doc: window.Song.documentV2() });
+    } else {
+      window.__host = window.Host.create();
+    }
     if (typeof window.__host.render !== 'function') throw new Error('Host.render is missing');
-    var secs = window.__host.sections() || [];
-    var start = 0;
-    sections = secs.map(function (s) { var r = { name: s.name, start: start, bars: s.bars }; start += s.bars; return r; });
-    totalBars = start;
+    sections = window.__host.sections().map(function (s) { return { name: s.name, start: s.start, bars: s.bars }; });
+    totalBars = window.__host.totalBars();
     bpm = window.__host.bpm();
     swing = window.__host.swing();
   } else if (window.Sequencer && window.Song) {
     kind = 'studio';
+    if (song === 'v2' && !window.Song.GUIDANCE_V2) throw new Error('Song.GUIDANCE_V2 is not on this page');
     var dry = window.Sequencer.create(null, {});
-    window.Song.build(dry);
+    window.Song.build(dry, song === 'v2' ? window.Song.GUIDANCE_V2 : undefined);
     sections = dry.sections.map(function (s) { return { name: s.name, start: s.start, bars: s.bars }; });
     totalBars = dry.totalBars;
     bpm = dry.bpm;
@@ -130,12 +143,14 @@ function pageLayout() {
 // Renders bars [from, to) through the page's own offline renderer; keeps the WAV bytes in the page.
 async function pageRender(job) {
   var t0 = performance.now();
+  if (typeof Math.random.reset === 'function') Math.random.reset(job.seed);
   var buf;
   if (window.__host) {
     buf = await window.__host.render({ from: job.from, to: job.to, sampleRate: job.sr, tail: job.tail });
   } else {
-    buf = await window.Sequencer.render(function (s) { window.Song.build(s); },
-      { from: job.from, to: job.to, sampleRate: job.sr, tail: job.tail });
+    buf = await window.Sequencer.render(function (s) {
+      window.Song.build(s, job.song === 'v2' ? window.Song.GUIDANCE_V2 : undefined);
+    }, { from: job.from, to: job.to, sampleRate: job.sr, tail: job.tail });
   }
   var ab = (window.__host && typeof window.__host.wav === 'function') ? window.__host.wav(buf) : window.Sequencer.wav(buf);
   window.__wav = new Uint8Array(ab);
@@ -192,15 +207,22 @@ async function main() {
     args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox']
   });
   var pageErrors = [];
+  // Test harness only: a seeded Math.random (mulberry32), installed before any page script runs.
+  var SEEDED_RANDOM = 'var __seedGen = null; (function () { var a = 0;' +
+    ' function mk(s) { a = s >>> 0; return function () { a = (a + 0x6D2B79F5) | 0; var t = Math.imul(a ^ (a >>> 15), 1 | a);' +
+    ' t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }' +
+    ' var g = mk(' + (opts.seed | 0) + '); var r = function () { return g(); }; r.reset = function (v) { g = mk(v); };' +
+    ' Math.random = r; })();';
   var exitCode = 0;
   try {
     var page = await browser.newPage();
+    await page.addInitScript({ content: SEEDED_RANDOM });
     page.on('pageerror', function (e) { pageErrors.push('pageerror: ' + e.message); });
     page.on('console', function (m) { if (m.type() === 'error') pageErrors.push('console.error: ' + m.text()); });
     var tLoad = performance.now();
     await page.goto(pageUrl, { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction(function () { return !!(window.Sequencer || window.Host); }, null, { timeout: 30000 });
-    var layout = await page.evaluate(pageLayout);
+    var layout = await page.evaluate(pageLayout, opts.song);
     console.log('page: ' + pageUrl + ' (' + layout.kind + ', loaded in ' + ((performance.now() - tLoad) / 1000).toFixed(2) + ' s)');
     console.log('song: ' + layout.totalBars + ' bars at ' + layout.bpm + ' bpm, swing ' + layout.swing +
       ', sections: ' + layout.sections.map(function (s) { return s.name + ' ' + s.start + '+' + s.bars; }).join(', '));
@@ -209,7 +231,10 @@ async function main() {
     var gridStart = Math.round(SCHEDULE_T0 * opts.sr);
     for (var j = 0; j < jobs.length; j++) {
       var job = jobs[j];
-      job.sr = opts.sr; job.tail = opts.tail;
+      job.sr = opts.sr; job.tail = opts.tail; job.seed = opts.seed; job.song = opts.song;
+      // archived-page renders keep plain names; other pages get a prefix so the two never overwrite each other
+      if (opts.page !== 'studio') job.name = (opts.page === 'app' ? 'app' : 'page') + '-' + job.name;
+      if (opts.song === 'v2') job.name += '-v2';
       var r = await page.evaluate(pageRender, job);
       var nBytes = r.bytes, parts = [], CH = 4 * 1024 * 1024;
       for (var o = 0; o < nBytes; o += CH) {
@@ -219,7 +244,7 @@ async function main() {
       fs.writeFileSync(wavPath, Buffer.concat(parts));
       var barSec = 4 * 60 / layout.bpm;
       var side = {
-        name: job.name, page: opts.page, kind: layout.kind, section: job.section,
+        name: job.name, page: opts.page, kind: layout.kind, section: job.section, song: opts.song,
         from: job.from, to: job.to, bars: job.to - job.from,
         sampleRate: r.sampleRate, channels: r.channels, lengthSamples: r.length,
         bpm: layout.bpm, swing: layout.swing, tailSeconds: opts.tail,
@@ -241,7 +266,7 @@ async function main() {
       console.log('page errors: none');
     }
   } catch (e) {
-    console.error('render.js: ' + (e && e.stack || e));
+    console.error('render.js: ' + (e && e.message ? e.message.split('\n')[0] : e));
     exitCode = 1;
   } finally {
     await browser.close();
