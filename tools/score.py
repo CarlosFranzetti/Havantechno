@@ -23,6 +23,7 @@ from scipy import signal
 from scipy.optimize import curve_fit
 
 SR = 44100                 # analysis rate; everything is decoded to this
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REF_T0 = 0.568             # s, first kick onset of the reference (O1 M0)
 REF_BPM = 126.0
 REF_SWING = 0.0            # reference has no swing (O1 M0)
@@ -157,16 +158,17 @@ def sample_range(tr, win, tail_s):
 
 # ----------------------------------------------------------------- measures
 
-def tempo(seg, want_candidates=False):
+def tempo(seg):
     """Onset-flux autocorrelation. 2 ms hop, 10 ms RMS frames, half-wave-rectified dB flux smoothed with a
     14 ms Gaussian. Lags for 60 to 200 BPM. Octave guard (a choice, not from a source): the shortest-lag
     local peak whose autocorrelation is at least 50 % of the maximum wins, so a 2-beat clap pattern does
     not replace a 1-beat kick. Parabolic refinement of the peak."""
     mono = seg.mean(axis=1).astype(np.float64)
     hop, frame = int(0.002 * SR), int(0.010 * SR)
+    hop_s = hop / SR                       # the actual hop (88 samples = 1.9955 ms), not 2 ms
     n = (len(mono) - frame) // hop
     if n < 400:
-        return (float('nan'), float('nan'))
+        return (float('nan'), float('nan'), [])
     win = np.lib.stride_tricks.sliding_window_view(mono, frame)[::hop][:n]
     rms = np.sqrt(np.mean(win ** 2, axis=1))
     env = 20 * np.log10(rms + 1e-7)
@@ -176,10 +178,10 @@ def tempo(seg, want_candidates=False):
     flux = flux - flux.mean()
     ac = np.correlate(flux, flux, 'full')[len(flux) - 1:]
     if ac[0] <= 0:
-        return (float('nan'), float('nan'))
+        return (float('nan'), float('nan'), [])
     ac = ac / ac[0]
-    lo = int(round(60.0 / 200.0 / 0.002))
-    hi = min(int(round(60.0 / 60.0 / 0.002)), len(ac) - 2)
+    lo = int(round(60.0 / 200.0 / hop_s))
+    hi = min(int(round(60.0 / 60.0 / hop_s)), len(ac) - 2)
     seg_ac = ac[lo:hi + 1]
     m = float(seg_ac.max())
     peaks = [i for i in range(1, len(seg_ac) - 1)
@@ -190,13 +192,12 @@ def tempo(seg, want_candidates=False):
     def refine(b):
         y0, y1, y2 = ac[b - 1], ac[b], ac[b + 1]
         d = 0.5 * (y0 - y2) / (y0 - 2 * y1 + y2) if (y0 - 2 * y1 + y2) != 0 else 0.0
-        return 60.0 / ((b + d) * 0.002)
+        return 60.0 / ((b + d) * hop_s)
 
     bpm = refine(best)
-    if want_candidates:
-        top = sorted(peaks, key=lambda i: -seg_ac[i])[:3]
-        return bpm, float(ac[best]), [(round(refine(lo + i), 2), round(float(seg_ac[i]), 3)) for i in top]
-    return bpm, float(ac[best])
+    top = sorted(peaks, key=lambda i: -seg_ac[i])[:3]
+    cands = [(round(refine(lo + i), 2), round(float(seg_ac[i]), 3)) for i in top]
+    return bpm, float(ac[best]), cands
 
 
 def band_levels(seg):
@@ -411,7 +412,7 @@ def measure(tr, s0, s1):
     seg = tr.x[s0:s1]
     r = {'window_seconds': (s1 - s0) / SR, 'bpm_assumed': tr.bpm, 'swing': tr.swing,
          'decoder': tr.decoder}
-    r['tempo_bpm'], r['tempo_strength'] = tempo(seg)
+    r['tempo_bpm'], r['tempo_strength'], r['tempo_candidates'] = tempo(seg)
     r['beat_samples'] = tr.beatS
     r.update(band_levels(seg))
     ld = loudness(seg)
@@ -608,7 +609,7 @@ def selftest():
         if p + len(burst) < len(clicks):
             clicks[p:p + len(burst), 0] += burst
             clicks[p:p + len(burst), 1] += burst
-    bpm_est, _ = tempo(clicks)
+    bpm_est = tempo(clicks)[0]
     check('tempo estimate on a synthetic 126 BPM click track', abs(bpm_est - bpm_true) < 0.5, 'estimated %.2f' % bpm_est)
 
     # synthetic kick: f(t) = 51 + 213 exp(-t/24 ms), amplitude exp(-t/80 ms), plus an incoherent 34.47 Hz
@@ -700,7 +701,9 @@ def main():
     for tr in tracks:
         s0, s1 = ranges[tr.label]
         m = measure(tr, s0, s1)
-        m['path'] = os.path.relpath(tr.path) if os.path.exists(tr.path) else tr.path
+        ap = os.path.abspath(tr.path)
+        rp = os.path.relpath(ap, REPO)
+        m['path'] = ap if rp.startswith('..') else rp
         m['start_sample'], m['end_sample'] = s0, s1
         if tr.label == 'reference':
             ref_lufs = m['lufs_integrated']

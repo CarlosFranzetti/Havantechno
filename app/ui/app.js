@@ -620,6 +620,10 @@
         if (e && e.reason === 'start') return;
         scheduleAutosave();
       });
+      host.on('section', function (e) {
+        if (!S.view || typeof S.view.selectSection !== 'function' || !e) return;
+        try { S.view.selectSection(e.name != null ? e.name : e.section); } catch (e4) { report('selectSection', e4); }
+      });
       host.on('param', function (e) { if (e && e.source === 'ui') scheduleAutosave(); });
     } catch (e2) { report('subscribe', e2); }
 

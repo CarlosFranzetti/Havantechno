@@ -278,7 +278,28 @@
       }
       c.refreshHead(true);
       c._seen = docEvents;
+      c._rw = c._rh = 0;
+      c.resizeFace();
     };
+
+    // Tell the face its drawing area (the body minus padding) so heroes can scale: face.resize(w, h).
+    c.resizeFace = function () {
+      if (!c.face || typeof c.face.resize !== 'function') return;
+      var w = body.clientWidth - 16, hh = body.clientHeight - 16;
+      if (w < 1 || hh < 1 || (c._rw === w && c._rh === hh)) return;
+      c._rw = w; c._rh = hh;
+      try { c.face.resize(w, hh); } catch (e) { note(e); }
+    };
+    if (typeof root.ResizeObserver === 'function') {
+      try {
+        c._ro = new root.ResizeObserver(function () {
+          if (c._roPending) return;
+          c._roPending = true;
+          root.requestAnimationFrame(function () { c._roPending = false; c.resizeFace(); });
+        });
+        c._ro.observe(body);
+      } catch (e) { c._ro = null; }
+    }
 
     c.footer = function () {
       var t = null;
@@ -317,6 +338,7 @@
 
     c.setDevice = function (nid) { c.id = nid; var s = lsGet(LS_RECT + nid); c.view = (s && s.v === 'controls') ? 'controls' : 'editor'; c.build(); };
     c.dispose = function () {
+      if (c._ro) { try { c._ro.disconnect(); } catch (e) { /* ignore */ } c._ro = null; }
       if (c.face && typeof c.face.dispose === 'function') { try { c.face.dispose(); } catch (e) { note(e); } }
       c.face = null;
       if (root_.parentNode) root_.parentNode.removeChild(root_);
