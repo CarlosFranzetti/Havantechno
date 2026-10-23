@@ -176,7 +176,7 @@
       rows: {}, rowOrder: [], cells: [], secCount: 0,
       starts: [], total: 0, curSec: -1, lastPh: '', lastBodyPh: '',
       ovSegs: [], ovWin: null, ovPh: null, ruPh: null, bodyPh: null, blocks: [], brace: null, loopBtn: null,
-      dev: null, devices: [], docRev: 0
+      dev: null, devices: [], docRev: 0, drag: null
     };
 
     var rootEl = make('div', 'se');
@@ -229,9 +229,47 @@
     function toggleStep(name, i) {
       editStep(name, i, function (cell) { return cell ? null : { vel: DEFAULT_VEL }; });
     }
-    function dragStep(name, i, vel) {
+    // A velocity drag is previewed locally (the step widget redraws, the document is untouched) and committed once at the
+    // end, inside ed.group, so one gesture is one undo entry and one 'document' event. The gesture's section and bar are
+    // fixed when it starts. The end signal is the widget's phase argument ('start' | 'move' | 'end') when it passes one,
+    // else a pointerup / pointercancel on the widget element. A keyboard edit (no pointer down, no phase) commits at once.
+    function dragStep(name, i, vel, phase, w) {
       var v = Math.max(0.05, Math.min(1, +vel || DEFAULT_VEL));
-      editStep(name, i, function () { return { vel: v }; });
+      var g = S.drag;
+      if (g && (g.name !== name || g.i !== i)) endDrag(true);     // a stale gesture on another step: finish it first
+      if (phase === 'end') {
+        if (S.drag) { S.drag.vel = v; endDrag(true); } else commitVel(name, i, v, null);
+        return;
+      }
+      var pointer = phase === 'start' || phase === 'move' || (w && w.down);
+      if (!pointer) { commitVel(name, i, v, null); return; }
+      if (!S.drag) {
+        var d = document_(), p = pos_(), si = curIndex(p, d.sections), vw = viewOf(d, name, si, p);
+        if (!vw.v) return;
+        S.drag = { name: name, i: i, vel: v, sec: d.sections[si].name, bar: vw.bar, cells: vw.cells.slice(), widget: w || null };
+      }
+      S.drag.vel = v;
+      var base = S.drag.cells[i], pv = S.drag.cells.slice(), k;
+      pv[i] = {}; if (base) for (k in base) if (has(base, k)) pv[i][k] = base[k];
+      pv[i].vel = v;
+      if (S.drag.widget && isFn(S.drag.widget.set)) S.drag.widget.set(pv);
+      var row = S.rows[name]; if (row && row.steps !== S.drag.widget && row.steps && isFn(row.steps.set)) row.steps.set(pv);
+      if (S.dev && S.dev.pat && S.dev.pat.name === name && S.dev.pat.steps && S.dev.pat.steps !== S.drag.widget) S.dev.pat.steps.set(pv);
+    }
+    function endDrag(commit) {
+      var g = S.drag; S.drag = null;
+      if (!g) return;
+      if (commit) commitVel(g.name, g.i, g.vel, g);
+      else { var row = S.rows[g.name]; if (row) row.sig = ''; if (S.dev && S.dev.pat) S.dev.pat.sig = ''; }
+    }
+    function commitVel(name, i, v, g) {
+      var d = document_(), p = pos_(), si = curIndex(p, d.sections), secName = g ? g.sec : d.sections[si].name, bar = g ? g.bar : null;
+      if (bar == null) { var vw = viewOf(d, name, si, p); if (!vw.v) return; bar = vw.bar; }
+      var ed = host.editor();
+      if (!ed) return;
+      var run = function (e) { return e.setStepInSection(secName, name, bar * STEPS + i, { vel: v }); };
+      if (isFn(ed.group)) ed.group(run); else run(ed);
+      host.commit();
     }
     function setPlay(name, letter) {
       var d = document_(), p = pos_(), si = curIndex(p, d.sections), ed = host.editor();
@@ -244,12 +282,20 @@
     function stepsWidget(name, ink) {
       var api = { el: null, set: null };
       if (root.Widgets && isFn(root.Widgets.steps)) {
+        var tracker = { down: false }, wref = { w: null };
         var w = safe(function () {
           return root.Widgets.steps({ count: STEPS, cells: [], ink: ink,
             onToggle: function (i) { toggleStep(name, i); },
-            onDrag: function (i, vel) { dragStep(name, i, vel); } });
+            onDrag: function (i, vel, phase) { dragStep(name, i, vel, phase, wref.w); } });
         }, null);
-        if (w && w.el) return w;
+        if (w && w.el) {
+          wref.w = tracker; tracker.set = w.set;
+          // pointer state for widgets that give no phase: down on pointerdown, the gesture ends on pointerup / cancel
+          on(w.el, 'pointerdown', function () { tracker.down = true; });
+          var up = function () { tracker.down = false; if (S.drag && S.drag.widget === tracker) endDrag(true); };
+          on(w.el, 'pointerup', up); on(w.el, 'pointercancel', up);
+          return w;
+        }
       }
       var wrap = make('div', 'se-fallback-steps'), btns = [], i;
       for (i = 0; i < STEPS; i++) (function (k) {
@@ -567,6 +613,7 @@
     // ---------------------------------------------------------------- full build (only on mount and 'document')
     function build() {
       var d = document_();
+      S.drag = null;
       S.doc = d; S.structure = structureKey(d);
       S.devices = safe(function () { return host.devices(); }, []) || [];
       var ss = sectionStarts(d.sections); S.starts = ss.starts; S.total = ss.total || 1;
