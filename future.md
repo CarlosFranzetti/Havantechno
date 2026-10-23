@@ -25,6 +25,14 @@ From Gear Crew round 1, each a candidate task once the owner confirms:
 - Live tweaks are overwritten by section ramps within one step; a `held` set is needed in the engine (F-S5).
 - The master meter reads 256 samples every 60 ms, about 10% of the signal (F-O2).
 
+## Direction change (2026-10-23, later): desktop DAW, floating device windows, Step View
+
+- The app is to be a **Mac or PC DAW**, not browser-only. That reopens plugin hosting (VST3, AU, CLAP) and changes the Gear Crew's platform conclusions; its round 4 was redirected to cover it.
+- The voted layout keeps its place as the **System Editor** view.
+- A **Step View** is added: the same shape, but every step of every track is editable there (hit, accent, note, per-step parameter values such as cutoff or decay).
+- Each device gets a **floating window** with its own look, as in Logic, in addition to its face in the System Editor chain.
+- A Faceplate follow-up round covers the floating-window system, the Step View and the desktop shell options.
+
 ## Layout, from the Faceplate vote (2026-10-23)
 
 The layout to build is **Strip Bench** as amended (`docs/research/2026-10-23-faceplate-layout/REPORT.md`, mockups on the canvas linked there). Order of work, from the tech lead's estimates (rough, labelled):

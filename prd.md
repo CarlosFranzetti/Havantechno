@@ -46,6 +46,8 @@ The owner set a longer-term direction for the studio. None of it is built; it is
 | D2 | The reference track lives in the studio as a modifiable track: every element as a separate stem with its own MIDI and parameters, all tweakable. | Not built |
 | D3 | A remix pipeline: source song → stems → MIDI and parameter data → loaded into the studio → the song recreated with the existing synths and processors, with a modified one, or with a new one when nothing fits. | Not built |
 | D4 | A researched gear list of plugins, instruments, effects and analysis tools that could achieve D3, with what can run in a browser. | In progress: Gear Crew round 1 done, round 2 running, see `docs/research/2026-10-23-plugin-gear/` |
+| D6 | **Desktop platform.** Havantechno becomes a Mac or PC DAW, not a browser-only page, so it can host real plugins and use more power. The browser studio stays as the archived first step. Platform choice (wrap the existing Web Audio code in a desktop shell, or go native) is open. | Direction set 2026-10-23, not built |
+| D7 | **Views.** The voted layout is one view, named **System Editor**. A second view, **Step View**, shows the same shape but lets every step of every track's sequence be edited (hit, accent, note, per-step parameters). A Logic-like main window with **floating windows per device**, each with its own look, is the third element. | Direction set 2026-10-23, not built |
 | D5 | A researched DAW layout, with Ableton Live and Logic Pro as references, chosen by group discussion and vote, with mockups. | Researched: Strip Bench chosen (8 of 12 first places). Report, discussion, vote and mockups in `docs/research/2026-10-23-faceplate-layout/`. Not built. |
 
 ## 5. Acceptance criteria
@@ -62,6 +64,8 @@ The owner set a longer-term direction for the studio. None of it is built; it is
 ## 7. Open questions
 
 Raised by the research and waiting on the owner:
+
+- **Desktop shell.** Electron or Tauri around the existing JavaScript and Web Audio engine (keeps all current code; plugin hosting needs a native bridge), or a native app (JUCE in C++, or Swift on Mac) with the engine rewritten. This decides almost everything else about plugin hosting.
 
 - **Licence.** The repo has no LICENSE file. Several candidate engines are GPL or AGPL (webOBXD, junox, Dexed, Mz101, Dragonfly Reverb, openDAW). Without a decision, only MIT/BSD/Apache code and reimplementation from published algorithms are safe.
 - **Offline or in-browser analysis.** Stem separation and transcription tools mostly run in Python. May the pipeline run offline and export a bundle (stems, MIDI, tempo/key/sections JSON) that the page imports?
