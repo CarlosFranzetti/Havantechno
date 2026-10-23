@@ -22,12 +22,10 @@ Owner files: `tools/browser-check.js`, `app/README.md` (rewrite at the end), sta
 - `node app/engine/selfcheck.js` (23:0x and again at the end): `OK: 193 checks passed`, exit 0.
 - `node --check tools/browser-check.js`: ok (after each edit).
 - Stub test: a 60-line page with the globals and the CONTRACT ids, kept in the scratchpad (not in the repo), run with `BROWSER_CHECK_ROOT=<stub>`: 20 PASS, and the only FAILs are the stub's own missing globals (Project, Widgets, Faces, SystemEditor, StepView, Windows). This shows the Start, Play, Tab, double-click, step-toggle and Save logic passes when the pieces exist.
-- Final real run at 23:14: `node tools/browser-check.js`, `RESULT: FAIL (10 failed check(s), 0 page error(s), 2 console error(s))`, exit 1.
-  - PASS: page loads, Kit, Synths, Processors, SongDoc, Sequencer, Song, Host, Widgets, Faces, SystemEditor, StepView, start audio clicked (`#start-audio`), no page errors.
-  - FAIL, missing globals: `Project` (A1 `engine/project.js`) and `Windows` (A6 `ui/windows.js`) are not on disk.
-  - FAIL, host handle not exposed (A6 `ui/app.js`, not written). Without it the transport check cannot run.
-  - FAIL, Play not found (A6, control bar in `#frame`). `#view` empty. No Step View marker. No device title. No step cell. Save: Ctrl+S gave no download and no autosave.
-  - FAIL, HTTP 404: `ui/facedefs.js` (A3) and `ui/app.js` (A6). The earlier run also listed `engine/project.js` and `ui/windows.js` as 404; those were not on disk at the last run.
+- Final real run at 23:15 (after `project.js` and `windows.js` landed): `RESULT: FAIL (10 failed check(s), 0 page error(s), 2 console error(s))`, exit 1.
+  - PASS: page loads; globals Kit, Synths, Processors, SongDoc, Sequencer, Song, Host, Project, Widgets, Faces, SystemEditor, StepView, Windows; start audio clicked (`#start-audio`); no page errors.
+  - FAIL: host handle not exposed (A6 `ui/app.js`, not written); Play not found (A6, `#frame`); `#view` empty; transport not checked (no host); no Step View marker; no device title; no step cell; Save: Ctrl+S gave no download and no autosave.
+  - FAIL, HTTP 404: `ui/facedefs.js` (A3) and `ui/app.js` (A6).
 
 ## Requests to other owners
 
@@ -43,7 +41,7 @@ Owner files: `tools/browser-check.js`, `app/README.md` (rewrite at the end), sta
 
 ## Unfinished
 
-- The real app has not passed the check, because `ui/app.js`, `ui/windows.js`, `engine/project.js` and `ui/facedefs.js` were not all on disk at the last run. Re-run `node tools/browser-check.js` after they land and update the README snapshot.
+- The real app has not passed the check, because `ui/app.js` and `ui/facedefs.js` are not on disk. Re-run `node tools/browser-check.js` after they land and update the README snapshot.
 - Electron has not been launched.
 - The status table in the README comes from the files on disk, not from owner logs. Correct each row when a log says otherwise.
 - Other owners' logs read at the end (23:14): `log-A1.md`, `log-A4.md`, `log-A7.md`. None is addressed to A10. A4 and A7 had not read the requests above when they wrote their logs.

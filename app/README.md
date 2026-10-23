@@ -56,7 +56,7 @@ Environment for the browser check: `PLAYWRIGHT_PATH` (default `/opt/node22/lib/n
 
 The browser check needs these from `app.js` and the frame: `#start-audio` (the overlay button), `#frame` with a Play button, `#view`, `#windows` (device panels on the web), and the host on `window.HavantechnoApp.host` (or `window.HavantechnoHost`). Without the host it can only check the DOM.
 
-Browser-check snapshot (2026-10-23, 23:14, the last run before this file was written): 10 failed checks, 0 page errors, 2 console errors. The two console errors are HTTP 404s for files not yet on disk: `ui/facedefs.js` (A3) and `ui/app.js` (A6). Because `app.js` is missing, nothing is mounted: the start button click works, but there is no Play button, no `#view` content, no host handle and no Step View. The engine globals and `Host`, `Widgets`, `Faces`, `SystemEditor` and `StepView` are defined; `Project` and `Windows` are not on disk yet. The same script's happy path passes against a stub page outside the repo (20 checks), which tests the script and not the app.
+Browser-check snapshot (2026-10-23, 23:15, the last run before this file was written): 10 failed checks, 0 page errors, 2 console errors. The two console errors are HTTP 404s for files not yet on disk: `ui/facedefs.js` (A3) and `ui/app.js` (A6). Because `app.js` is missing, nothing is mounted: the start button click works, but there is no Play button, no `#view` content, no host handle and no Step View. The engine globals and `Host`, `Project`, `Widgets`, `Faces`, `SystemEditor`, `StepView` and `Windows` are defined. The same script's happy path passes against a stub page outside the repo (20 checks), which tests the script and not the app.
 
 ## Scoring loop
 
@@ -75,7 +75,7 @@ One line per module, from `app/CONTRACT.md`:
 | `engine/sequencer.js` | `Sequencer`: lookahead scheduler, tracks, sends, parameter paths, holds, offline `render` and `wav`. Reads cells, applies locks per voice. |
 | `engine/song.js` | `Song.GUIDANCE` (frozen), `Song.document()`, `Song.build(seq, docOrDef)`. A7 adds `GUIDANCE_V2`. |
 | `engine/host.js` | `Host`: the one object the UI talks to (transport, parameters, devices, meters, document and editor, render). Owner A1; status below. |
-| `engine/project.js` | `Project`: serialize, parse, save and open (shell dialogs in Electron, download and file input on the web), autosave and restore. Not written yet. Owner A1. |
+| `engine/project.js` | `Project`: serialize, parse, save and open (shell dialogs in Electron, download and file input on the web), autosave and restore. Owner A1; status below. |
 | `engine/selfcheck.js` | Node self-check of the engine (193 checks). |
 | `ui/widgets.js` | `Widgets`: knob, slider, toggle, select, steps, meter, curve, all SVG or Canvas with keyboard and drag. Owner A2; status below. |
 | `ui/theme.css` | Colour tokens on `:root` and per-family colours. Owner A2; status below. |
@@ -83,8 +83,8 @@ One line per module, from `app/CONTRACT.md`:
 | `ui/facedefs.js` | The 23 device face definitions with their hero graphs. Not written yet. Owner A3. |
 | `ui/system-editor.js` | `SystemEditor`: the System Editor view (control bar contents, ruler, rows, device row). Owner A4; status below. |
 | `ui/step-view.js` | `StepView`: the Step View with step grids, the variant strip and the step editor lanes. Owner A5; status below. |
-| `ui/windows.js` | `Windows`: device windows (in-page panels on the web, child windows in Electron), link modes, tile and cascade. Not written yet. Owner A6. |
-| `ui/app.js` | Frame, view switch, keyboard, the start gate, the single animation loop and autosave. Not written yet. Owner A6. |
+| `ui/windows.js` | `Windows`: device windows (in-page panels on the web, child windows in Electron), link modes, tile and cascade. Owner A6; status below. |
+| `ui/app.js` | Frame, view switch, keyboard, the start gate, the single animation loop and autosave. Not written yet (the page 404s on it). Owner A6. |
 | `index.html` | Page skeleton and the script load order. Written by A6. |
 | `shell/main.js`, `shell/preload.js` | Electron main process and the `HavantechnoShell` bridge. Written by A6; not run. |
 | `package.json` | Scripts `start` and `web`, and `electron` 45.0.0 as a dev dependency. Owner A6. |
@@ -104,15 +104,16 @@ Source for each row: the files on disk at this snapshot. No owner had written a 
 | `engine/sequencer.js` | engine (milestone 1) | shipped | changed from the archive (123 diff lines); schedule equivalence in selfcheck |
 | `engine/song.js` | A7 | partial | changed on disk (77 diff lines), in progress; `GUIDANCE_V2` pending |
 | `engine/selfcheck.js` | A1 (additions) | shipped | 193 checks pass |
-| `engine/host.js` | A1 | partial | on disk at 23:13, A1 log describes it; not checked by A10 beyond the global loading |
-| `engine/project.js` | A1 | not started | file absent (the page loads it and gets a 404) |
+| `engine/host.js` | A1 | partial | on disk at 23:13, A1 log describes it; its global loads |
+| `engine/project.js` | A1 | partial | on disk (9 KB, 23:14); its global loads in the browser check; not checked beyond that |
 | `ui/theme.css` | A2 | partial | on disk; no log yet |
 | `ui/widgets.js` | A2 | partial | on disk (850 lines); no log yet |
 | `ui/faces.js`, `ui/facedefs.js` | A3 | partial | `faces.js` on disk (490 lines); `facedefs.js` absent (404) |
 | `ui/system-editor.js` | A4 | partial | on disk (709 lines); needs `app.js` to mount |
 | `ui/step-view.js` | A5 | partial | on disk; needs `app.js` to mount |
-| `ui/windows.js`, `ui/app.js` | A6 | not started | files absent (404 in the page) |
-| `index.html`, `package.json` | A6 | partial | written; loads 4 files that are absent |
+| `ui/windows.js` | A6 | partial | on disk (35 KB, 23:14); its global loads |
+| `ui/app.js` | A6 | not started | file absent (404 in the page); nothing mounts without it |
+| `index.html`, `package.json` | A6 | partial | written; loads 2 files that are absent (`ui/facedefs.js`, `ui/app.js`) |
 | `shell/main.js`, `shell/preload.js` | A6 | partial | written (23:10); `electron` 45.0.0 installed; never launched |
 | `tools/serve.js` | A6 | partial | written; not run by A10 |
 | `tools/browser-check.js` | A10 | partial | runs; fails on the missing modules above; happy path checked against a stub outside the repo |
@@ -121,7 +122,7 @@ Source for each row: the files on disk at this snapshot. No owner had written a 
 ## What is unverified
 
 - The Electron shell has not been launched in this sandbox. `npm install` put Electron in `app/node_modules`; `npm start` was not run.
-- The browser check has not passed on the real app, because most modules are not on disk yet. Its happy path was run against a stub page outside the repo, which checks the script and not the app.
+- The browser check has not passed on the real app: `ui/app.js` and `ui/facedefs.js` are not on disk. Its happy path was run against a stub page outside the repo, which checks the script and not the app.
 - `tools/serve.js` was not run by A10.
 - The audio changes from A7 and A8 are not verified by ear or by the scoring loop. The engine self-check covers schedule equivalence and nothing about sound.
-- Milestone 1 says saving waits for the shell; `SongDoc.save` produces the JSON, and the file dialogs come with `project.js` (A1) and the shell (A6), neither of which is written yet.
+- Saving to a file: `SongDoc.save` produces the JSON and `project.js` (A1) is on disk, but nothing has run the save path through the shell or the browser yet.

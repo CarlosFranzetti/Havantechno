@@ -29,7 +29,7 @@ Rough size: 6 to 9 days (F-O2's engine 3 to 5, locks 1, save/load 2 to 3).
 
 ## Milestone 2: the device list and the face registry
 
-**Status (2026-10-23, A10 check of the files on disk, 23:13): in progress. `engine/host.js`, `ui/widgets.js`, `ui/faces.js` and `ui/theme.css` are on disk without a finished log; `engine/project.js` and `ui/facedefs.js` are absent; the face lint is not written.**
+**Status (2026-10-23, A10 check of the files on disk, 23:15): in progress. `engine/host.js`, `ui/widgets.js`, `ui/faces.js` and `ui/theme.css` are on disk; `ui/facedefs.js` is absent; the face lint is not written.**
 
 1. A device list on the engine: every instrument, insert, send and master unit with its type, spec and parameter path prefix.
 2. `Faces.define(type, layout)` with a generic fallback that reproduces today's sliders and adds select and toggle widgets for non-numeric parameters (`wave`, `mode`, `division`, `pingpong`). Hand-written knob, slider, meter and curve widgets in SVG and Canvas.
@@ -41,7 +41,7 @@ Rough size: 12 to 19 days (F-O2's shared base).
 
 ## Milestone 3: the Electron shell
 
-**Status (2026-10-23, A10 check): partial. `app/shell/main.js`, `preload.js` and `app/package.json` are written and `electron` 45.0.0 is installed in `app/node_modules`, but nobody has launched it; file dialogs need `engine/project.js`, which is absent.**
+**Status (2026-10-23, A10 check, 23:15): partial. `app/shell/main.js`, `preload.js` and `app/package.json` are written, `electron` 45.0.0 is installed in `app/node_modules`, and `engine/project.js` and `ui/windows.js` are on disk; nobody has launched the shell.**
 
 1. Electron main process, one BrowserWindow for the main frame, same-origin child windows for device windows (they share the process and can call the main window's code).
 2. File access: open and save the song document to a user-chosen `.json`; autosave to the app-data folder; recent files.
