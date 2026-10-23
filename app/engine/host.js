@@ -73,6 +73,57 @@
     for (var u in m) if (has(m, u) && m[u] && typeof m[u] === 'object') for (var p in m[u]) if (has(m[u], p)) seq.setParam('master.' + u + '.' + p, m[u][p]);
   }
 
+  // Editor operations the views asked for (A5) that songdoc.js does not have yet. They live here, on the editor the
+  // Host hands out, until songdoc.js takes them over; each takes one undo snapshot like the built-in operations.
+  function snapshot(ed) {
+    ed._undo.push(JSON.stringify(ed.doc));
+    if (ed._undo.length > ed.limit) ed._undo.shift();
+    ed._redo.length = 0;
+  }
+  function extendEditor(ed) {
+    // run several operations as one undo step: ed.group(function (ed) { ed.forkVariant(...); ed.setPlay(...); })
+    ed.group = function (fn) {
+      var n = ed._undo.length, limit = ed.limit, r;
+      ed.limit = Infinity;
+      try { r = fn(ed); }
+      finally {
+        ed.limit = limit;
+        if (ed._undo.length > n + 1) ed._undo.splice(n + 1);
+        while (ed._undo.length > limit) ed._undo.shift();
+      }
+      return r;
+    };
+    // section fx hits {bar, step, track, bars, vel}: index null adds one, patch null removes one, else merges the patch.
+    // Returns the index of the hit, or -1.
+    ed.setFx = function (section, index, patch) {
+      var sec = ed.section(section); if (!sec) return -1;
+      sec.fx = sec.fx || [];
+      if (index == null) {
+        if (!patch || !patch.track) return -1;
+        snapshot(ed); sec.fx.push(clone(patch)); return sec.fx.length - 1;
+      }
+      if (index < 0 || index >= sec.fx.length) return -1;
+      snapshot(ed);
+      if (patch === null) { sec.fx.splice(index, 1); return index; }
+      for (var k in patch) if (has(patch, k)) { if (patch[k] == null) delete sec.fx[index][k]; else sec.fx[index][k] = patch[k]; }
+      return index;
+    };
+    // change a variant's length in bars. fill 'repeat' (default) loops the existing bars into the new ones, 'empty' leaves rests.
+    ed.setVariantBars = function (track, variant, bars, fill) {
+      var tr = ed.track(track); bars = bars | 0;
+      if (!tr || bars < 1 || bars > 64) return false;
+      snapshot(ed);
+      var v = tr.variants[variant] || (tr.variants[variant] = SongDoc.emptyVariant(1)), old = v.bars, cells = [], i;
+      for (i = 0; i < bars * STEPS; i++) {
+        if (i < old * STEPS) cells.push(v.cells[i]);
+        else cells.push(fill === 'empty' ? null : clone(v.cells[i % (old * STEPS)]));
+      }
+      v.bars = bars; v.cells = cells;
+      return true;
+    };
+    return ed;
+  }
+
   function create(opts) {
     opts = opts || {};
     var Sequencer = root.Sequencer, Song = root.Song, SongDoc = root.SongDoc;
@@ -181,7 +232,7 @@
     // ---------------------------------------------------------- document
     function setDoc(d) {
       var doc = SongDoc.load(typeof d === 'string' ? d : (d || Song.document()));
-      ed = SongDoc.createEditor(doc);
+      ed = extendEditor(SongDoc.createEditor(doc));
     }
     host.document = function () { return ed.doc; };
     host.editor = function () { return ed; };

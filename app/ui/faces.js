@@ -121,14 +121,17 @@
   function widget(name) { var W = root.Widgets; return (W && typeof W[name] === 'function') ? W[name] : NATIVE[name]; }
 
   // ------------------------------------------------------------------ palette for hero code
-  function readPalette(R) {
-    var fam = familyOf(R.device), f = FAM[fam] || FAM.utility, cs = null, el = R.root;
+  function readPalette(R, colors) {
+    var fam = familyOf(R.device), f = FAM[fam] || FAM.utility, dashed = !!(R.device.ref && R.device.ref._bypassed);
+    if (colors && colors.ink) {            // Widgets.curve passes resolved colours as the fourth draw argument
+      return { ink: colors.ink, dim: colors.famDim || f.dim, wash: colors.wash || f.wash, fg: colors.fg || '#d8d8e6', line: colors.line || '#2a2a3a',
+               bg: colors.panel || '#15151e', on: colors.on || '#75f97f', dashed: dashed };
+    }
+    var cs = null, el = R.root;
     if (el && root.getComputedStyle) cs = safe(function () { return root.getComputedStyle(el); }, null);
     function v(name, fb) { var x = cs && cs.getPropertyValue ? String(cs.getPropertyValue(name) || '').trim() : ''; return x || fb; }
-    return {
-      ink: v('--fam-ink', f.ink), dim: v('--fam-dim', f.dim), wash: v('--fam-wash', f.wash), fg: v('--fg', '#d8d8e6'), line: v('--line', '#2a2a3a'),
-      bg: v('--panel', '#15151e'), on: v('--on', '#75f97f'), dashed: !!(R.device.ref && R.device.ref._bypassed)
-    };
+    return { ink: v('--fam-ink', f.ink), dim: v('--fam-dim', f.dim), wash: v('--fam-wash', f.wash), fg: v('--fg', '#d8d8e6'), line: v('--line', '#2a2a3a'),
+             bg: v('--panel', '#15151e'), on: v('--on', '#75f97f'), dashed: dashed };
   }
 
   function paramOf(device, host, name) {
@@ -139,8 +142,17 @@
   }
 
   // ------------------------------------------------------------------ section state markers (shape only: set / ramp / held)
-  function currentSection(host) {
+  // host.sections() clones the section list on every call, so it is cached for a short time per host and shared by all faces.
+  var secCache = { host: null, t: 0, secs: null };
+  function sectionsOf(host) {
+    var t = Date.now();
+    if (secCache.host === host && secCache.secs && t - secCache.t < 250) return secCache.secs;
     var secs = safe(function () { return host.sections(); }, null);
+    secCache = { host: host, t: t, secs: secs };
+    return secs;
+  }
+  function currentSection(host) {
+    var secs = sectionsOf(host);
     if (!secs || !secs.length) return null;
     var pos = safe(function () { return host.transport.pos(); }, null), sec = null, i;
     if (pos && typeof pos.section === 'number' && secs[pos.section]) sec = secs[pos.section];
@@ -149,19 +161,21 @@
     var p = pos ? (pos.barInSection || 0) + (pos.step || 0) / 16 : 0;
     return { sec: sec, pos: p };
   }
+  function has(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
+  // -> {state: 'held'|'ramp'|'set'|null, ramp: the ramp entry or null}
   function markerFor(R, cs, path) {
     var held = (typeof R.host.isHeld === 'function') ? safe(function () { return R.host.isHeld(path); }, false) : !!R.held[path];
-    if (held) return 'held';
-    if (!cs || !cs.sec) return null;
+    if (held) return { state: 'held', ramp: null };
+    if (!cs || !cs.sec) return { state: null, ramp: null };
     var ramps = cs.sec.ramp || [], i;
     for (i = 0; i < ramps.length; i++) {
       var r = ramps[i];
       if ((r.param || r.path) !== path) continue;
       var a = r.bars ? r.bars[0] : 0, b = r.bars ? r.bars[1] : (cs.sec.bars || 0);
-      if (cs.pos >= a && cs.pos <= b) return 'ramp';
+      if (cs.pos >= a && cs.pos <= b) return { state: 'ramp', ramp: r };
     }
-    if (cs.sec.set && Object.prototype.hasOwnProperty.call(cs.sec.set, path)) return 'set';
-    return null;
+    if (has(cs.sec.set, path)) return { state: 'set', ramp: null };
+    return { state: null, ramp: null };
   }
 
   // ------------------------------------------------------------------ controls
@@ -169,7 +183,7 @@
     if (item.label) return item.label;
     if (R.layout.labels && R.layout.labels[p]) return R.layout.labels[p];
     if (p === 'level' && R.device.kind === 'instrument') return 'trim';
-    return p;
+    return p.indexOf('.') >= 0 ? p.slice(p.lastIndexOf('.') + 1) : p;
   }
   function optionsFor(R, p, item) {
     if (item.options) return item.options;
@@ -189,20 +203,22 @@
     var host = R.host, path = R.device.pathPrefix + '.' + p, wname = widgetFor(kind, item, section, dflt);
     var cur = safe(function () { return host.getParam(path); }, undefined);
     if (cur === undefined || cur === null) cur = entry.value;
-    var c = { p: p, path: path, kind: kind, widget: wname, last: cur, state: null, dragging: false, w: null };
-    function hold() { c.dragging = true; R.held[path] = true; if (typeof host.hold === 'function') safe(function () { host.hold(path); }); }
+    var c = { p: p, path: path, kind: kind, widget: wname, last: cur, state: null, rampKey: '', w: null };
+    function hold() { R.held[path] = true; if (typeof host.hold === 'function') safe(function () { host.hold(path); }); }
     function write(v) { c.last = v; if (typeof host.setParam === 'function') safe(function () { host.setParam(path, v); }); }
     var label = labelFor(R, p, item), size = R.density;
     if (wname === 'toggle') {
-      c.w = widget('toggle')({ label: label, value: !!cur, onInput: function (v) { hold(); c.dragging = false; write(!!v); } });
+      c.w = widget('toggle')({ label: label, value: !!cur, size: size, onInput: function (v) { hold(); write(!!v); } });
     } else if (wname === 'select') {
       var opts = optionsFor(R, p, item) || [String(cur)];
-      c.w = widget('select')({ label: label, options: opts.slice(), value: cur, onInput: function (v) { hold(); c.dragging = false; write(v); } });
+      c.w = widget('select')({ label: label, options: opts.slice(), value: cur, size: size, onInput: function (v) { hold(); write(v); } });
     } else {
-      var o = { label: label, min: entry.min, max: entry.max, value: cur, unit: entry.unit || '', log: isLog(entry), size: size,
-                onInput: function (v) { write(v); }, onHold: hold, onRelease: function () { c.dragging = false; } };
+      var o = { label: label, min: entry.min, max: entry.max, value: cur, unit: entry.unit || '', log: isLog(entry), size: size, factory: entry.value,
+                home: function () { var cs = R.cs; return (cs && cs.sec && has(cs.sec.set, path)) ? cs.sec.set[path] : entry.value; },
+                onInput: function (v) { write(v); }, onHold: hold };
       if (wname === 'slider') o.orientation = item.orientation || 'h';
       c.w = widget(wname)(o);
+      if (c.w && c.w.setStock) safe(function () { c.w.setStock(entry.value); });
     }
     c.el = c.w && c.w.el;
     R.controls.push(c);
@@ -214,9 +230,9 @@
     var d = defs[type];
     return '<svg viewBox="0 0 16 16" aria-hidden="true">' + ((d && d.glyph) || '<circle cx="8" cy="8" r="5"/>') + '</svg>';
   }
-  function glyph(typeOrDevice, px) {
+  function glyph(typeOrDevice, px, cls) {
     var type = typeof typeOrDevice === 'string' ? typeOrDevice : typeOrDevice.type;
-    var el = h('span', 'hv-glyph');
+    var el = h('span', (cls || 'face-glyph') + ' hv-glyph');
     if (px) { el.style.width = px + 'px'; el.style.height = px + 'px'; }
     el.innerHTML = glyphMarkup(type);
     setAttr(el, 'data-fam', typeof typeOrDevice === 'string' ? (FAMILY[type] || 'utility') : familyOf(typeOrDevice));
@@ -227,133 +243,156 @@
   function heroSize(R) {
     var L = R.layout, d = R.density;
     var w = (L.width && L.width[d]) || DEFAULT_W[d] || 380, hh = (L.heroH && L.heroH[d]) || HERO_H[d] || 76;
-    return { w: Math.max(60, w - 14), h: hh };
+    var pad = d === 'strip' ? 18 : (d === 'window' ? 34 : 26);          // body padding (theme.css) plus border
+    return { w: Math.max(60, w - pad), h: hh };
   }
   function buildHero(R, w, hh) {
-    var curve = widget('curve')({ width: w, height: hh, draw: function (c, cw, ch) { drawHero(R, c, cw, ch); } });
+    var curve = widget('curve')({ width: w, height: hh, draw: function (c, cw, ch, colors) { drawHero(R, c, cw, ch, colors); } });
     R.hero = curve;
     return curve;
   }
-  function drawHero(R, c, w, hh) {
-    var pal = readPalette(R);
-    try { c.save(); } catch (e) {}
+  function drawHero(R, c, w, hh, colors) {
+    var pal = readPalette(R, colors);
     try { c.fillStyle = pal.wash; c.fillRect(0, 0, w, hh); } catch (e) {}
     Faces.palette = pal;
     try { R.layout.hero(c, w, hh, R.device, R.host); }
     catch (e) { R.heroError = e; if (Faces.strict) throw e; }
-    try { c.restore(); } catch (e) {}
   }
   function heroSig(R) {
     var spec = R.device.spec || {}, s = '', k;
-    for (k in spec) if (Object.prototype.hasOwnProperty.call(spec, k)) s += paramOf(R.device, R.host, k) + '|';
+    for (k in spec) if (has(spec, k)) s += paramOf(R.device, R.host, k) + '|';
     return s + (R.device.ref && R.device.ref._bypassed ? 'b' : '');
   }
 
   // ------------------------------------------------------------------ render
   function stateOf(device, host, layout, density) {
     return { device: device, host: host, layout: layout, density: density, controls: [], held: {}, root: null, hero: null, heroWrap: null,
-             sig: null, heroError: null, disposed: false };
+             cs: null, sig: null, heroError: null, disposed: false };
+  }
+  function tag(R, el, cls) {
+    el.className = cls;
+    setAttr(el, 'data-fam', familyOf(R.device)); setAttr(el, 'data-type', R.device.type); setAttr(el, 'data-device', R.device.id || '');
   }
 
   function renderChip(R) {
-    var el = h('div', 'hv-face hv-chip'), head = h('span', 'hv-head');
-    add(head, glyph(R.device)); add(head, h('span', 'hv-title', R.device.name || R.device.type));
-    add(el, head);
+    var el = h('span'), nm = R.device.name || R.device.type;
+    tag(R, el, 'face-chip hv-chip');
+    el.style.display = 'inline-flex'; el.style.alignItems = 'center'; el.style.gap = '6px';
+    add(el, glyph(R.device, 0, 'chip-glyph')); add(el, h('span', 'chip-name', nm));
     R.root = el;
-    setAttr(el, 'data-fam', familyOf(R.device)); setAttr(el, 'data-type', R.device.type); setAttr(el, 'data-device', R.device.id || '');
-    setAttr(el, 'title', (R.device.name || R.device.type) + (R.device.name !== R.device.type ? ' (' + R.device.type + ')' : ''));
+    setAttr(el, 'title', nm + (R.device.name !== R.device.type ? ' (' + R.device.type + ')' : ''));
     return el;
   }
 
+  // names a section takes: its explicit params, or every spec param matching its `match` regexp source
+  function paramsOf(sec, spec) {
+    if (sec.params) return sec.params;
+    var out = [], re = null, k;
+    try { re = new RegExp(sec.match || '$^'); } catch (e) { return out; }
+    for (k in (spec || {})) if (has(spec, k) && re.test(k)) out.push(k);
+    return out;
+  }
   function sectionNode(R, sec) {
-    var node = h('div', 'hv-sec'), ctls = h('div', 'hv-ctls'), i, any = false;
-    if (sec.title) add(node, h('h4', null, sec.title));
-    for (i = 0; i < (sec.params || []).length; i++) {
-      var it = itemOf(sec.params[i]), c = makeControl(R, it.p, it, sec);
+    var node = h('section', 'face-section'), ctls = h('div', 'face-controls'), list = paramsOf(sec, R.device.spec), i, any = false;
+    if (sec.title) add(node, h('h4', 'face-section-title', sec.title));
+    for (i = 0; i < list.length; i++) {
+      var it = itemOf(list[i]), c = makeControl(R, it.p, it, sec);
       if (c) { add(ctls, c.el); any = true; }
     }
     add(node, ctls);
     return any ? node : null;
   }
 
-  function placedSet(layout) {
-    var placed = {}, i, j;
-    for (i = 0; i < (layout.sections || []).length; i++) for (j = 0; j < (layout.sections[i].params || []).length; j++) placed[itemOf(layout.sections[i].params[j]).p] = true;
+  function placedSet(layout, spec) {
+    var placed = {}, i, j, list;
+    for (i = 0; i < (layout.sections || []).length; i++) {
+      list = paramsOf(layout.sections[i], spec);
+      for (j = 0; j < list.length; j++) placed[itemOf(list[j]).p] = true;
+    }
     return placed;
   }
   function unplaced(device, layout) {
-    var placed = placedSet(layout), out = [], k, spec = device.spec || {};
-    for (k in spec) if (Object.prototype.hasOwnProperty.call(spec, k) && !placed[k] && kindOf(spec[k])) out.push(k);
+    var placed = placedSet(layout, device.spec), out = [], k, spec = device.spec || {};
+    for (k in spec) if (has(spec, k) && !placed[k] && kindOf(spec[k])) out.push(k);
+    return out;
+  }
+  function firstParams(L, spec, n) {
+    var out = [], i, j, list;
+    for (i = 0; i < (L.sections || []).length && out.length < n; i++) {
+      list = paramsOf(L.sections[i], spec);
+      for (j = 0; j < list.length && out.length < n; j++) out.push(itemOf(list[j]).p);
+    }
     return out;
   }
 
   function renderBody(R, generic) {
-    var L = R.layout, d = R.density, el = h('div', 'hv-face hv-' + d + (generic ? ' hv-generic' : ''));
+    var L = R.layout, d = R.density, el = h('div');
+    tag(R, el, 'face hv-face hv-' + d + (generic ? ' hv-generic' : ''));
+    setAttr(el, 'data-density', d);
     R.root = el;
-    setAttr(el, 'data-fam', familyOf(R.device)); setAttr(el, 'data-type', R.device.type); setAttr(el, 'data-device', R.device.id || '');
     if (d !== 'window' && L.width && L.width[d]) el.style.width = L.width[d] + 'px';
-    if (L.height && L.height[d]) el.style.minHeight = L.height[d] + 'px';
-    var head = h('div', 'hv-head');
-    add(head, glyph(R.device)); add(head, h('span', 'hv-title', R.device.name || R.device.type));
-    if (R.device.name && R.device.name !== R.device.type) add(head, h('span', 'hv-type', R.device.type));
+    var head = h('div', 'face-head hv-head');
+    add(head, glyph(R.device)); add(head, h('span', 'face-title hv-title', R.device.name || R.device.type));
+    if (R.device.name && R.device.name !== R.device.type) add(head, h('span', 'face-sub hv-type', R.device.type));
     add(el, head);
+    var body = h('div', 'face-body');
+    add(el, body);
 
     if (L.hero && !generic) {
-      var hs = heroSize(R), wrap = h('div', 'hv-hero');
+      var hs = heroSize(R), wrap = h('div', 'face-hero hv-hero');
       R.heroWrap = wrap;
       add(wrap, buildHero(R, hs.w, hs.h).el);
-      add(el, wrap);
+      add(body, wrap);
     }
-    var i, more;
+    var i, ctls;
     if (generic) {
-      var list = h('div', 'hv-list'), all = unplaced(R.device, L);
-      for (i = 0; i < all.length; i++) add(list, makeControl(R, all[i], { p: all[i] }, null, 'slider').el);
-      add(el, list);
+      var all = unplaced(R.device, L);
+      ctls = h('div', 'face-controls');
+      ctls.style.flexDirection = 'column'; ctls.style.alignItems = 'stretch'; ctls.style.flex = '1 1 100%';
+      for (i = 0; i < all.length; i++) add(ctls, makeControl(R, all[i], { p: all[i] }, null, 'slider').el);
+      add(body, ctls);
     } else if (d === 'strip') {
-      var sc = h('div', 'hv-strip-ctls'), names = L.strip || firstParams(L, 4);
-      for (i = 0; i < names.length; i++) { var itm = itemOf(names[i]), cc = makeControl(R, itm.p, itm, null); if (cc) add(sc, cc.el); }
-      add(el, sc);
+      ctls = h('div', 'face-controls');
+      var names = L.strip || firstParams(L, R.device.spec, 4);
+      for (i = 0; i < names.length; i++) { var itm = itemOf(names[i]), cc = makeControl(R, itm.p, itm, null); if (cc) add(ctls, cc.el); }
+      add(body, ctls);
     } else {
-      var secs = h('div', 'hv-secs');
-      for (i = 0; i < (L.sections || []).length; i++) add(secs, sectionNode(R, L.sections[i]));
-      add(el, secs);
+      for (i = 0; i < (L.sections || []).length; i++) add(body, sectionNode(R, L.sections[i]));
       var rest = unplaced(R.device, L);
       if (rest.length) {
-        more = h('details', 'hv-more');
+        var more = h('details', 'face-more hv-more');
         if (d === 'window') setAttr(more, 'open', 'open');
         add(more, h('summary', null, 'more (' + rest.length + ')'));
-        var mc = h('div', 'hv-ctls');
+        var mc = h('div', 'face-controls');
+        mc.style.flexDirection = 'column'; mc.style.alignItems = 'stretch';
         for (i = 0; i < rest.length; i++) add(mc, makeControl(R, rest[i], { p: rest[i] }, null, 'slider').el);
-        add(more, mc); add(el, more);
+        add(more, mc); add(body, more);
       }
     }
     return el;
-  }
-  function firstParams(L, n) {
-    var out = [], i, j;
-    for (i = 0; i < (L.sections || []).length && out.length < n; i++) for (j = 0; j < L.sections[i].params.length && out.length < n; j++) out.push(itemOf(L.sections[i].params[j]).p);
-    return out;
   }
 
   function make(device, density, host, layout, generic) {
     if (DENSITIES.indexOf(density) < 0) density = 'face';
     var R = stateOf(device, host || {}, layout, density);
     var el = density === 'chip' ? renderChip(R) : renderBody(R, generic);
+    var bypassAttr = density === 'chip' ? 'data-bypass' : 'data-bypass';
 
     function update() {
       if (R.disposed) return;
-      var h0 = R.host, cs = (density === 'chip') ? null : currentSection(h0), i;
+      var h0 = R.host, i, cs = null;
+      if (density !== 'chip') { cs = currentSection(h0); R.cs = cs; }
       if (typeof h0.isHeld !== 'function' && typeof h0.heldCount === 'function' && safe(function () { return h0.heldCount(); }, 0) === 0) R.held = {};
-      // bypass / mute marker on the frame
       var bypassed = !!(R.device.ref && R.device.ref._bypassed), muted = false;
       if (R.device.kind === 'instrument' || R.device.kind === 'channel') muted = !!safe(function () { return h0.getParam(R.device.track + '.mute'); }, false);
-      else if (R.device.kind === 'insert' || R.device.kind === 'send' || R.device.kind === 'master') muted = false;
-      setAttr(el, 'data-bypassed', bypassed ? '1' : '0'); setAttr(el, 'data-muted', muted ? '1' : '0');
+      setAttr(el, bypassAttr, bypassed ? 'true' : 'false'); setAttr(el, 'data-mute', muted ? 'true' : 'false');
       for (i = 0; i < R.controls.length; i++) {
         var c = R.controls[i], v = safe(function () { return h0.getParam(c.path); }, undefined);
-        if (v !== undefined && v !== null && v !== c.last && !c.dragging) { c.last = v; if (c.w && c.w.set) c.w.set(v); }
+        if (v !== undefined && v !== null && v !== c.last) { c.last = v; if (c.w && c.w.set) c.w.set(v); }
         var m = markerFor(R, cs, c.path);
-        if (m !== c.state) { c.state = m; if (c.w && c.w.setState) c.w.setState(m); }
+        if (m.state !== c.state) { c.state = m.state; if (c.w && c.w.setState) c.w.setState(m.state); }
+        var rk = m.ramp ? m.ramp.from + '>' + m.ramp.to : '';
+        if (rk !== c.rampKey) { c.rampKey = rk; if (m.ramp && c.w && c.w.setRamp) safe(function () { c.w.setRamp(m.ramp.from, m.ramp.to); }); }
       }
       if (R.hero && R.hero.redraw) {
         var sig = R.layout.live ? null : heroSig(R);
@@ -362,14 +401,16 @@
     }
     function resize(w, hh) {
       if (R.disposed || !R.heroWrap || !R.layout.hero) return;
-      var old = R.hero && R.hero.el;
-      var nh = buildHero(R, Math.max(60, w | 0), Math.max(24, hh | 0));
+      w = Math.max(60, w | 0); hh = Math.max(24, hh | 0);
+      if (R.hero && typeof R.hero.resize === 'function') { R.hero.resize(w, hh); R.sig = null; return; }
+      var old = R.hero && R.hero.el, nh = buildHero(R, w, hh);
       if (old && R.heroWrap.replaceChild) R.heroWrap.replaceChild(nh.el, old); else add(R.heroWrap, nh.el);
       R.sig = null;
     }
     function dispose() {
       if (R.disposed) return;
       R.disposed = true;
+      for (var i = 0; i < R.controls.length; i++) { var w = R.controls[i].w; if (w && typeof w.dispose === 'function') safe(function () { w.dispose(); }); }
       if (el.parentNode && el.parentNode.removeChild) el.parentNode.removeChild(el);
       R.controls.length = 0; R.hero = null;
     }
@@ -390,8 +431,9 @@
     for (i = 0; i < (L.sections || []).length; i++) {
       var s = L.sections[i];
       if (!s.title) bad('section ' + i + ' has no title');
-      for (j = 0; j < (s.params || []).length; j++) {
-        var it = itemOf(s.params[j]), e = spec && spec[it.p];
+      var plist = paramsOf(s, spec);
+      for (j = 0; j < plist.length; j++) {
+        var it = itemOf(plist[j]), e = spec && spec[it.p];
         name = type + '.' + it.p;
         if (!e) { out.push(name + ': named in the layout but not in the spec'); continue; }
         if (placed[it.p]) out.push(name + ': placed twice');
@@ -404,7 +446,8 @@
         if (kind === 'str' && !(it.options || (L.options && L.options[it.p]) || OPTIONS[it.p])) out.push(name + ': string param has no option list (add layout.options.' + it.p + ')');
         if (kind === 'str') {
           var opts = it.options || (L.options && L.options[it.p]) || OPTIONS[it.p] || [];
-          if (opts.length && opts.indexOf(e.value) < 0) out.push(name + ': default "' + e.value + '" is not in the option list');
+          var vals = opts.map(function (o) { return (o && typeof o === 'object') ? o.value : o; });
+          if (vals.length && vals.indexOf(e.value) < 0) out.push(name + ': default "' + e.value + '" is not in the option list');
         }
       }
     }

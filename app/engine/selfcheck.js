@@ -369,6 +369,19 @@ var section5 = (function () {
   ok(bassAfter === bassBefore + 48 && hits('kick') === kickBefore, 'the schedule changed: bass ' + bassBefore + ' -> ' + bassAfter + ' hits (+1 per bar of mainB), kick unchanged');
   ok(host.engine().tracks.bass.variants.D.cells[0].vel === 1 && host.sections()[7].play.bass === 'D', 'the running engine plays the fork in mainB');
   ok(ed.undo() && ed.undo() && ed.undo() && host.commit() === false && hits('bass') === bassBefore && !host.engine().tracks.bass.variants.D, 'undo + commit restores the schedule');
+  // editor additions on the Host's editor: group (one undo step), setFx, setVariantBars
+  var u0 = ed._undo.length;
+  var gl = ed.group(function (e) { var l = e.forkVariant('kick', 'A'); e.setPlay('intro', 'kick', l); e.setStep('kick', l, 2, { vel: 1 }); return l; });
+  ok(gl && ed._undo.length === u0 + 1 && ed.section('intro').play.kick === gl && ed.undo() && ed.section('intro').play.kick === 'A' && !ed.track('kick').variants[gl], 'ed.group() makes several operations one undo step');
+  var fi = ed.setFx('mainA', null, { bar: 8, track: 'impact' });
+  ok(fi === 1 && ed.section('mainA').fx[1].track === 'impact' && ed.setFx('mainA', fi, { vel: 0.5 }) === fi && ed.section('mainA').fx[1].vel === 0.5 && ed.setFx('mainA', fi, null) === fi && ed.section('mainA').fx.length === 1 && ed.setFx('nope', null, { track: 'x' }) === -1, 'ed.setFx adds, edits and removes section fx hits');
+  host.commit(); var impacts = hits('impact');
+  ed.setFx('mainA', null, { bar: 8, track: 'impact' }); host.commit();
+  ok(hits('impact') === impacts + 1, 'an added fx hit reaches the schedule (impact ' + impacts + ' -> ' + (impacts + 1) + ')');
+  ed.undo(); host.commit();
+  ok(ed.setVariantBars('bass', 'C', 2) && ed.track('bass').variants.C.bars === 2 && ed.track('bass').variants.C.cells.length === 32 && ed.track('bass').variants.C.cells[19].vel === 0.85 && ed.setVariantBars('bass', 'C', 3, 'empty') && ed.track('bass').variants.C.cells[35] === null && ed.setVariantBars('bass', 'C', 1) && ed.track('bass').variants.C.cells.length === 16 && ed.setVariantBars('bass', 'C', 0) === false, 'ed.setVariantBars grows (repeat or empty) and shrinks a variant');
+  ed.undo(); ed.undo(); ed.undo(); host.commit();
+  ok(hits('bass') === bassBefore, 'undo of the bar changes restores the schedule');
   // a structural edit rebuilds, keeping position, held paths, mute and solo
   host.transport.jump('mainA'); host.hold('stab.cutoff'); host.mute('clap', true); host.solo('kick', false);
   ok(ed.setTrackParam('kick', 'decay', 0.6), 'setTrackParam');

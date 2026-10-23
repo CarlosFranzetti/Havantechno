@@ -74,7 +74,7 @@ function signature(proc) {
     if (!n.connections || n.connections.length === 0) return;
     Object.keys(n).forEach(function (k) {
       var v = n[k];
-      if (v && typeof v === 'object' && Array.isArray(v.calls)) out.push(n.type_ + '.' + k + ' ' + JSON.stringify(v.calls));
+      if (v && typeof v === 'object' && Array.isArray(v.calls) && v.calls.length) out.push(n.type_ + '.' + k + ' ' + JSON.stringify(v.calls));
     });
   });
   return out.sort();
@@ -238,7 +238,7 @@ function hasCall(calls, method, v, t) {
   var expDb = lo * Math.pow(1 / lo, f), expLin = lo + (1 - lo) * f;
   var db10 = duck({ curve: 'db', hold: 0.002 }, 1, 1.010);
   ok(hasCall(db10, 'setValueAtTime', expDb, 1.010), 'curve db, retrigger in the release: starts from ' + expDb.toFixed(5) + ' (not the step 0.4)');
-  ok(hasCall(db10, 'cancelScheduledValues', null, 1.010), 'the old schedule from the retrigger on is cancelled');
+  ok(hasCall(db10, 'cancelScheduledValues', 1.010, null), 'the old schedule from the retrigger on is cancelled');
   ok(hasCall(db10, 'exponentialRampToValueAtTime', 1, 1.236), 'curve db: the new recovery is exponentialRampToValueAtTime(1) at t + len');
   ok(!hasCall(db10, 'linearRampToValueAtTime', 1, 1.236), 'curve db: no linear recovery is scheduled');
   var lin10 = duck({ curve: 'lin', hold: 0.002 }, 1, 1.010);

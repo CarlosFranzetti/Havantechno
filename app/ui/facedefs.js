@@ -97,25 +97,30 @@
   // ------------------------------------------------------------------ instruments: heroes
   function heroKick(c, w, hh, d, host) {
     var p = pal(), g = plot(w, hh, hh < 64), tune = P(d, host, 'tune'), punch = P(d, host, 'punch'), sweep = P(d, host, 'sweep'), decay = P(d, host, 'decay'), click = P(d, host, 'click');
-    var T = Math.max(decay * 1.1, sweep * 3, 0.1), i, ff = [50, 100, 200];
+    var tau = P(d, host, 'tau') || 0, hold = P(d, host, 'hold') || 0;
+    var T = Math.max(decay * 1.1 + hold, tau > 0 ? tau * 5 : sweep * 3, 0.1), i, ff = [50, 100, 200];
     function X(t) { return g.x0 + t / T * g.w; } function Y(f) { return g.y1 - lx(f, 30, 400) * g.h; }
     if (!g.small) for (i = 0; i < ff.length; i++) { line(c, g.x0, Y(ff[i]), g.x1, Y(ff[i]), p.line, 1); txt(c, ff[i], g.x1 - 2, Y(ff[i]) - 2, 'right'); }
-    var amp = sample(80, function (u) { var t = u * T; return [X(t), g.y1 - (t < 0.0015 ? t / 0.0015 : Math.exp(-(t - 0.0015) / decay * DB1000)) * g.h * 0.45]; });
+    var amp = sample(80, function (u) { var t = u * T; return [X(t), g.y1 - (t < 0.0015 ? t / 0.0015 : (t < 0.0015 + hold ? 1 : Math.exp(-(t - 0.0015 - hold) / decay * DB1000))) * g.h * 0.45]; });
     area(c, amp, g.y1, p.ink, 0.18); path(c, amp, p.dim, 1);
-    path(c, sample(80, function (u) { var t = u * T; return [X(t), Y(t < sweep ? punch * Math.pow(tune / punch, t / sweep) : tune)]; }), p.ink, 2);
+    path(c, sample(80, function (u) { var t = u * T; return [X(t), Y(tau > 0 ? tune + (punch - tune) * Math.exp(-t / tau) : (t < sweep ? punch * Math.pow(tune / punch, t / sweep) : tune))]; }), p.ink, 2);
     if (click > 0) line(c, g.x0 + 1, g.y1, g.x0 + 1, g.y1 - click * g.h * 0.6, p.fg, 2);
-    if (!g.small) { txt(c, 'punch ' + Math.round(punch), g.x0 + 4, Y(punch) - 3); txt(c, 'tune ' + Math.round(tune), X(Math.min(T, sweep * 1.6)), Y(tune) - 3); txt(c, Math.round(decay * 1000) + ' ms', g.x1, g.y1 + 10, 'right'); }
+    if (!g.small) { txt(c, 'punch ' + Math.round(punch), g.x0 + 4, Y(punch) - 3); txt(c, 'tune ' + Math.round(tune), X(Math.min(T, (tau > 0 ? tau * 2 : sweep * 1.6))), Y(tune) - 3); txt(c, Math.round(decay * 1000) + ' ms', g.x1, g.y1 + 10, 'right'); }
   }
   function heroSub(c, w, hh, d, host) {
     var p = pal(), g = plot(w, hh, hh < 64), att = P(d, host, 'attack'), dec = P(d, host, 'decay'), har = P(d, host, 'harmonic'), glide = P(d, host, 'glide');
-    var T = att + dec * 1.2;
-    function env(t, k) { return t < att ? t / att : Math.exp(-(t - att) / (dec * k) * DB1000); }
+    var drone = P(d, host, 'mode') === 'drone', rel = P(d, host, 'release') || 0.03, HOLD = 1;
+    var T = drone ? att + HOLD + rel * 1.5 : att + dec * 1.2;
+    function env(t, k) {
+      if (drone) return t < att ? t / att : (t < att + HOLD ? 1 : Math.max(0, 1 - (t - att - HOLD) / rel));
+      return t < att ? t / att : Math.exp(-(t - att) / (dec * k) * DB1000);
+    }
     var e = envT(function (t) { return env(t, 1); }, g, T, 0.5, 90);
     var mirror = e.map(function (q) { return [q[0], g.y0 + g.h / 2 - (g.y1 - q[1])]; });
     area(c, e, g.y0 + g.h / 2, p.ink, 0.15); path(c, e, p.dim, 1); path(c, mirror, p.dim, 1);
     path(c, sample(240, function (u) { var t = u * T; return [g.x0 + u * g.w, g.y0 + g.h / 2 - env(t, 1) * Math.sin(u * 14 * TAU) * g.h * 0.5]; }), p.ink, 1.5);
     if (har > 0) path(c, sample(240, function (u) { var t = u * T; return [g.x0 + u * g.w, g.y0 + g.h / 2 - env(t, 0.6) * har * Math.sin(u * 28 * TAU) * g.h * 0.5]; }), p.dim, 1);
-    if (!g.small) { txt(c, 'harmonic ' + Math.round(har * 100) + '%', g.x0 + 3, g.y1 + 10); if (glide > 0) txt(c, 'glide ' + Math.round(glide * 1000) + ' ms', g.x1, g.y1 + 10, 'right'); }
+    if (!g.small) { txt(c, (drone ? 'drone' : 'pluck') + '  harmonic ' + Math.round(har * 100) + '%', g.x0 + 3, g.y1 + 10); if (glide > 0) txt(c, 'glide ' + Math.round(glide * 1000) + ' ms', g.x1, g.y1 + 10, 'right'); }
   }
   function filterPlot(c, g, d, host, withWave) {
     var p = pal(), cut = P(d, host, 'cutoff'), env = P(d, host, 'env'), res = P(d, host, 'res'), lo = -36, hi = 24;
@@ -172,6 +177,8 @@
       line(c, bx, Rg.y1, bx, Rg.y1 - bh, p.ink, 2);
     }
     var tx = Rg.x0 + lx(tone, 300, 14000) * Rg.w; line(c, tx, Rg.y0, tx, Rg.y1, p.dim, 1, true);
+    var mh = P(d, host, 'metalHp') || 0;
+    if (mh > 0) { var mx = Rg.x0 + lx(Math.max(mh, 300), 300, 14000) * Rg.w; c.globalAlpha = 0.25; c.fillStyle = p.fg; c.fillRect(Rg.x0, Rg.y0, mx - Rg.x0, Rg.h); c.globalAlpha = 1; }
     line(c, Rg.x0, Rg.y1, Rg.x1, Rg.y1, p.line, 1);
     if (!g.small) { txt(c, Math.round(dec * 1000) + ' ms', L.x0 + 2, g.y1 + 10); txt(c, 'ring ' + fhz(ring), Rg.x0, g.y1 + 10); }
   }
@@ -364,7 +371,10 @@
     var len = att + hold + rel, T = len * 1.5, t0 = len * 0.15, barW = 10;
     var gw = g.w - barW - 6;
     function X(t) { return g.x0 + t / T * gw; } function Y(v) { return g.y1 - v * g.h * 0.9 - g.h * 0.05; }
-    var pts = [[X(0), Y(1)], [X(t0), Y(1)], [X(t0 + att), Y(1 - depth)], [X(t0 + att + hold), Y(1 - depth)], [X(t0 + len), Y(1)], [X(T), Y(1)]];
+    var lo = 1 - depth, db = P(d, host, 'curve') === 'db' && lo > 0;
+    var pts = [[X(0), Y(1)], [X(t0), Y(1)], [X(t0 + att), Y(lo)], [X(t0 + att + hold), Y(lo)]];
+    if (db) for (var ri = 1; ri < 24; ri++) pts.push([X(t0 + att + hold + rel * ri / 24), Y(lo * Math.pow(1 / lo, ri / 24))]);
+    pts.push([X(t0 + len), Y(1)], [X(T), Y(1)]);
     line(c, g.x0, Y(1), g.x0 + gw, Y(1), p.line, 1, true);
     var fillPts = pts.slice(); area(c, fillPts, Y(1), p.ink, 0.2); path(c, pts, p.ink, 2);
     var live = safe(function () { return d.ref.node.gain.value; }, null);
@@ -374,7 +384,7 @@
     if (typeof live === 'number') { c.fillStyle = p.ink; c.fillRect(bx + 1, g.y1 - clamp(live, 0, 1) * g.h, barW - 1, clamp(live, 0, 1) * g.h); }
     if (!g.small) {
       txt(c, 'depth ' + Math.round(depth * 100) + '%', X(t0 + att + hold / 2), Y(1 - depth) + 11, 'center');
-      txt(c, 'trigger: kick', g.x0 + 2, g.y1 + 10); txt(c, Math.round(att * 1000) + ' / ' + Math.round(hold * 1000) + ' / ' + Math.round(rel * 1000) + ' ms', g.x0 + gw, g.y1 + 10, 'right');
+      txt(c, 'trigger: kick  release ' + (db ? 'in dB' : 'linear'), g.x0 + 2, g.y1 + 10); txt(c, Math.round(att * 1000) + ' / ' + Math.round(hold * 1000) + ' / ' + Math.round(rel * 1000) + ' ms', g.x0 + gw, g.y1 + 10, 'right');
     }
   }
   function heroWidener(c, w, hh, d, host) {
@@ -391,16 +401,17 @@
       line(c, bx, y, bx + cw, y, p.line, 3); dot(c, bx + (m.correlation + 1) / 2 * cw, y, 3, p.on);
       if (!g.small) txt(c, 'corr', bx, y - 6);
     }
-    if (!g.small) txt(c, width === 0 ? 'mono' : 'width ' + (Math.round(width * 100) / 100), cx, g.y1 + 10, 'center');
+    var mb = P(d, host, 'monoBelow') || 0;
+    if (!g.small) txt(c, (width === 0 ? 'mono' : 'width ' + (Math.round(width * 100) / 100)) + (mb > 0 ? '  mono below ' + Math.round(mb) + ' Hz' : ''), cx, g.y1 + 10, 'center');
   }
   function heroChorus(c, w, hh, d, host) {
     var p = pal(), g = plot(w, hh, hh < 64), rate = P(d, host, 'rate'), depth = P(d, host, 'depth') * 1000, mix = P(d, host, 'mix'), T = Math.min(2 / rate, 4);
-    var lo = 8, hi = 28, bar = g.small ? 0 : 6, gh = g.h - bar;
+    var base = P(d, host, 'base') || 14, inv = !!P(d, host, 'invert'), lo = Math.max(0, base - 8), hi = base * 1.5 + 8, bar = g.small ? 0 : 6, gh = g.h - bar;
     function Y(ms) { return g.y0 + gh - (ms - lo) / (hi - lo) * gh; }
-    path(c, sample(100, function (u) { return [g.x0 + u * g.w, Y(14 + depth * Math.sin(u * T * rate * TAU))]; }), p.ink, 2);
-    path(c, sample(100, function (u) { return [g.x0 + u * g.w, Y(21 - depth * Math.sin(u * T * rate * TAU))]; }), p.dim, 2);
+    path(c, sample(100, function (u) { return [g.x0 + u * g.w, Y(base + depth * Math.sin(u * T * rate * TAU))]; }), p.ink, 2);
+    path(c, sample(100, function (u) { return [g.x0 + u * g.w, Y(base * 1.5 - depth * Math.sin(u * T * rate * TAU))]; }), p.dim, 2, inv ? true : undefined);
     if (bar) { c.strokeStyle = p.line; c.lineWidth = 1; c.strokeRect(g.x0 + 0.5, g.y1 - 3.5, g.w, 5); c.fillStyle = p.ink; c.fillRect(g.x0 + 1, g.y1 - 3, g.w * mix, 4); }
-    if (!g.small) txt(c, (Math.round(rate * 100) / 100) + ' Hz   depth ' + (Math.round(depth * 10) / 10) + ' ms   mix ' + Math.round(mix * 100) + '%', g.x0 + 2, g.y1 + 10);
+    if (!g.small) txt(c, (Math.round(rate * 100) / 100) + ' Hz   depth ' + (Math.round(depth * 10) / 10) + ' ms   base ' + (Math.round(base * 10) / 10) + ' ms   mix ' + Math.round(mix * 100) + '%' + (inv ? '   inverted' : ''), g.x0 + 2, g.y1 + 10);
   }
   function heroChannel(c, w, hh, d, host) {
     var p = pal(), g = plot(w, hh, hh < 64), gain = P(d, host, 'gain'), pan = P(d, host, 'pan'), mute = !!P(d, host, 'mute'), m = meterOf(d, host);
@@ -436,10 +447,11 @@
   };
 
   Faces.define('kick', { glyph: G.kick, hero: heroKick, width: W(176, 440, 560),
-    sections: [sec('pitch', ['punch', 'tune', 'sweep']), sec('body', ['decay']), sec('click', ['click']), sec('drive', ['drive']), OUT],
+    sections: [sec('pitch', ['punch', 'tune', 'sweep', 'tau']), sec('body', ['hold', 'decay']), sec('click', ['click']), sec('drive', ['drive']), OUT],
     strip: ['punch', 'tune', 'decay', 'drive'] });
   Faces.define('sub', { glyph: G.sub, hero: heroSub, width: W(176, 320, 440),
-    sections: [sec('osc', ['harmonic', 'glide']), sec('amp', ['attack', 'decay']), OUT], strip: ['decay', 'harmonic', 'level'] });
+    options: { mode: ['pluck', 'drone'] },
+    sections: [sec('osc', ['mode', 'harmonic', 'glide']), sec('amp', ['attack', 'decay', 'release']), OUT], strip: ['mode', 'decay', 'harmonic', 'level'] });
   Faces.define('bass', { glyph: G.bass, hero: heroBass, width: W(176, 560, 640),
     sections: [sec('osc', ['wave', 'detune', 'sub', 'glide']), sec('filter', ['cutoff', 'res', 'env', 'decay']), sec('amp', ['attack', 'release']), sec('drive', ['drive']), OUT],
     strip: ['cutoff', 'res', 'env', 'drive'] });
@@ -449,7 +461,7 @@
   Faces.define('clap', { glyph: G.clap, hero: heroClap, width: W(176, 400, 520),
     sections: [sec('burst', ['flams', 'flam', 'decay']), sec('tone', ['tone', 'q']), sec('tail', ['tail', 'tailDecay']), OUT], strip: ['tone', 'decay', 'tail'] });
   var HAT = function (glyph) { return { glyph: glyph, hero: heroHat, width: W(176, 360, 480),
-    sections: [sec('env', ['decay']), sec('tone', ['tone']), sec('ring', ['ring', 'metal']), OUT], strip: ['decay', 'tone', 'metal'] }; };
+    sections: [sec('env', ['decay']), sec('tone', ['tone']), sec('ring', ['ring', 'metal', 'metalHp']), OUT], strip: ['decay', 'tone', 'metal'] }; };
   Faces.define('hat_closed', HAT(G.hat_closed));
   Faces.define('hat_open', HAT(G.hat_open));
   Faces.define('shaker', { glyph: G.shaker, hero: heroShaker, width: W(176, 340, 460),
@@ -471,9 +483,9 @@
   Faces.define('saturator', { glyph: G.saturator, hero: heroSat, width: W(176, 340, 460), heroH: { strip: 40, face: 90, window: 190 },
     sections: [sec('drive', ['drive', 'tone']), sec('blend', ['mix', 'trim'])], strip: ['drive', 'mix', 'tone'] });
   Faces.define('delay', { glyph: G.delay, hero: heroDelay, width: W(176, 460, 600),
-    sections: [sec('time', ['division', 'time', 'bpm']), sec('feedback', ['feedback', 'pingpong']), sec('tone', ['tone', 'hp']), sec('mix', ['mix'])], strip: ['time', 'feedback', 'mix'] });
+    sections: [sec('time', ['division', 'time', 'bpm']), sec('feedback', ['feedback', 'pingpong', 'loop']), sec('tone', ['tone', 'hp']), sec('mod', ['modRate', 'modDepth']), sec('mix', ['mix'])], strip: ['time', 'feedback', 'mix'] });
   Faces.define('reverb', { glyph: G.reverb, hero: heroReverb, width: W(176, 420, 560),
-    sections: [sec('space', ['size', 'decay', 'predelay']), sec('tone', ['damp', 'hp']), sec('mix', ['mix'])], strip: ['size', 'decay', 'mix'] });
+    sections: [sec('space', ['algo', 'size', 'decay', 'predelay', 'seed']), sec('tone', ['damp', 'hp']), sec('mix', ['mix'])], strip: ['size', 'decay', 'mix'] });
   Faces.define('eq3', { glyph: G.eq3, hero: heroEq, width: W(176, 460, 640), heroH: { strip: 40, face: 96, window: 200 },
     sections: [sec('low', ['low', 'lowFreq']), sec('mid', ['mid', 'midFreq', 'midQ']), sec('high', ['high', 'highFreq'])], strip: ['low', 'mid', 'high'] });
   Faces.define('compressor', { glyph: G.compressor, hero: heroComp, live: true, width: W(176, 420, 520), heroH: { strip: 44, face: 100, window: 200 },
@@ -481,11 +493,11 @@
   Faces.define('limiter', { glyph: G.limiter, hero: heroLimiter, live: true, width: W(176, 360, 480), heroH: { strip: 44, face: 100, window: 200 },
     sections: [sec('level', ['threshold', 'ceiling']), sec('timing', ['release'])], strip: ['threshold', 'ceiling', 'release'] });
   Faces.define('sidechain', { glyph: G.sidechain, hero: heroDuck, live: true, width: W(176, 360, 480),
-    sections: [sec('duck', ['depth']), sec('envelope', ['attack', 'hold', 'release'])], strip: ['depth', 'release'] });
+    sections: [sec('duck', ['depth']), sec('envelope', ['attack', 'hold', 'release', 'curve'])], strip: ['depth', 'release'] });
   Faces.define('widener', { glyph: G.widener, hero: heroWidener, live: true, width: W(176, 260, 360),
-    sections: [sec('width', ['width'])], strip: ['width'] });
+    sections: [sec('width', ['width', 'monoBelow'])], strip: ['width'] });
   Faces.define('chorus', { glyph: G.chorus, hero: heroChorus, width: W(176, 340, 460),
-    sections: [sec('modulation', ['rate', 'depth']), sec('mix', ['mix'])], strip: ['rate', 'depth', 'mix'] });
+    sections: [sec('modulation', ['rate', 'depth']), sec('voices', ['base', 'invert']), sec('mix', ['mix'])], strip: ['rate', 'depth', 'mix'] });
   Faces.define('channel', { glyph: G.channel, hero: heroChannel, live: true, width: W(176, 280, 400), heroH: { strip: 44, face: 70, window: 110 },
-    labels: { gain: 'level' }, sections: [sec('level', ['gain']), sec('pan', ['pan']), sec('mute', ['mute'])], strip: ['gain', 'pan', 'mute'] });
+    labels: { gain: 'level' }, sections: [sec('level', ['gain']), sec('pan', ['pan']), sec('mute', ['mute']), { title: 'sends', match: '^send\\.' }], strip: ['gain', 'pan', 'mute'] });
 })();
