@@ -80,3 +80,10 @@ $ node tools/browser-check.js              -> RESULT: PASS (26 checks)  exit 0
 ```
 
 Not checked: the follow behaviour while real audio plays in a browser (browser-check switches to the Step View while playing and the step toggle passes, but does not assert the view's section moves with a section event); the new fx and pattern-length controls in a real browser (Node fake DOM only).
+
+## Wave 2, item 2 (A11 finding, app.js:623: view pulled to the playing section during a drag)
+
+- **Fix** in `app/ui/step-view.js`: a pointer gesture in a cell or lane cell (pointerdown to pointerup or pointercancel) sets `st.gesture`. While it is set, `selectSection(ref)` (the call `app.js` makes on every host `'section'` event) stores the latest `ref` in `st.pendingSection` and returns, and the `update()` follow jump is skipped. When the gesture ends (every exit path of the up handlers, through `endGesture()`), the pending section is applied through `selectSection`, so follow still decides: if follow was turned off meanwhile, it is dropped. Double-click clears and COND-cycle clicks on lane cells never register a gesture (they have no pointerup handler), so they are not affected. A direct click on a section number is unchanged (not deferred).
+- **Check**: `tools/step-view-check.js` section 6d: pointerdown in a cell, two section events (`intro`, `break`), view stays on mainA2 with `break` pending, pointerup moves it to `break`; a second gesture ended by `pointercancel` applies `build`; the same for a lane cell (`outro`).
+- **A11's editor-extras finding** (step-view.js not using `ed.group` / `ed.setFx` / `ed.setVariantBars`) was resolved by the previous wave-2 change above: all three are used.
+- **Verified, exit codes read directly:** `node --check app/ui/step-view.js` exit 0; `node tools/step-view-check.js` -> `OK: 72 checks passed`, exit 0 (real Host); `SV_FAKE_HOST=1 node tools/step-view-check.js` -> `OK: 67 checks passed`, exit 0; `node tools/browser-check.js` -> `RESULT: PASS (26 checks)`, exit 0. Not checked: the deferral with real section events during audio playback in a browser (Node fake DOM only).

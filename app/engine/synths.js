@@ -106,11 +106,13 @@
   // spec = parameter spec (see Kit.defineParams); build(inst) adds nodes between inst.pre and inst.out
   function makeInst(ctx, type, spec, opts, build) {
     var inst = { type: type, ctx: ctx, out: null, pre: null, _shaper: null, _lastF: 0, _live: [] };
-    K.defineParams(inst, spec, function (name, v) {
+    K.defineParams(inst, spec, function (name, v, o) {
       if (!ctx) return;
-      if (name === 'level' && inst.out) K.target(inst.out.gain, v, ctx.currentTime, 0.01);
+      // o.at is the audio time of a scheduled write (the sequencer's section set and ramps pass {at: t}); a live write has none
+      var at = (o && typeof o.at === 'number') ? o.at : ctx.currentTime;
+      if (name === 'level' && inst.out) K.target(inst.out.gain, v, at, 0.01);
       if (name === 'drive' && inst._shaper) { try { inst._shaper.curve = K.shaperCurve(v); } catch (e) {} }
-      if (inst.onParam) inst.onParam(name, v);
+      if (inst.onParam) inst.onParam(name, v, o);
     });
     if (opts) for (var k in opts) if (opts.hasOwnProperty(k) && spec.hasOwnProperty(k)) inst.set(k, opts[k]);
     inst.trigger = function () {};
@@ -287,7 +289,9 @@
       inst._hp = hp;
       // voices -> hp -> pre
       hp.connect(inst.pre);
-      inst.onParam = function (n, x) { if (n === 'hp') K.target(hp.frequency, x, ctx.currentTime, 0.02); };
+      inst.onParam = function (n, x, o) {
+        if (n === 'hp') K.target(hp.frequency, x, (o && typeof o.at === 'number') ? o.at : ctx.currentTime, 0.02);
+      };
       inst.trigger = function (t, ev) {
         var g = vel(ev), v = voice(ctx, inst), notes = notesOf(ev, 63), i;
         var hold = ev.dur || 0.1, end = t + P.attack + hold + P.release + 0.05;
@@ -506,7 +510,8 @@
   //   start, end: 0..1 of the buffer (end 0 = to the end). Mapped to the buffer offset and duration.
   //   pitch: semitones, playbackRate = 2^((pitch + offset) / 12). The offset is ev.note (semitones from C3) if
   //          given, else ev.midi - 48 (the sequencer sends midi on note tracks), else 0.
-  //   gain: 0..2 times the hit velocity. attack, release (s): linear envelope; the release ends at the gate end.
+  //   level: the common instrument level (the channel's gain is <track>.gain). attack, release (s): linear envelope on
+  //          the hit velocity; the release ends at the gate end.
   //   loop: 1 loops start..end until ev.dur (the gate) has passed; 0 plays the slice once (ev.dur is ignored).
   //   choke: a group name ('' = none). A hit stops every live voice of that group in any sampler on the same
   //          context, with a 5 ms fade. Groups live in chokeGroups(ctx).
@@ -545,7 +550,7 @@
 
   BUILD.sampler = {
     spec: { buffer: { value: '' }, start: { min: 0, max: 1, value: 0 }, end: { min: 0, max: 1, value: 0 },
-            pitch: { min: -24, max: 24, value: 0, unit: 'st' }, gain: { min: 0, max: 2, value: 1 },
+            pitch: { min: -24, max: 24, value: 0, unit: 'st' },
             attack: { min: 0.0005, max: 1, value: 0.002, unit: 's' }, release: { min: 0.001, max: 2, value: 0.02, unit: 's' },
             loop: { min: 0, max: 1, value: 0 }, choke: { value: '' }, reverse: { min: 0, max: 1, value: 0 },
             level: { min: 0, max: 1.5, value: 1 } },
@@ -565,7 +570,7 @@
         if (ev && typeof ev.note === 'number') nOff = ev.note;
         else if (ev && typeof ev.midi === 'number') nOff = ev.midi - 48;
         var rate = Math.pow(2, (P.pitch + nOff) / 12);
-        var g = vel(ev) * P.gain;
+        var g = vel(ev);
         var end = P.loop ? t + ((ev && ev.dur) || seg / rate) : t + seg / rate;
         var reg = P.choke ? chokeGroups(ctx) : null;
         if (reg) { var prev = reg[P.choke]; if (prev) for (var i = prev.length - 1; i >= 0; i--) chokeVoice(prev[i], t); }

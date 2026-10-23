@@ -35,6 +35,7 @@ FakeNode.prototype.removeAttribute = function (k) { delete this.attrs[k]; };
 FakeNode.prototype.addEventListener = function (t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); };
 FakeNode.prototype.getBoundingClientRect = function () { return { left: 0, top: 0, width: 800, height: 20 }; };
 FakeNode.prototype.fire = function (t, ev) { (this.listeners[t] || []).slice().forEach(function (f) { f(ev || { stopPropagation: function () {}, preventDefault: function () {} }); }); };
+FakeNode.prototype.fireBubble = function (t, ev) { ev = ev || {}; ev.target = this; ev.stopPropagation = ev.stopPropagation || function () {}; ev.preventDefault = ev.preventDefault || function () {}; for (var n = this; n; n = n.parentNode) (n.listeners[t] || []).slice().forEach(function (f) { f(ev); }); };
 FakeNode.prototype.walk = function (fn) { fn(this); this.children.forEach(function (c) { c.walk(fn); }); };
 FakeNode.prototype.find = function (pred) { var out = []; this.walk(function (n) { if (pred(n)) out.push(n); }); return out; };
 function hasClass(n, c) { return n.className.split(/\s+/).indexOf(c) >= 0; }
@@ -248,6 +249,32 @@ ok(rowsAfter.length === 13, 'still thirteen rows after the document event');
   var rowsRebuilt = mountEl.find(function (n) { return n.attrs['data-track']; });
   ok(rowsRebuilt.length === 13 && rowsRebuilt[0] !== rows[0], 'rebuilt:true commit rebuilds the view');
   rows = rowsRebuilt;
+}
+
+// a step velocity drag: previewed locally, committed once on release as one undo entry and one 'document' event
+if (used.widgets) {
+  var dragEd = host.editor(), docEvents = 0, countDoc = function () { docEvents++; };
+  host.on('document', countDoc);
+  var stepBtn = rows[0].find(function (n) { return n.attrs['data-i'] === '0'; })[0];
+  ok(stepBtn && stepBtn.attrs['data-lv'] !== '0', 'kick step 1 is on in the current section (data-lv ' + (stepBtn && stepBtn.attrs['data-lv']) + ')');
+  var dSec = host.transport.pos().section, dVariant = host.document().sections[dSec].play.kick;
+  var velBefore = host.document().tracks[0].variants[dVariant].cells[0].vel;
+  var u0 = host.editor()._undo.length;
+  stepBtn.fireBubble('pointerdown', { clientY: 200, pointerId: 1, button: 0 });
+  [190, 180, 170, 160, 150, 140].forEach(function (y) { stepBtn.fireBubble('pointermove', { clientY: y, pointerId: 1 }); });
+  ok(host.editor()._undo.length === u0 && docEvents === 0, 'drag moves do not touch the document (undo +' + (host.editor()._undo.length - u0) + ', document events ' + docEvents + ')');
+  ok(host.document().tracks[0].variants[dVariant].cells[0].vel === velBefore, 'drag moves leave the cell velocity unchanged in the document');
+  stepBtn.fireBubble('pointerup', { clientY: 140, pointerId: 1 });
+  ok(host.editor()._undo.length === u0 + 1, 'a drag of several moves is exactly one undo entry (+' + (host.editor()._undo.length - u0) + ')');
+  ok(docEvents === 1, 'a drag of several moves emits exactly one document event (' + docEvents + ')');
+  var secAfter = host.document().sections[dSec].play.kick, velAfter = host.document().tracks[0].variants[secAfter].cells[0].vel;
+  ok(velAfter !== velBefore && velAfter >= 0.95, 'the committed velocity is the final drag value (' + velBefore + ' -> ' + velAfter + ')');
+  // keyboard edit (no pointer down): one commit at once
+  rows = mountEl.find(function (n) { return n.attrs['data-track']; });
+  var kb = rows[0].find(function (n) { return n.attrs['data-i'] === '0'; })[0], u1 = host.editor()._undo.length, e1 = docEvents;
+  kb.fireBubble('keydown', { key: 'ArrowDown' });
+  ok(host.editor()._undo.length === u1 + 1 && docEvents === e1 + 1, 'a keyboard velocity edit is one undo entry and one document event');
+  host.off('document', countDoc);
 }
 
 // update() x100 with the playhead moving, no DOM rebuild

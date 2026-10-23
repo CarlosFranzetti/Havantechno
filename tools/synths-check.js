@@ -295,10 +295,11 @@ console.log('7. sampler: one buffer slice per hit, choke groups, locks');
   ok(srcs.length === nb, 'end before start plays nothing');
 
   // attack and release shape the gain: amplitude = vel * gain
-  var at = make(ctx, { buffer: 'b1', gain: 0.5, attack: 0.01, release: 0.02 }); at.trigger(1, { vel: 1 });
+  var at = make(ctx, { buffer: 'b1', attack: 0.01, release: 0.02 }); at.trigger(1, { vel: 0.5 });
   var env = gainWith(gains, 'linearRampToValueAtTime', 0.5, 1.01);
   ok(env && hasCall(env.gain, 'setValueAtTime', 0.0001, 1) && hasCall(env.gain, 'setValueAtTime', 0.5, 3 - 0.02) &&
-     hasCall(env.gain, 'linearRampToValueAtTime', 0.0001, 3), 'envelope: 0 at the hit, attack to vel*gain (0.5) by 10 ms, release over the last 20 ms of the 2 s buffer (whole buffer, end 0)');
+     hasCall(env.gain, 'linearRampToValueAtTime', 0.0001, 3), 'envelope: 0 at the hit, attack to the hit velocity (0.5) by 10 ms, release over the last 20 ms of the 2 s buffer (whole buffer, end 0)');
+  ok(!sb.Synths.spec('sampler').gain && !!sb.Synths.spec('sampler').level, "the sampler has no own gain: the common instrument 'level' scales it (<track>.gain is the channel's)");
   var lp = make(ctx, { buffer: 'b1', start: 0.25, end: 0.75 }); lp.trigger(1, { vel: 1 });
   var ls = srcs[srcs.length - 1];
   ok(!ls.loop, 'a one-shot does not loop');
@@ -345,20 +346,52 @@ console.log('7. sampler: one buffer slice per hit, choke groups, locks');
   ok(pv.srcs[0].stopAt <= 0.031, 'dispose() stops the voice now (stop at ' + pv.srcs[0].stopAt + ' s, clock at 0)');
 
   // locks: applied for one trigger, restored after, through the real sequencer
-  var lctx = new FakeContext(44100), linst = make(lctx, { buffer: 'b1', pitch: 0, gain: 1 });
+  var lctx = new FakeContext(44100), linst = make(lctx, { buffer: 'b1', pitch: 0, attack: 0.002 });
   var cells = []; for (var i = 0; i < 16; i++) cells.push(null);
-  cells[0] = { vel: 1, locks: { pitch: 12, gain: 0.5 } }; cells[8] = { vel: 1 };
+  cells[0] = { vel: 1, locks: { pitch: 12, attack: 0.05 } }; cells[8] = { vel: 1 };
   var seq = sb.Sequencer.create(lctx, { bpm: 126, swing: 0 });
   sb.Song.build(seq, { bpm: 126, swing: 0, progression: ['Bmaj9'], sends: {}, tracks: [
     { name: 'smp', inst: linst, variants: { A: { bars: 1, cells: cells } } } ],
     sections: [{ name: 'a', bars: 1, play: { smp: 'A' } }] });
   var seen = [], orig = linst.trigger;
-  linst.trigger = function (t, e) { seen.push([linst.params.pitch, linst.params.gain]); return orig(t, e); };
+  linst.trigger = function (t, e) { seen.push([linst.params.pitch, linst.params.attack]); return orig(t, e); };
   seq.scheduleAll(0, 1, 0);
-  ok(seen.length === 2 && seen[0][0] === 12 && seen[0][1] === 0.5, 'a lock on pitch and gain applies to its hit (' + JSON.stringify(seen) + ')');
-  ok(seen[1][0] === 0 && seen[1][1] === 1, 'the next hit sees the restored values');
-  ok(linst.params.pitch === 0 && linst.params.gain === 1, 'locks are restored after the trigger');
+  ok(seen.length === 2 && seen[0][0] === 12 && near(seen[0][1], 0.05), 'a lock on pitch and attack applies to its hit (' + JSON.stringify(seen) + ')');
+  ok(seen[1][0] === 0 && near(seen[1][1], 0.002), 'the next hit sees the restored values');
+  ok(linst.params.pitch === 0 && near(linst.params.attack, 0.002), 'locks are restored after the trigger');
   ok(sb.Synths.spec('sampler').buffer.value === '' && sb.Synths.spec('sampler').choke.value === '', 'buffer and choke are string parameters');
+  var sl2 = make(ctx, { buffer: 'b1' }); sl2.set('level', 0.4, { at: 7 });
+  ok(hasCall(sl2.out.gain, 'setTargetAtTime', 0.4, 7, 0.01), 'a sampler level written for a future time is scheduled at that time');
+})();
+
+// ------------------------------------------------------------------ 8. scheduled writes keep their time (A11 E2)
+console.log('8. level and stab hp: a write with {at: t} lands at t, not at currentTime');
+(function () {
+  var sb = appSandbox(), ctx = new FakeContext(44100);
+  // direct: a future time reaches the AudioParam event
+  var kick = sb.Synths.create(ctx, 'kick', {});
+  kick.set('level', 0.6, { at: 5 });
+  ok(hasCall(kick.out.gain, 'setTargetAtTime', 0.6, 5, 0.01), 'kick.set(level, 0.6, {at: 5}) schedules setTargetAtTime(0.6, 5, 0.01)');
+  ok(!kick.out.gain.calls.some(function (c) { return c[0] === 'setTargetAtTime' && near(c[1], 0.6) && near(c[2], 0); }), 'the write is not applied at t = 0 (currentTime)');
+  kick.set('level', 0.7);
+  ok(hasCall(kick.out.gain, 'setTargetAtTime', 0.7, 0, 0.01), 'a live write (no opts) still applies at currentTime');
+  var stab = sb.Synths.create(ctx, 'stab', {});
+  stab.set('hp', 500, { at: 3 });
+  ok(hasCall(stab._hp.frequency, 'setTargetAtTime', 500, 3, 0.02), 'stab.set(hp, 500, {at: 3}) schedules the highpass at t = 3');
+  // through the sequencer: a section set lands at the bar's time, in both sections
+  var seq = sb.Sequencer.create(ctx, { bpm: 126, swing: 0 });
+  sb.Song.build(seq, { bpm: 126, swing: 0, progression: ['Bmaj9'], sends: {}, tracks: [
+    { name: 'kick', inst: 'kick', patterns: { A: 'x...............' } },
+    { name: 'stab', inst: 'stab', chords: true, octave: 4, patterns: { A: 'x...............' } } ],
+    sections: [
+      { name: 'loud', bars: 1, play: { kick: 'A', stab: 'A' }, set: { 'kick.level': 1, 'stab.hp': 180 } },
+      { name: 'quiet', bars: 1, play: { kick: 'A', stab: 'A' }, set: { 'kick.level': 0.6, 'stab.hp': 900 } } ] });
+  seq.scheduleAll(0, 2, 0);
+  var bar = seq.barSec(), kcalls = seq.tracks.kick.inst.out.gain.calls, scalls = seq.tracks.stab.inst._hp.frequency.calls;
+  ok(hasCall(seq.tracks.kick.inst.out.gain, 'setTargetAtTime', 0.6, bar, 0.01), 'the break-like kick level 0.6 lands at bar 2 (' + bar.toFixed(4) + ' s), not at 0');
+  ok(!kcalls.some(function (c) { return c[0] === 'setTargetAtTime' && near(c[1], 0.6) && near(c[2], 0); }), 'the 0.6 write is not at t = 0');
+  ok(hasCall(seq.tracks.stab.inst._hp.frequency, 'setTargetAtTime', 900, bar, 0.02), 'the stab highpass 900 Hz lands at bar 2');
+  ok(scalls.length >= 2, 'the stab highpass has a scheduled write per section (' + scalls.length + ')');
 })();
 
 console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');

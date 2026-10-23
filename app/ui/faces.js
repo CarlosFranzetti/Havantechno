@@ -22,7 +22,8 @@
  * Hold is released only by the host's "re-enable arranged", not here. Spec params that no section names go to a "more"
  * drawer, so no parameter is ever unreachable. A section may give `match: '^send\\.'` (a regexp source) instead of
  * `params`, to take every spec param whose name matches (used by the channel strip for its per-send levels).
- * A numeric 0..1 flag (sampler loop, reverse) takes widget:'toggle' and writes 1 or 0.
+ * Knob double-click home: the current section's `set` value, else the song document's value when the control was built, else spec.value.
+ * Mute and solo toggles never call host.hold (session state). A numeric 0..1 flag (sampler loop, reverse) takes widget:'toggle' and writes 1 or 0.
  * Window density: no head of its own (the window owns the title bar); hero first, then the same sections and "more" drawer
  * as the face density. resize(w, h) there takes the whole body below the title bar: the hero gets the width and ~42% of the height.
  * Markup uses theme.css (A2) classes: .face[data-density] > .face-head (.face-glyph .face-title .face-sub) + .face-body
@@ -184,6 +185,33 @@
   }
 
   // ------------------------------------------------------------------ controls
+  // What the song document holds for a parameter (track params, channel gain/pan, insert unit, sidechain, send return, master unit).
+  function docValue(host, d, p) {
+    var doc = safe(function () { return host.document(); }, null), i, e, v;
+    if (!doc) return undefined;
+    function track() { var t = doc.tracks || []; for (i = 0; i < t.length; i++) if (t[i].name === d.track) return t[i]; return null; }
+    function num(x) { return typeof x === 'number' ? x : undefined; }
+    var tr;
+    switch (d.kind) {
+      case 'instrument': tr = track(); return tr && tr.params ? num(tr.params[p]) : undefined;
+      case 'channel':
+        tr = track(); if (!tr) return undefined;
+        if (p.indexOf('send.') === 0) return tr.sends ? num(tr.sends[p.slice(5)]) : undefined;
+        return num(tr[p]);
+      case 'sidechain': tr = track(); return tr && tr.sidechain ? num(tr.sidechain[p]) : undefined;
+      case 'insert':
+        tr = track(); if (!tr || !tr.chain) return undefined;
+        for (i = 0; i < tr.chain.length; i++) {
+          e = tr.chain[i];
+          if (Object.prototype.toString.call(e) === '[object Array]') { if (((e[1] && e[1].name) || e[0]) === d.name) return e[1] ? num(e[1][p]) : undefined; }
+          else if (e && typeof e === 'object') { if ((e.name || e.type) === d.name) return num(e[p]); }
+        }
+        return undefined;
+      case 'send': e = doc.sends && doc.sends[d.name]; return e && typeof e === 'object' ? num(e[p]) : undefined;
+      case 'master': e = doc.master && doc.master[d.name]; return e ? num(e[p]) : undefined;
+    }
+    return undefined;
+  }
   function labelFor(R, p, item) {
     if (item.label) return item.label;
     if (R.layout.labels && R.layout.labels[p]) return R.layout.labels[p];
@@ -213,9 +241,11 @@
     var cur = safe(function () { return host.getParam(path); }, undefined);
     if (cur === undefined || cur === null) cur = entry.value;
     var c = { p: p, path: path, kind: kind, widget: wname, last: cur, state: null, rampKey: '', w: null, optsSig: null, optsFn: null };
-    function hold() { R.held[path] = true; if (typeof host.hold === 'function') safe(function () { host.hold(path); }); }
+    var noHold = (p === 'mute' || p === 'solo');      // session state, not arrangement parameters: never held
+    function hold() { if (noHold) return; R.held[path] = true; if (typeof host.hold === 'function') safe(function () { host.hold(path); }); }
     function write(v) { c.last = v; if (typeof host.setParam === 'function') safe(function () { host.setParam(path, v); }); }
     var label = labelFor(R, p, item), size = R.density;
+    var song = (kind === 'num') ? docValue(host, R.device, p) : undefined;     // the song's own value, captured when the control is built
     if (wname === 'toggle') {
       c.w = widget('toggle')({ label: label, value: !!cur, size: size, onInput: function (v) { hold(); write(!!v); } });
     } else if (wname === 'flag') {
@@ -227,7 +257,7 @@
       c.w = widget('select')({ label: label, options: opts.slice(), value: cur, size: size, onInput: function (v) { hold(); write(v); } });
     } else {
       var o = { label: label, min: entry.min, max: entry.max, value: cur, unit: entry.unit || '', log: isLog(entry), size: size, factory: entry.value,
-                home: function () { var cs = R.cs; return (cs && cs.sec && has(cs.sec.set, path)) ? cs.sec.set[path] : entry.value; },
+                home: function () { var cs = R.cs; return (cs && cs.sec && has(cs.sec.set, path)) ? cs.sec.set[path] : (typeof song === 'number' ? song : entry.value); },
                 onInput: function (v) { write(v); }, onHold: hold };
       if (wname === 'slider') o.orientation = item.orientation || 'h';
       c.w = widget(wname)(o);
@@ -452,12 +482,10 @@
     function resize(w, hh) {
       if (R.disposed || !R.heroWrap || !R.layout.hero) return;
       w = Math.max(60, w | 0); hh = Math.max(24, hh | 0);
-      // window density: (w, hh) is the whole body below the title bar; the hero takes the width and a share of the height,
-      // the sections and the "more" drawer sit below it (the body scrolls when they do not fit)
-      if (R.density === 'window') {
-        var minH = (R.layout.heroH && R.layout.heroH.window) || HERO_H.window;
-        w = Math.max(60, w - 32); hh = Math.round(Math.min(Math.max(hh * 0.42, Math.min(minH, 120)), 340));
-      }
+      // (w, hh) is the whole face area (the window body below the title bar), not the hero: the hero takes the width and at most
+      // ~45% of the height (42% here, 60..340 px), the sections and the "more" drawer lay out below it and the body scrolls
+      w = Math.max(60, w - (R.density === 'window' ? 32 : R.density === 'strip' ? 18 : 26));
+      hh = Math.round(Math.min(Math.max(hh * 0.42, 60), 340));
       R.heroW = w; R.heroH = hh;
       if (R.hero && typeof R.hero.resize === 'function') { R.hero.resize(w, hh); R.sig = null; return; }
       var old = R.hero && R.hero.el, nh = buildHero(R, w, hh);

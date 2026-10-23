@@ -13,6 +13,8 @@
  * locks {param: value} for this voice only.
  * The old string forms ('x.Xo' patterns, 'C4 - D4 .' melody tokens) parse to cells and format back whenever every
  * cell is plain, so song.js stays readable.
+ * Samples (wave 2): doc.audio = {bufferId: {name, src, duration, sampleRate, channels}} holds references to audio
+ * files, never their bytes; a track with type 'sampler' (inst 'sampler') plays params.buffer. ed.addTrack / removeTrack.
  */
 (function () {
   'use strict';

@@ -10,7 +10,12 @@
  *   Widgets.slider({... same, orientation:'h'|'v', length})  -> same
  *   Widgets.toggle({label, value, size, onInput(bool)})       -> {el, set(b), get()}
  *   Widgets.select({label, options, value, onInput(v)})       -> {el, set(v), get(), setOptions(list)}
- *   Widgets.steps({count, cells, onToggle(i, mods), onDrag(i, vel), ink}) -> {el, set(cells), setCursor(i)}
+ *   Widgets.steps({count, cells, onToggle(i, mods), onDrag(i, vel, phase), ink}) -> {el, set(cells), setCursor(i)}
+ *     phase: 'start' (pointerdown on a lit cell, current vel), 'move' (quantised vel changed), 'end' (pointerup/cancel, final
+ *     vel; always follows a 'start'); a key press is a single 'end'. Callers that ignore phase still work.
+ *   knob/slider: onInput(v, phase) with phase 'move' during a drag or wheel burst and 'end' for a discrete change (key, reset,
+ *     typed value); optional onGesture(phase, v) gives 'start' on pointerdown / first wheel tick and 'end' on pointerup /
+ *     wheel idle (discrete changes: a single 'end'). onInput never gets 'start', so a pointerdown alone writes nothing.
  *   Widgets.meter({orientation, size}) -> {el, set(level, peakHold?)}
  *   Widgets.curve({width, height, draw(ctx, w, h, colors)}) -> {el, redraw()}
  *   Widgets.grMeter({size}) -> {el, set(dB)};  Widgets.correlation({size}) -> {el, set(-1..1)}
@@ -37,7 +42,11 @@
   function isNum(x) { return typeof x === 'number' && isFinite(x); }
   function sizeOf(s) { return SIZES.indexOf(s) >= 0 ? s : 'face'; }
   function noop() {}
-  function call(fn, a, b) { if (typeof fn === 'function') { try { return fn(a, b); } catch (e) { if (root.console) root.console.error(e); } } }
+  function call(fn) {
+    if (typeof fn !== 'function') return undefined;
+    try { return fn.apply(null, Array.prototype.slice.call(arguments, 1)); } catch (e) { if (root.console) root.console.error(e); }
+    return undefined;
+  }
 
   // ---------- DOM helpers (only createElement / createElementNS / setAttribute / appendChild / listeners) ----------
   function h(tag, cls, attrs) {
@@ -191,7 +200,7 @@
     var vertical = kind === 'slider' && opts.orientation === 'v';
     var sc = makeScale(min, max, opts.log, opts.step, opts.unit || '', opts.format);
     var bipolar = opts.bipolar != null ? !!opts.bipolar : (min < 0 && max > 0);
-    var onInput = opts.onInput, onHold = opts.onHold, onRelease = opts.onRelease;
+    var onInput = opts.onInput, onHold = opts.onHold, onRelease = opts.onRelease, onGesture = opts.onGesture;
     var label = opts.label == null ? '' : String(opts.label);
 
     var v = sc.snap(isNum(opts.value) ? opts.value : min);
@@ -204,6 +213,7 @@
     var disabled = false;
     var dragging = false, raw = 0, lastX = 0, lastY = 0, pid = null, dragMoved = false;
     var touched = false;                 // onHold fired for this gesture
+    var gStarted = false;                // onGesture('start') sent for the current drag
     var lastTap = 0, tapX = 0, tapY = 0, lastReset = 0;
     var tipTimer = null, wheelTimer = null, pressTimer = null;
     var field = null;
@@ -325,7 +335,11 @@
       ensureHold();
       v = nv; pos = sc.toPos(v);
       render(); showTip();
-      call(onInput, v);
+      // phase: 'move' while a drag or a wheel burst is open (the gesture closes with onGesture('end')),
+      // otherwise a discrete change (key, reset, typed value) which is a single 'end'
+      var inGesture = dragging || !!wheelTimer;
+      call(onInput, v, inGesture ? 'move' : 'end');
+      if (!inGesture) call(onGesture, 'end', v);
     }
     function reset(useFactory, fromTouch) {
       var target = useFactory && factory != null ? factory : homeValue();
@@ -333,7 +347,7 @@
       ensureHold();
       var nv = sc.snap(target);
       pos = sc.toPos(nv);
-      if (nv !== v) { v = nv; render(); call(onInput, v); } else render();
+      if (nv !== v) { v = nv; render(); call(onInput, v, 'end'); call(onGesture, 'end', v); } else render();
       showTip();
       endGesture();
     }
@@ -381,6 +395,7 @@
       return -dy;
     }
     function travel() { return kind === 'knob' ? DRAG_PX : Math.max(24, (vertical ? len : len) - 2 * pad); }
+    function closeGesture() { if (gStarted) { gStarted = false; call(onGesture, 'end', v); } }
     function clearPress() { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } }
     function onDown(e) {
       if (disabled || field) return;
@@ -395,10 +410,11 @@
         }
         lastTap = t; tapX = e.clientX; tapY = e.clientY;
         clearPress();
-        pressTimer = setTimeout(function () { pressTimer = null; if (dragging && !dragMoved) { dragging = false; openField(); } }, 550);
+        pressTimer = setTimeout(function () { pressTimer = null; if (dragging && !dragMoved) { dragging = false; closeGesture(); openField(); } }, 550);
       }
       dragging = true; dragMoved = false; lastX = e.clientX; lastY = e.clientY;
       pid = e.pointerId;
+      gStarted = true; call(onGesture, 'start', v);
       try { if (el.setPointerCapture && pid != null) el.setPointerCapture(pid); } catch (y) {}
       raw = pos;
       if (kind === 'slider' && !e.shiftKey && body.getBoundingClientRect) {
@@ -431,6 +447,7 @@
       dragging = false;
       try { if (el.releasePointerCapture && pid != null) el.releasePointerCapture(pid); } catch (x) {}
       pid = null;
+      closeGesture();
       endGesture();
     }
     listen(el, 'pointerdown', onDown);
@@ -453,10 +470,10 @@
       if (e.deltaMode === 1) dy *= 33;
       if (e.preventDefault) e.preventDefault();
       var st = stepSize();
+      if (wheelTimer) clearTimeout(wheelTimer); else call(onGesture, 'start', v);     // a wheel burst is one gesture
+      wheelTimer = setTimeout(function () { wheelTimer = null; endGesture(); call(onGesture, 'end', v); }, 300);
       if (st) userSetValue(v + (dy < 0 ? st : -st));
       else userSetPos(pos + clamp(-dy / 100, -3, 3) * COARSE_KEY * (e.shiftKey ? FINE : 1));
-      if (wheelTimer) clearTimeout(wheelTimer);
-      wheelTimer = setTimeout(function () { wheelTimer = null; endGesture(); }, 300);
     }, { passive: false });
 
     // ---- keyboard ----
@@ -629,7 +646,8 @@
       });
       listen(b, 'pointerdown', function (e) {
         if (e.button != null && e.button !== 0) return;
-        drag = { i: idx, y: e.clientY, vel: vels[idx] || 0, moved: false, id: e.pointerId };
+        drag = { i: idx, y: e.clientY, vel: vels[idx] || 0, last: vels[idx] || 0, moved: false, started: false, id: e.pointerId };
+        if (lv[idx] > 0) { drag.started = true; call(onDrag, idx, vels[idx] || 0, 'start'); }
         try { if (b.setPointerCapture && e.pointerId != null) b.setPointerCapture(e.pointerId); } catch (x) {}
       });
       listen(b, 'pointermove', function (e) {
@@ -639,9 +657,16 @@
         drag.moved = true;
         var vel = clamp(drag.vel + dy / 60, 0.05, 1);
         vel = Math.round(vel * 20) / 20;
-        call(onDrag, idx, vel);
+        if (vel === drag.last) return;                       // only when the quantised velocity changes
+        drag.last = vel;
+        call(onDrag, idx, vel, 'move');
       });
-      function end() { if (drag && drag.moved) suppress = true; drag = null; }
+      function end() {
+        if (!drag) return;
+        var d = drag; drag = null;
+        if (d.moved) suppress = true;
+        if (d.started) call(onDrag, d.i, d.last, 'end');
+      }
       listen(b, 'pointerup', end); listen(b, 'pointercancel', end);
       listen(b, 'keydown', function (e) {
         var k = e.key, to = -1;
@@ -652,7 +677,7 @@
         else if ((k === 'ArrowUp' || k === 'ArrowDown') && lv[idx] > 0) {
           if (e.preventDefault) e.preventDefault();
           var vel = clamp((vels[idx] || 0.85) + (k === 'ArrowUp' ? 0.15 : -0.15), 0.05, 1);
-          call(onDrag, idx, Math.round(vel * 20) / 20);
+          call(onDrag, idx, Math.round(vel * 20) / 20, 'end');   // a key press is a single 'end'
           return;
         }
         if (to >= 0) {
