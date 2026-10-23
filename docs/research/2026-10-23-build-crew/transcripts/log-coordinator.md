@@ -151,3 +151,7 @@ Open from these hand-backs: A3 asks A1 for a `sampler` family (suggests drums); 
 ## 2026-10-23 23:55:29 UTC — A6 part 2 verified
 
 Syntax passes on windows.js, app.js, shell/main.js, shell/preload.js, serve.js; `node tools/browser-check.js` PASS (26), exit 0. A6: `retargetDeviceWindow` IPC re-keys a child window on retarget, and a second cause was found and fixed (windows shared a name per device id, so `window.open` navigated the existing one); BPM and swing apply on change or Enter with one `hold` each; Bypass calls `host.bypass`/`isBypassed` when present (A1 part 2 adds them) and falls back meanwhile; child windows refresh on the host `'document'` event instead of polling. The Electron checks are A6's Xvfb runs, not reproduced here. Code was already in snapshot aa3c7e8; this records the verification. A6 has been resumed for `Project.open({shell, host})` and `pathForFile`.
+
+## 2026-10-23 23:56:56 UTC — A6 part 3 verified
+
+Syntax on windows.js, app.js, main.js, preload.js; `node tools/browser-check.js` PASS (26), exit 0. `App.open` (button and Ctrl/Cmd+O) calls `Project.open({shell, host})` and reports missing samples in the toast; `HavantechnoShell.pathForFile(file)` added. A6's Chromium save/open round trip (bpm 111 → 140 → reopened 111) and the Xvfb `pathForFile` check are A6's runs. Traced only: the Electron open of a project with an audio map, and a dropped sample's reload (the drop target is A4's, not yet built). Code already in snapshot 7691d02. A6's wave-2 work is complete; waiting on A1 part 2.
