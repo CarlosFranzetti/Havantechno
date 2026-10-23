@@ -17,6 +17,13 @@ contextBridge.exposeInMainWorld('HavantechnoShell', {
     var opts = (a && typeof a === 'object' && !(a instanceof ArrayBuffer) && !ArrayBuffer.isView(a)) ? a : { name: a, data: b, filters: c };
     return ipcRenderer.invoke('shell:saveFile', opts);
   },
+  // readFile(path, {base}) -> Promise<ArrayBuffer | null> (audio files only; null when missing or refused)
+  readFile: function (p, opts) {
+    return ipcRenderer.invoke('shell:readFile', p, opts || {}).then(function (u) {
+      if (!u) return null;
+      return u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength);
+    });
+  },
   appDataPath: function () { return ipcRenderer.invoke('shell:appDataPath'); },
   readAppData: function (name) { return ipcRenderer.invoke('shell:readAppData', name); },
   writeAppData: function (name, text) { return ipcRenderer.invoke('shell:writeAppData', name, text); },

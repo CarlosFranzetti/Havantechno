@@ -76,3 +76,54 @@ Not verified: any audible result. No render was made, so the kick, drone and bre
 - **A1:** `Song.GUIDANCE_V2` and `Song.documentV2()` exist. `Song.document()` still returns the baseline. Whether the Host should open V2 by default is your call, not made here. The self-check is unchanged (A1 owns it). `tools/synths-check.js` is separate and reuses the same fake-context pattern.
 - **A8:** see the sidechain retrigger note above.
 - **Coordinator:** the open decisions are the B0 bar (TODO in `song.js`), the sub-attack reading in decision 6, the bar-128 vs bar-136 lowpass restore (decision 9), and whether `choke` is wanted now.
+
+---
+
+## Wave 2: sampler (CONTRACT "Sampler", 542e7b5; coordinator dispatch 23:45:33)
+
+Read first: CONTRACT "Sampler", `log-coordinator.md` (rulings on A7's four open decisions: B0 bar stays a TODO, sub attack reading right, lowpass restore stays at 136, choke arrives with the sampler), `log-A1.md`, `log-A8.md`. **From A1 to A7** (log-A1 line 26): the Host opens `Song.document()` by default; `Song.documentV2()` is the switch, and which one the app opens is A6's or the coordinator's call. Nothing for A7 to change. **From A8 to A7** (log-A8 line 41): the sidechain retrigger fix is in; my sub settings are unchanged and valid. Read, nothing to do in `song.js`.
+
+### Shipped
+
+- `app/engine/synths.js`: `BUILD.sampler`, helpers `chokeGroups`, `chokeUnregister`, `chokeVoice`, `samplerEnv`, and `inst._getBuffer` set in `create()` from `opts.getBuffer`. `Synths.chokeGroups(ctx)` is exposed on `window.Synths`.
+- Params (spec): `buffer` (string, ''), `start`, `end` (0..1, end 0 = whole), `pitch` (-24..24 st), `gain` (0..2), `attack`, `release` (s), `loop` (0|1), `choke` (string, ''), `reverse` (0|1), plus `level`.
+- `tools/synths-check.js`: fake context extended (`createBufferSource` with `playbackRate`, `loopStart`/`loopEnd`, `start` args recorded, `flush`, and a `fakeBuffer(seconds, sampleRate, channels)` stub). New section 7 with 28 sampler checks.
+
+### Decisions (say so if you disagree)
+
+1. **`sampler` is not in `Synths.types()`.** It is created by name only. `selfcheck.js` (A1) iterates `types()` in section 1 and section 3 (sections 3 expects sources started on a fake context with no buffer, so a silent sampler would fail it), and line 330 requires a device for every listed type. Adding it to `types()` would break A1's check. A1's Host lists it as a device explicitly. If A1 wants it in the list, selfcheck needs a getBuffer stub and a device; that is A1's file.
+2. **Pitch offset.** CONTRACT says `ev.note` (semitones from C3). The sequencer sends `ev.midi` on note tracks and never `ev.note`. The instrument accepts both: `ev.note` if a number, else `ev.midi - 48`, else 0. This is a superset, not a change. Flagged to A1 and the coordinator: a sampler on a note track gets its pitch from `midi` this way.
+3. **One-shot vs gate.** A one-shot plays its slice in full and ignores `ev.dur`. The sequencer's default `ev.dur` is `gate` (0.6 step) for every track, so using it would cut every sample to 70 ms. `loop: 1` uses `ev.dur` as the gate.
+4. **Envelope.** Linear attack to `vel * gain` over `attack`, sustain, linear release that ends at the slice end (one-shot) or the gate end (loop). `attack` has a 0.5 ms floor so the ramp always has a duration.
+5. **Choke.** A hit with `choke` set cuts every live voice in that group, in any sampler on the same context, with a 5 ms fade from the current gain value, then stops the sources 6 ms after the hit. The registry (`chokeGroups(ctx)`) maps group name to the list of live voices; a voice leaves its group when it is cut or disposed. A hit with `choke: ''` cuts nothing, and a hit in another group does not cut either. The hats do not use the mechanism yet (ruling: later).
+6. **`reverse`** is accepted and does nothing (the contract says "later"). Not implemented.
+7. **No resolver, no buffer, a throwing resolver, an empty id, or no context**: the trigger returns without creating a voice. `opts.getBuffer` is stored on the instance (`inst._getBuffer`), not as a parameter.
+8. **Locks.** The sequencer's existing lock path applies numeric locks to `inst.params` for one trigger. The check runs through a real sequencer track and reads `pitch` and `gain` inside the trigger. No change to `sequencer.js`.
+
+### Verification (run here, exit codes read directly)
+
+```
+$ node --check app/engine/synths.js        -> exit 0
+$ node --check app/engine/song.js          -> exit 0
+$ node --check tools/synths-check.js       -> exit 0
+$ node app/engine/selfcheck.js             -> OK: 263 checks passed   exit 0
+$ node tools/synths-check.js               -> OK: 64 checks passed    exit 0
+```
+
+The synths-check output is 36 wave-1 checks (unchanged; defaults equal the archived engine, 1305 calls) plus 28 sampler checks. The sampler checks: one source per hit; playbackRate 2 at pitch 12; the buffer comes from `getBuffer`; `ev.note` 7 and `ev.midi` 60 offsets; start/end to offset and duration (0.5 s, 1.0 s); end 0 is the whole buffer; end before start is silent; gain envelope values; one-shot has no loop; loop start/end and gate; null / empty / throwing / no-resolver / no-context are silent with no throw; choke across two instances (stop at 1.206 s); group registry holds only the new voice; empty and other groups do not choke; two voices in `_live`; `panic()` stops both; `flush` releases them; `dispose()` stops the voice; locks apply and restore through the sequencer; `buffer` and `choke` are string params.
+
+Saved outputs: `/tmp/claude-0/-home-user/341aa418-0695-5408-80be-331d2fec6cae/scratchpad/synths-check.sampler.out.txt` and `/tmp/claude-0/-home-user/341aa418-0695-5408-80be-331d2fec6cae/scratchpad/selfcheck.sampler.out.txt`.
+
+### Not verified
+
+- No real AudioBuffer, decode or audible render. The fake buffer has `duration`, `sampleRate`, `numberOfChannels` and `length`; the real `AudioBuffer` also has `getChannelData`, which the instrument does not call.
+- Real-browser behaviour of `playbackRate` as an AudioParam (the `val()` path sets `.value`, which real browsers accept).
+- The choke fade reads `gain.value` as the current level. In a real context that is the last computed value and may differ from the audible level by one render quantum. Inaudible in practice, but unmeasured.
+- A1's Host (loadAudio, the `audio` map, `getBuffer` passing, the sampler device) is not in my files; not checked here.
+- The selfcheck stub for `createBufferSource` and `decodeAudioData` is A1's (CONTRACT: "Host.create with no audio must still work in Node"). My stub lives in `tools/synths-check.js`.
+
+### For others
+
+- **A1:** `Synths.create(ctx, 'sampler', {buffer, ..., getBuffer: fn})` is the path. `inst._getBuffer` is kept on the instance; a rebuild needs the same resolver passed again. `Synths.types()` does not list `sampler` (decision 1). The `ev.midi` offset (decision 2) is in synths.js; the sequencer does not change.
+- **A8:** nothing new from me in processors.js.
+- **Coordinator:** the choke fade and the `midi` fallback are the two places I went past the text. Both are in the decisions list above.

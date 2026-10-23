@@ -90,6 +90,7 @@ ok(rootEl.all('.sv-group').length === 4, 'four group headers');
 ok(rows.every(function (r) { return r.all('.sv-cell').length === 16; }), '16 cells in every row');
 ok(rootEl.all('.sv-hdr')[0].all('.sv-secs')[0].all('button').length === 9, 'nine section buttons in the header');
 
+ok(view.state.follow === true, 'follow defaults on');
 // ---- go to mainA2 (index 4), select bass (variant B is shared with mainB)
 view.selectSection('mainA2');
 view.select('bass');
@@ -212,6 +213,32 @@ if (host.editor().variantUsage('hat_closed', 'A').length > 1 || /still used by/.
   applyAll.dispatch('click', {});
   ok(host.editor().track('hat_closed').variants.A.cells[0] !== null, 'Apply to all edits the shared variant in place');
 }
+
+// ---- 6c. fx editing through ed.setFx, pattern length through ed.setVariantBars, follow flag
+if (host.editor().setFx) {
+view.state.follow = true; view.state.bar = 12; view.selectSection('build'); view.select('riser');
+var nfx0 = host.editor().section('build').fx.filter(function (f) { return f.track === 'riser'; }).length;
+var rc = cell('riser', 5); ok(!rc.hasClass('hit'), 'riser step 6 of bar 13 is empty');
+rc.dispatch('click', {});
+var fxs = host.editor().section('build').fx.filter(function (f) { return f.track === 'riser'; });
+ok(fxs.length === nfx0 + 1 && fxs.some(function (f) { return f.bar === 12 && f.step === 5; }), 'click on a riser cell adds an fx hit (ed.setFx)');
+ok(cell('riser', 5).hasClass('hit'), 'riser cell shows the new hit');
+cell('riser', 5).dispatch('click', {});
+ok(host.editor().section('build').fx.filter(function (f) { return f.track === 'riser'; }).length === nfx0, 'second click removes it');
+view.state.bar = 0; view.selectSection('mainA2'); view.select('bass');
+var bsel = rootEl.all('select').filter(function (x) { return (x.getAttribute('aria-label') || '').indexOf('length of variant') === 0; })[0];
+ok(!!bsel && !bsel.disabled, 'pattern length select present');
+bsel.value = '2'; bsel.dispatch('change', {});
+ok(host.editor().track('bass').variants[host.editor().section('mainA2').play.bass].bars === 2, 'pattern length 2 bars (ed.setVariantBars)');
+ok(rootEl.all('select').some(function (x) { return x.getAttribute('aria-label') === 'bar within the section'; }), 'bar select present');
+} else console.log('(editor has no setFx / setVariantBars: fx and length checks skipped)');
+view.state.follow = false; var secBefore = view.state.sec; view.selectSection('intro');
+ok(view.state.sec === secBefore, 'follow off: selectSection (section event) does not move the view');
+var sb = rootEl.all('.sv-hdr')[0].all('.sv-secs')[0].all('button')[0];
+sb.dispatch('click', {});
+ok(view.state.sec === 0 && view.state.follow === false, 'a click on a section number still moves the view');
+view.state.follow = true; view.selectSection('mainA2');
+ok(view.state.sec === 4, 'follow on: selectSection moves the view');
 
 // ---- 7. dispose
 var nDoc = document.count();

@@ -54,6 +54,7 @@ function Src(ctx, type) { Node.call(this, ctx, type); this.onended = null; this.
 Src.prototype = Object.create(Node.prototype);
 Src.prototype.start = function (t) {
   if (this._started) throw new Error('start twice');
+  this.startArgs = Array.prototype.slice.call(arguments);
   this._started = true; this.ctx.srcs.push(this); this.ctx.log.push([this.id, 'start', t]);
   if (t != null && !(t >= 0)) throw new Error('bad start time ' + t);
 };
@@ -66,9 +67,18 @@ function FakeContext(sr) {
   this._nid = 1; this.log = []; this.srcs = [];
   this.destination = new Node(this, 'destination');
 }
+// flush: fire onended for every started source (as the clock would when the sources end)
+FakeContext.prototype.flush = function () { var s = this.srcs.splice(0); for (var i = 0; i < s.length; i++) if (s[i].onended) s[i].onended(); };
 FakeContext.prototype.createGain = function () { var n = new Node(this, 'gain'); n.gain = new Param(this, 1); return n; };
 FakeContext.prototype.createOscillator = function () { var n = new Src(this, 'osc'); n.frequency = new Param(this, 440); n.detune = new Param(this, 0); n.type = 'sine'; return n; };
-FakeContext.prototype.createBufferSource = function () { var n = new Src(this, 'bufsrc'); n.buffer = null; n.loop = false; return n; };
+FakeContext.prototype.createBufferSource = function () {
+  var n = new Src(this, 'bufsrc'); n.buffer = null; n.loop = false; n.loopStart = 0; n.loopEnd = 0; n.playbackRate = new Param(this, 1); return n;
+};
+// a fake AudioBuffer: what a decoded file looks like to the instrument (duration, sampleRate, numberOfChannels)
+function fakeBuffer(seconds, sampleRate, channels) {
+  var sr = sampleRate || 48000, ch = channels || 2;
+  return { duration: seconds, sampleRate: sr, numberOfChannels: ch, length: Math.round(seconds * sr), id: 'fake' };
+}
 FakeContext.prototype.createBuffer = function (ch, len, sr) {
   var data = []; for (var i = 0; i < ch; i++) data.push(new Float32Array(len));
   return { numberOfChannels: ch, length: len, sampleRate: sr, duration: len / sr, getChannelData: function (c) { return data[c]; } };
@@ -244,6 +254,111 @@ console.log('6. Song.GUIDANCE_V2 on the fake graph');
   var sc = seqF.tracks.sub.sc.node.gain.calls.filter(function (c) { return c[0] === 'linearRampToValueAtTime'; }).length;
   ok(sc >= 2, 'the kick ducks the drone on the fake graph (' + sc + ' gain ramps on sub)');
   ok(seqF.tracks.kick.inst.params.tau === 0.024 && seqF.tracks.kick.inst.params.hold === 0.06, 'V2 kick parameters reach the instrument');
+})();
+
+// ------------------------------------------------------------------ 7. sampler (CONTRACT "Sampler")
+console.log('7. sampler: one buffer slice per hit, choke groups, locks');
+(function () {
+  var sb = appSandbox(), ctx = new FakeContext(44100);
+  var srcs = recordCreated(ctx, 'createBufferSource'), gains = recordCreated(ctx, 'createGain');
+  var calls = [], b2 = fakeBuffer(2, 44100, 2), map = { b1: b2, b2: b2 };
+  function resolve(id) { calls.push(id); return map[id] || null; }
+  function make(c, opts) {
+    var o = { getBuffer: resolve }; for (var k in opts) if (opts.hasOwnProperty(k)) o[k] = opts[k];
+    return sb.Synths.create(c, 'sampler', o);
+  }
+  ok(sb.Synths.types().indexOf('sampler') < 0 && typeof sb.Synths.chokeGroups === 'function', "'sampler' is created by name and kept out of types() (selfcheck relies on it)");
+
+  // one source per hit; playbackRate = 2^((pitch + offset) / 12)
+  var a = make(ctx, { buffer: 'b1', pitch: 12 });
+  var n0 = srcs.length; a.trigger(1, { vel: 1 });
+  ok(srcs.length === n0 + 1, 'one AudioBufferSourceNode per hit (' + (srcs.length - n0) + ')');
+  var s = srcs[srcs.length - 1];
+  ok(s.buffer === b2 && near(s.playbackRate.value, 2, 1e-9), 'pitch 12 plays the buffer at playbackRate 2');
+  ok(calls.indexOf('b1') >= 0, 'the buffer comes from opts.getBuffer(id)');
+  var r1 = make(ctx, { buffer: 'b1', pitch: 0 }); r1.trigger(1, { vel: 1, note: 7 });
+  ok(near(srcs[srcs.length - 1].playbackRate.value, Math.pow(2, 7 / 12), 1e-9), 'ev.note 7 offsets the pitch from C3 (rate 2^(7/12))');
+  var r2 = make(ctx, { buffer: 'b1', pitch: -12 }); r2.trigger(1, { vel: 1, midi: 60 });
+  ok(near(srcs[srcs.length - 1].playbackRate.value, 1, 1e-9), 'ev.midi 60 is 12 semitones above C3, so pitch -12 gives rate 1');
+
+  // start / end map to the buffer offset and duration (buffer seconds)
+  var sl = make(ctx, { buffer: 'b1', start: 0.25, end: 0.75 }); sl.trigger(1, { vel: 1 });
+  var sa = srcs[srcs.length - 1].startArgs;
+  ok(sa && near(sa[0], 1) && near(sa[1], 0.5) && near(sa[2], 1.0), 'start 0.25 / end 0.75 of a 2 s buffer: offset 0.5 s, duration 1.0 s (' + JSON.stringify(sa) + ')');
+  var sp = make(ctx, { buffer: 'b1', start: 0.25, end: 0.75, pitch: 12 }); sp.trigger(1, { vel: 1 });
+  var spa = srcs[srcs.length - 1];
+  ok(near(spa.startArgs[2], 1.0) && near(spa.stopAt, 1 + 0.5 + 0.03, 1e-6), 'pitch 12 halves the real length (duration stays in buffer seconds, stop at the gate end + 30 ms)');
+  var wh = make(ctx, { buffer: 'b1', start: 0, end: 0 }); wh.trigger(1, { vel: 1 });
+  var wa = srcs[srcs.length - 1].startArgs;
+  ok(near(wa[1], 0) && near(wa[2], 2), 'end 0 means the whole buffer (duration 2.0 s)');
+  var bad = make(ctx, { buffer: 'b1', start: 0.6, end: 0.5 }); var nb = srcs.length; bad.trigger(1, { vel: 1 });
+  ok(srcs.length === nb, 'end before start plays nothing');
+
+  // attack and release shape the gain: amplitude = vel * gain
+  var at = make(ctx, { buffer: 'b1', gain: 0.5, attack: 0.01, release: 0.02 }); at.trigger(1, { vel: 1 });
+  var env = gainWith(gains, 'linearRampToValueAtTime', 0.5, 1.01);
+  ok(env && hasCall(env.gain, 'setValueAtTime', 0.0001, 1) && hasCall(env.gain, 'setValueAtTime', 0.5, 3 - 0.02) &&
+     hasCall(env.gain, 'linearRampToValueAtTime', 0.0001, 3), 'envelope: 0 at the hit, attack to vel*gain (0.5) by 10 ms, release over the last 20 ms of the 2 s buffer (whole buffer, end 0)');
+  var lp = make(ctx, { buffer: 'b1', start: 0.25, end: 0.75 }); lp.trigger(1, { vel: 1 });
+  var ls = srcs[srcs.length - 1];
+  ok(!ls.loop, 'a one-shot does not loop');
+  var lo = make(ctx, { buffer: 'b1', start: 0.25, end: 0.75, loop: 1 }); lo.trigger(1, { vel: 1, dur: 0.5 });
+  var lps = srcs[srcs.length - 1];
+  ok(lps.loop === true && near(lps.loopStart, 0.5) && near(lps.loopEnd, 1.5) && lps.startArgs.length === 2, 'loop 1 loops the slice (loopStart 0.5 s, loopEnd 1.5 s) and starts without a duration');
+  ok(near(lps.stopAt, 1 + 0.5 + 0.03, 1e-6), 'a loop is gated by ev.dur (stop at the gate end + 30 ms)');
+
+  // unresolved buffers: nothing plays, nothing throws
+  var threw = false, n1 = srcs.length;
+  try {
+    make(ctx, { buffer: 'missing' }).trigger(1, { vel: 1 });
+    make(ctx, { buffer: '' }).trigger(1, { vel: 1 });
+    make(ctx, { buffer: 'b1', getBuffer: function () { throw new Error('boom'); } }).trigger(1, { vel: 1 });
+    sb.Synths.create(ctx, 'sampler', { buffer: 'b1' }).trigger(1, { vel: 1 });
+    sb.Synths.create(null, 'sampler', { buffer: 'b1', getBuffer: resolve }).trigger(1, { vel: 1 });
+  } catch (e) { threw = true; }
+  ok(!threw && srcs.length === n1, 'a null buffer, an empty id, a throwing resolver, no resolver and no context play nothing and throw nothing');
+
+  // choke: a hit stops the live voice of the same group in another sampler, and only that group
+  var cc = new FakeContext(44100), ca = make(cc, { buffer: 'b1', choke: 'hat' }), cb = make(cc, { buffer: 'b1', choke: 'hat' });
+  ca.trigger(1, { vel: 1 });
+  var voiceA = ca._live[0], srcA = voiceA.srcs[0];
+  ok(srcA.stopAt > 1.5, 'before the choke, the long slice plays on (stop at ' + srcA.stopAt.toFixed(3) + ' s)');
+  cb.trigger(1.2, { vel: 1 });
+  ok(near(srcA.stopAt, 1.2 + 0.006, 1e-6), 'a hit in the same group in another instance stops the voice 6 ms later (' + srcA.stopAt.toFixed(3) + ' s)');
+  ok(sb.Synths.chokeGroups(cc).hat.length === 1 && sb.Synths.chokeGroups(cc).hat[0] !== voiceA, 'the registry keeps only the new voice in the group');
+  var cn = make(cc, { buffer: 'b1', choke: '' }), keep = cb._live[0].srcs[0].stopAt;
+  cn.trigger(1.3, { vel: 1 });
+  ok(near(cb._live[0].srcs[0].stopAt, keep, 1e-9), 'a hit with no group does not choke');
+  var other = make(cc, { buffer: 'b1', choke: 'kick' }); other.trigger(1.4, { vel: 1 });
+  ok(near(cb._live[0].srcs[0].stopAt, keep, 1e-9), 'a hit in another group does not choke');
+
+  // every voice is in _live; panic stops them; a flush releases them
+  var pa = make(ctx, { buffer: 'b1' }); pa.trigger(1, { vel: 1 }); pa.trigger(1.5, { vel: 1 });
+  ok(pa._live.length === 2, 'two hits give two live voices (' + pa._live.length + ')');
+  pa.panic();
+  var stopped = pa._live.every(function (v) { return v.srcs.every(function (x) { return x.stopAt != null && x.stopAt <= 0.031; }); });
+  ok(stopped, 'panic() stops every sampler source');
+  ctx.flush();
+  ok(pa._live.length === 0, 'voices are released when their sources end');
+  var pd = make(ctx, { buffer: 'b1' }); pd.trigger(2, { vel: 1 }); var pv = pd._live[0];
+  pd.dispose();
+  ok(pv.srcs[0].stopAt <= 0.031, 'dispose() stops the voice now (stop at ' + pv.srcs[0].stopAt + ' s, clock at 0)');
+
+  // locks: applied for one trigger, restored after, through the real sequencer
+  var lctx = new FakeContext(44100), linst = make(lctx, { buffer: 'b1', pitch: 0, gain: 1 });
+  var cells = []; for (var i = 0; i < 16; i++) cells.push(null);
+  cells[0] = { vel: 1, locks: { pitch: 12, gain: 0.5 } }; cells[8] = { vel: 1 };
+  var seq = sb.Sequencer.create(lctx, { bpm: 126, swing: 0 });
+  sb.Song.build(seq, { bpm: 126, swing: 0, progression: ['Bmaj9'], sends: {}, tracks: [
+    { name: 'smp', inst: linst, variants: { A: { bars: 1, cells: cells } } } ],
+    sections: [{ name: 'a', bars: 1, play: { smp: 'A' } }] });
+  var seen = [], orig = linst.trigger;
+  linst.trigger = function (t, e) { seen.push([linst.params.pitch, linst.params.gain]); return orig(t, e); };
+  seq.scheduleAll(0, 1, 0);
+  ok(seen.length === 2 && seen[0][0] === 12 && seen[0][1] === 0.5, 'a lock on pitch and gain applies to its hit (' + JSON.stringify(seen) + ')');
+  ok(seen[1][0] === 0 && seen[1][1] === 1, 'the next hit sees the restored values');
+  ok(linst.params.pitch === 0 && linst.params.gain === 1, 'locks are restored after the trigger');
+  ok(sb.Synths.spec('sampler').buffer.value === '' && sb.Synths.spec('sampler').choke.value === '', 'buffer and choke are string parameters');
 })();
 
 console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');

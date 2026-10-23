@@ -96,7 +96,9 @@
     '.wn-wseg .wn-wb{border-radius:0}',
     '.wn-wseg .wn-wb:first-child{border-radius:4px 0 0 4px}',
     '.wn-wseg .wn-wb:last-child{border-radius:0 4px 4px 0;border-left-width:0}',
-    '.wn-wbody{flex:1 1 auto;min-height:0;overflow:auto;padding:8px;position:relative}',
+    '.wn-wbody{flex:1 1 auto;min-height:0;overflow:auto;padding:0;position:relative;display:flex;flex-direction:column}',
+    '.wn-wbody>*{box-sizing:border-box;flex:1 1 auto;min-width:0;min-height:0}',
+    '.wn-wbody.wn-ctl>*{flex:0 0 auto;min-height:auto}',
     '.wn-wmsg{color:var(--dim,#8a8a96);padding:16px}',
     '.wn-wf{display:flex;gap:12px;align-items:center;padding:3px 8px;border-top:1px solid var(--line,#34343c);color:var(--dim,#8a8a96);font-size:11px;flex:0 0 auto;min-height:20px;white-space:nowrap;overflow:hidden}',
     '.wn-wf .wn-fv{color:var(--fg,#e8e8ec);flex:0 1 auto;overflow:hidden;text-overflow:ellipsis}',
@@ -257,6 +259,7 @@
       if (c.face && typeof c.face.dispose === 'function') { try { c.face.dispose(); } catch (e) { note(e); } }
       c.face = null;
       body.textContent = '';
+      body.className = 'wn-wbody' + (c.view === 'controls' ? ' wn-ctl' : '');
       var d = null;
       try { d = h.device(c.id); } catch (e) { d = null; }
       c.dev = d || null;
@@ -282,10 +285,10 @@
       c.resizeFace();
     };
 
-    // Tell the face its drawing area (the body minus padding) so heroes can scale: face.resize(w, h).
+    // Tell the face its drawing area (the whole body: the face owns everything below the title bar) so heroes can scale: face.resize(w, h).
     c.resizeFace = function () {
       if (!c.face || typeof c.face.resize !== 'function') return;
-      var w = body.clientWidth - 16, hh = body.clientHeight - 16;
+      var w = body.clientWidth, hh = body.clientHeight;
       if (w < 1 || hh < 1 || (c._rw === w && c._rh === hh)) return;
       c._rw = w; c._rh = hh;
       try { c.face.resize(w, hh); } catch (e) { note(e); }
@@ -363,6 +366,7 @@
     r.w = Math.round(w.el.offsetWidth); r.h = Math.round(w.el.offsetHeight);
     r.v = w.chrome.view;
     lsSet(LS_RECT + w.id, r);
+    w.chrome.resizeFace();
   }
   function placeRect(w, x, y, ww, hh) {
     var tmin = topMin();

@@ -46,3 +46,24 @@ Build Crew, wave 1, 2026-10-23. Files: `app/ui/windows.js` (global `Windows`), `
 - No screenset memory, no cap on windows, no "open window when an insert is added" preference.
 - Position readout is a `role=timer` that updates every step; screen readers may announce it often.
 - `app/index.html` loads `engine/project.js`, which the contract's load order does not list; the coordinator may want to add it to CONTRACT.md.
+
+## Wave 2
+
+### Device window: the face owns everything below the title bar
+
+- `windows.js` no longer pads the body: `.wn-wbody` has no padding, is a flex column, and the face's root element fills it (`flex: 1`, `min-width/min-height: 0`). `face.resize(w, h)` now gets the whole body size (it was body minus 16 px), from a ResizeObserver on the body, after every rebuild, and after every drag, resize, tile and cascade (`saveRect`), so it covers every size change, with or without ResizeObserver.
+- Controls tab: unchanged in content, `Faces.fallback(dev, 'window', host)`; the body gets class `wn-ctl` so the slider list keeps its natural height and the body scrolls.
+- Nothing in `windows.js` refers to `.hv-head` (the title bar, glyph, name, preset, bypass or Mute, Editor | Controls, Link, pin and close are all mine).
+- Verified in Chromium (`/app/index.html` served by `tools/serve.js`): the face element is exactly the body size (638x609 then 480x455 after dragging the corner handle); the window contains no `.hv-head`; for the kick window `face.resize` was called with 558x473, 584x489, 597x497, 610x505 while dragging and 1422x776 after Tile; the Controls view body scrolls (scrollHeight 707 over clientHeight 455). A3's current faces already draw no head at window density.
+
+### Audio files for the Sampler
+
+- **From A6 to A1:** `HavantechnoShell.readFile(path, {base}) -> Promise<ArrayBuffer | null>` is added (`main.js` handler `shell:readFile`, `preload.js`). It returns `null` (not an error) for a missing or unreadable file, a path the shell refuses, or a URL. Safety rules in the main process: only the main window may call it; only audio extensions (wav, wave, mp3, ogg, oga, opus, flac, m4a, aac, aif, aiff, webm); regular files up to 1 GiB; an absolute path, or a relative one resolved against `opts.base` (an absolute folder, for example the folder of the project file, which `openFile` returns as `path`). So a hostile project file cannot read other files through `audio[id].src`. Call it from `Project.open` for each `audio` entry whose `src` is not an http(s) URL, then `host.loadAudio(arrayBuffer)`; on `null`, list the entry as missing.
+- `HavantechnoShell.openFile({binary: true, filters: [{name: 'Audio', extensions: [...]}]})` already returns `{name, path, bytes}` (a `Uint8Array`) from the native dialog, so "re-add a missing sample" in Electron needs no new call. It also gives the `path` to store as `src`.
+- Web side: the web has no path access, so a missing sample waits for the user. I propose A1 owns `Project.pickAudio() -> Promise<File | null>` (hidden `<input type=file accept="audio/*">`, like `webPick` in `project.js`) and hands the `File` to `host.loadAudio`. I did not add UI for it: the track menu and the drop target are A4's (wave 2). `app.js` offers nothing for it yet; if the coordinator wants a "Missing samples" notice in the frame, `App.toast` is available.
+- Verified (Electron under Xvfb, Playwright `_electron`): `readFile('/tmp/claude-0/t.wav')` returned an `ArrayBuffer` of 12 bytes; `readFile('t.wav', {base: '/tmp/claude-0'})` returned 12 bytes; a `.txt` file, a missing `.wav` and an `http://` URL each returned `null`. Not verified: a real decode in the page, the dialog route, the web `pickAudio` (not written).
+
+### Checks
+
+- `node --check` on `app/ui/windows.js`, `app/ui/app.js`, `app/shell/main.js`, `app/shell/preload.js`, `tools/serve.js`: all exit 0.
+- `node tools/browser-check.js`: `RESULT: PASS (26 checks)`, exit code 0 read directly (the device-title check from wave 1 now passes).

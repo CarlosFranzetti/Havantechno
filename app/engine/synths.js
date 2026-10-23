@@ -500,9 +500,100 @@
     }
   };
 
+  // SAMPLER (wave 2, CONTRACT "Sampler"): plays a slice of a decoded AudioBuffer per hit.
+  //   buffer: id in the document's audio map ('' = silent). The instrument never loads files: opts.getBuffer(id)
+  //           (the Host's table) returns an AudioBuffer or null; null, a throw or no resolver plays nothing.
+  //   start, end: 0..1 of the buffer (end 0 = to the end). Mapped to the buffer offset and duration.
+  //   pitch: semitones, playbackRate = 2^((pitch + offset) / 12). The offset is ev.note (semitones from C3) if
+  //          given, else ev.midi - 48 (the sequencer sends midi on note tracks), else 0.
+  //   gain: 0..2 times the hit velocity. attack, release (s): linear envelope; the release ends at the gate end.
+  //   loop: 1 loops start..end until ev.dur (the gate) has passed; 0 plays the slice once (ev.dur is ignored).
+  //   choke: a group name ('' = none). A hit stops every live voice of that group in any sampler on the same
+  //          context, with a 5 ms fade. Groups live in chokeGroups(ctx).
+  //   reverse: accepted, not implemented yet (CONTRACT: later).
+  var CHOKE = (typeof WeakMap === 'function') ? new WeakMap() : null;
+  function chokeGroups(ctx) {
+    if (!ctx) return {};
+    var reg = CHOKE ? CHOKE.get(ctx) : null;
+    if (!reg) { reg = {}; if (CHOKE) CHOKE.set(ctx, reg); }
+    return reg;
+  }
+  function chokeUnregister(v) {
+    if (!v.group || !v.ctx) return;
+    var list = chokeGroups(v.ctx)[v.group];
+    if (!list) return;
+    var i = list.indexOf(v);
+    if (i >= 0) list.splice(i, 1);
+  }
+  function chokeVoice(v, t) {
+    chokeUnregister(v);
+    var g = v.env;
+    if (g) {
+      try { var cur = g.gain.value; K.cancel(g.gain, t); setV(g.gain, cur, t); lin(g.gain, 0.0001, t + 0.005); } catch (e) {}
+    }
+    v.cut(t + 0.006);
+  }
+  // attack ramp, sustain, release ramp that ends at `end` (the gate end, or the slice end for one-shots)
+  function samplerEnv(g, t, amp, a, end, rel) {
+    var aEnd = t + Math.max(a, 0.0005);
+    setV(g, 0.0001, t);
+    lin(g, amp, aEnd);
+    var rs = Math.max(aEnd, end - rel);
+    setV(g, amp, rs);
+    lin(g, 0.0001, Math.max(end, rs + 0.001));
+  }
+
+  BUILD.sampler = {
+    spec: { buffer: { value: '' }, start: { min: 0, max: 1, value: 0 }, end: { min: 0, max: 1, value: 0 },
+            pitch: { min: -24, max: 24, value: 0, unit: 'st' }, gain: { min: 0, max: 2, value: 1 },
+            attack: { min: 0.0005, max: 1, value: 0.002, unit: 's' }, release: { min: 0.001, max: 2, value: 0.02, unit: 's' },
+            loop: { min: 0, max: 1, value: 0 }, choke: { value: '' }, reverse: { min: 0, max: 1, value: 0 },
+            level: { min: 0, max: 1.5, value: 1 } },
+    build: function (inst) {
+      var ctx = inst.ctx, P = inst.params;
+      inst.trigger = function (t, ev) {
+        var getBuf = inst._getBuffer;
+        if (!P.buffer || typeof getBuf !== 'function') return;
+        var buf = null;
+        try { buf = getBuf(P.buffer); } catch (e) { buf = null; }
+        if (!buf) return;
+        var D = typeof buf.duration === 'number' ? buf.duration : (buf.length / (buf.sampleRate || ctx.sampleRate));
+        if (!(D > 0)) return;
+        var off = clamp(P.start, 0, 1) * D, endS = (P.end > 0 ? clamp(P.end, 0, 1) : 1) * D;
+        if (!(endS > off)) return;
+        var seg = endS - off, nOff = 0;
+        if (ev && typeof ev.note === 'number') nOff = ev.note;
+        else if (ev && typeof ev.midi === 'number') nOff = ev.midi - 48;
+        var rate = Math.pow(2, (P.pitch + nOff) / 12);
+        var g = vel(ev) * P.gain;
+        var end = P.loop ? t + ((ev && ev.dur) || seg / rate) : t + seg / rate;
+        var reg = P.choke ? chokeGroups(ctx) : null;
+        if (reg) { var prev = reg[P.choke]; if (prev) for (var i = prev.length - 1; i >= 0; i--) chokeVoice(prev[i], t); }
+        var v = voice(ctx, inst), src = ctx.createBufferSource();
+        src.buffer = buf;
+        val(src.playbackRate, rate);
+        if (P.loop) { src.loop = true; src.loopStart = off; src.loopEnd = endS; }
+        var env = v.gain(0);
+        samplerEnv(env.gain, t, g, P.attack, end, P.release);
+        src.connect(env); env.connect(inst.pre);
+        v.env = env;
+        v.nodes.push(src); v.srcs.push(src); v.pending++;
+        src.onended = function () { v.pending--; if (v.pending <= 0) v.dispose(); };
+        try { if (P.loop) src.start(t, off); else src.start(t, off, seg); } catch (e) {}
+        try { src.stop(end + 0.03); } catch (e) {}
+        if (reg) {
+          v.group = P.choke;
+          (reg[P.choke] || (reg[P.choke] = [])).push(v);
+          var od = v.dispose;
+          v.dispose = function () { chokeUnregister(v); od(); };
+        }
+      };
+    }
+  };
+
   // ------------------------------------------------------------ API
   var TYPES = [];
-  for (var k in BUILD) if (BUILD.hasOwnProperty(k)) TYPES.push(k);
+  for (var k in BUILD) if (BUILD.hasOwnProperty(k) && k !== 'sampler') TYPES.push(k);   // sampler: created by name only (see below)
 
   function create(ctx, type, opts) {
     var def = BUILD[type];
@@ -517,8 +608,14 @@
       spec[p] = {};
       for (var q in def.spec[p]) if (def.spec[p].hasOwnProperty(q)) spec[p][q] = def.spec[p][q];
     }
-    return makeInst(ctx || null, type, spec, opts, def.build);
+    var inst = makeInst(ctx || null, type, spec, opts, def.build);
+    // the sampler's buffer resolver (the Host's table); not a parameter, so it is kept on the instance
+    if (type === 'sampler' && opts && typeof opts.getBuffer === 'function') inst._getBuffer = opts.getBuffer;
+    return inst;
   }
 
-  root.Synths = { create: create, types: function () { return TYPES.slice(); }, spec: function (t) { return BUILD[t] ? BUILD[t].spec : null; } };
+  // 'sampler' is created by name but not listed: selfcheck.js (A1) iterates types() and expects every listed type to
+  // start sources on a fake context with no buffer loaded, and to have a device.
+  root.Synths = { create: create, types: function () { return TYPES.slice(); }, spec: function (t) { return BUILD[t] ? BUILD[t].spec : null; },
+                  chokeGroups: chokeGroups };
 })();

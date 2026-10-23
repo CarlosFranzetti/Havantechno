@@ -57,3 +57,26 @@ $ node app/engine/selfcheck.js | tail -1   -> OK: 193 checks passed
 The check mounts the view on a fake DOM, asserts 13 rows, 4 groups, 16 cells per row, 9 section buttons; selects mainA2 / bass; a click on a cell of bass B (shared with mainB) forks it to D (mainA2 plays D, mainB still B, D.from = 'B', B unchanged, one undo step, one commit with the fake host, fork message shown); a second click edits D in place (no E), a double-click clears; "+ lane" lists cutoff and not level/drive, adds the lock lane, a lane drag writes `locks.cutoff` and the `*` mark appears; scope "all" edits kick A in place without a fork; the playhead column lands on step 6 in all 13 rows; Undo x5 back through each edit leaves mainA2 on B with no D, Redo restores the fork; M calls `host.mute`; the variant menu's "+ new empty" creates and plays a one-bar empty variant; the riser row shows its hit in bar 13 of build; "Apply to all" edits the shared variant in place; dispose removes the root and every listener on the document and host.
 
 Also run once in real Chromium (Playwright, a scratch page outside the repo with theme.css, the engine files, the real Host and the view, viewport 1440 x 900): page errors and console errors none; a real mouse click on a bass cell forked B to D; the "+ lane" menu item `cutoff` added a lane and a mouse drag in its cell wrote `locks.cutoff = 4339.83`; the screenshot showed rows, lanes and the variant panel aligned as in the design wireframe. Not checked: touch, keyboard flows in a real browser, the narrow layout, the System Editor / Step View switch.
+
+## Wave 2 (coordinator ruling: follow defaults on; editor extras)
+
+Changes in `app/ui/step-view.js` and `tools/step-view-check.js` only.
+
+1. **Follow defaults on** (supersedes decision 3 above). `st.follow` starts true; the "follow" button turns it off. While the song plays and follow is on, `update()` moves the view to the playhead's section and bar. The public `selectSection(nameOrIndex)` (what `app.js` calls on every host `'section'` event and at mount) returns without effect when follow is off. A click on a section number in the view, `<`, `>` or the bar select still moves the view directly and turns follow off. (Side effect to know: with follow on, the viewed bar changes every bar while playing; the owner turns follow off to edit one bar.)
+2. **Editor extras A1 added, all three now used** (reading `host.js`, lines 83 to 125):
+   - `ed.group(fn)`: `group()` in the write path calls it; the hand-made `ed._undo` truncation stays only as a fallback for an editor without `group`.
+   - `ed.setFx(section, index|null, patch|null)`: riser and impact cells are now editable. A click on an empty step adds `{bar: viewedBar, step, track}` (riser also `bars: 4`), a click on a hit (or a continuation cell) removes it; the band lists the section's hits for the track with a bar-length select that calls `setFx(section, idx, {bars})`.
+   - `ed.setVariantBars(track, variant, bars, 'repeat')`: a "Pattern length" select (1, 2, 4, 8, 16, plus the current value) in the variant panel. With scope "this section only" a shared variant is forked first (inside one `group`), with scope "all" it is changed in place.
+   - If the editor lacks `setFx` or `setVariantBars` (the bare `SongDoc` editor in the fake-host mode of the check), those two controls do nothing instead of throwing.
+3. Check: new assertions for follow default, `selectSection` with follow off and on, a section-number click, riser fx add and remove, pattern length 2 bars. The fx and length assertions are skipped with a printed note when the editor has no `setFx` (`SV_FAKE_HOST=1`).
+
+### Verification (exit codes read directly, not through a pipe)
+
+```
+$ node --check app/ui/step-view.js; node --check tools/step-view-check.js    exit 0, 0
+$ node tools/step-view-check.js            -> OK: 64 checks passed     exit 0   (real Host.create())
+$ SV_FAKE_HOST=1 node tools/step-view-check.js -> OK: 59 checks passed  exit 0   (fx and length checks skipped, noted)
+$ node tools/browser-check.js              -> RESULT: PASS (26 checks)  exit 0
+```
+
+Not checked: the follow behaviour while real audio plays in a browser (browser-check switches to the Step View while playing and the step toggle passes, but does not assert the view's section moves with a section event); the new fx and pattern-length controls in a real browser (Node fake DOM only).

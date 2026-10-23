@@ -229,6 +229,25 @@ function registerIpc() {
     await fs.promises.writeFile(r.filePath, buf);
     return { name: path.basename(r.filePath), path: r.filePath };
   });
+  // readFile(path, {base}) -> Uint8Array | null. For audio files a song's `audio` map points at. Only the main
+  // window may call it, only audio extensions are read, at most 1 GiB. A relative path resolves against opts.base
+  // (a folder). Missing, unreadable or refused files give null, so the caller can list the sample as missing.
+  ipcMain.handle('shell:readFile', async function (e, p, opts) {
+    if (!fromMain(e)) return null;
+    try {
+      p = String(p || '');
+      if (!p || p.length > 4096 || p.indexOf('\0') >= 0) return null;
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(p)) return null;                    // URLs are the page's business
+      var base = opts && typeof opts.base === 'string' && path.isAbsolute(opts.base) ? opts.base : null;
+      var full = path.isAbsolute(p) ? p : (base ? path.resolve(base, p) : null);
+      if (!full) return null;
+      if (!/\.(wav|wave|mp3|ogg|oga|opus|flac|m4a|aac|aif|aiff|webm)$/i.test(full)) return null;
+      var st = await fs.promises.stat(full);
+      if (!st.isFile() || st.size > 1024 * 1024 * 1024) return null;
+      var buf = await fs.promises.readFile(full);
+      return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+    } catch (err) { return null; }
+  });
   ipcMain.handle('shell:appDataPath', function () { return app.getPath('userData'); });
   // Small named files in the app-data folder (autosave, preferences).
   ipcMain.handle('shell:readAppData', async function (e, name) {

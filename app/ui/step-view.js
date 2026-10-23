@@ -173,7 +173,7 @@
     el.appendChild(rootEl);
 
     var st = {
-      sec: 0, bar: 0, track: null, scope: 'section', follow: false,
+      sec: 0, bar: 0, track: null, scope: 'section', follow: true,
       lanes: {},          // track -> ['cond', 'lock:cutoff', ...]
       collapsed: {},      // group id -> true
       mute: {}, solo: {}, // local M/S state; applied through host.setParam('<track>.mute')
@@ -243,9 +243,13 @@
     // ---------------------------------------------------------- the write path
     // Runs fn (several editor calls), then collapses their undo snapshots into one so one gesture is one undo, then commits.
     function group(fn) {
-      var e = ed(), n0 = isArr(e._undo) ? e._undo.length : -1;
-      var r = fn(e);
-      if (n0 >= 0 && e._undo.length - n0 > 1) e._undo.length = n0 + 1;
+      var e = ed(), r;
+      if (typeof e.group === 'function') r = e.group(fn);          // A1's ed.group: one undo step for the whole gesture
+      else {                                                         // older editor: collapse the snapshots by hand
+        var n0 = isArr(e._undo) ? e._undo.length : -1;
+        r = fn(e);
+        if (n0 >= 0 && e._undo.length - n0 > 1) e._undo.length = n0 + 1;
+      }
       host.commit();
       return r;
     }
@@ -278,6 +282,21 @@
       var sec = curSec(), tr = trackDoc(name); if (!sec || !tr) return;
       var letter = freeLetter(tr); if (!letter) return;
       group(function (e) { e.setStep(name, letter, 0, null); e.setPlay(sec.name, name, letter); });
+      st.msg = null;
+      refresh();
+    }
+    // pattern length of the variant this section plays (ed.setVariantBars, loops the bars into new ones); a shared
+    // variant is forked first unless the scope is 'all'
+    function setBars(name, n) {
+      var sec = curSec(), g = variantFor(name); if (!sec || !g || n === g.variant.bars || typeof ed().setVariantBars !== 'function') return;
+      group(function (e) {
+        var letter = g.letter;
+        if (st.scope !== 'all' && e.variantUsage(name, letter).length > 1) {
+          var l = e.forkVariant(name, letter); if (!l) return;
+          e.setPlay(sec.name, name, l); letter = l;
+        }
+        e.setVariantBars(name, letter, n, 'repeat');
+      });
       st.msg = null;
       refresh();
     }
@@ -387,6 +406,19 @@
       var c = cellAt(name, step);
       if (c) write(name, step, { acc: null, vel: 0.5 });
       else { var p = newHitPatch(name, g, step); p.vel = 0.5; write(name, step, p); }
+    }
+    // riser / impact: a click adds or removes a hit of the section's fx list (ed.setFx), bars default 4 for the riser
+    function bindFxCell(cellEl, name, step, hit) {
+      function act() {
+        var sec = curSec(); if (!sec || typeof ed().setFx !== 'function') return;   // needs the Host's editor extras
+        select(name, true);
+        if (hit) group(function (e) { e.setFx(sec.name, hit.idx, null); });
+        else group(function (e) { var f = { bar: st.bar, step: step, track: name }; if (name === 'riser') f.bars = 4; e.setFx(sec.name, null, f); });
+        st.msg = null;
+        refresh();
+      }
+      cellEl.addEventListener('click', act);
+      cellEl.addEventListener('keydown', function (ev) { if (ev.key === ' ' || ev.key === 'Enter') { if (ev.preventDefault) ev.preventDefault(); act(); } });
     }
     function bindCell(cellEl, name, step) {
       var key = name + ':' + step;
@@ -622,8 +654,8 @@
         var f = fx[i];
         if (f.track !== name) continue;
         var len = f.bars || 1, from = f.bar | 0;
-        if (st.bar === from) out.push({ step: clamp(f.step | 0, 0, STEPS - 1), start: true, hit: f });
-        else if (st.bar > from && st.bar < from + len) out.push({ step: 0, start: false, hit: f });
+        if (st.bar === from) out.push({ step: clamp(f.step | 0, 0, STEPS - 1), start: true, hit: f, idx: i });
+        else if (st.bar > from && st.bar < from + len) out.push({ step: 0, start: false, hit: f, idx: i });
       }
       return out;
     }
@@ -727,13 +759,13 @@
         } else if (g) cell = g.variant.cells[(st.bar % g.variant.bars) * STEPS + i] || null;
         var c = el_('div', 'sv-cell');
         var state = !cell ? 'rest' : (kind === 'melody' ? (cell.vel >= 1 ? 'acc' : 'hit') : cell.acc ? 'acc' : (cell.vel != null && cell.vel < 0.7) ? 'soft' : 'hit');
-        var cls = 'sv-cell ' + state + (ghost ? ' ghost' : '') + ((fx || !g) ? ' inert' : '') + (spanOnly ? ' span' : '');
+        var cls = 'sv-cell ' + state + (ghost ? ' ghost' : '') + ((!fx && !g) ? ' inert' : '') + (spanOnly ? ' span' : '');
         c.className = cls;
         c.setAttribute('role', 'button');
         c.setAttribute('tabindex', '0');
         c.setAttribute('aria-pressed', cell ? 'true' : 'false');
         c.setAttribute('aria-label', name + ' step ' + (i + 1));
-        c.title = fx ? (cell ? (spanOnly ? 'riser/impact continues from an earlier bar' : 'fx hit') : 'fx hits are set in the section (read-only here)') : cellTitle(cell, name);
+        c.title = fx ? (cell ? (spanOnly ? 'continues from an earlier bar (click to remove the hit)' : 'fx hit: click to remove') : 'click to add an fx hit here') : cellTitle(cell, name);
         c.setAttribute('data-step', String(i));
         var fill = el_('span', 'sv-fill'); fill.style.height = cell ? Math.round((cell.vel != null ? cell.vel : 0.85) * 100) + '%' : '0%';
         c.appendChild(fill);
@@ -741,6 +773,7 @@
         var mk = markOf(cell);
         if (mk) c.appendChild(el_('span', 'sv-mark', mk));
         if (!fx && g) bindCell(c, name, i);
+        else if (fx) bindFxCell(c, name, i, h);
         cells.appendChild(c); list.push(c);
       }
       cellEls[name] = list;
@@ -768,7 +801,20 @@
       band.appendChild(el_('div', 'sv-bhead', 'STEP EDITOR: ' + name + '   ' + sec.name + ', bar ' + (st.bar + 1) + (g ? '   variant ' + g.letter + (g.variant.bars > 1 ? ' (bar ' + ((st.bar % g.variant.bars) + 1) + ' of ' + g.variant.bars + ')' : '') : '')));
       var lanes = el_('div', 'sv-lanes');
       if (fx) {
-        lanes.appendChild(el_('div', 'sv-msg sv-dim', name + ' plays from the section fx list; its hits cannot be edited here yet.'));
+        var fxl = el_('div', 'sv-msg');
+        var fxs = (sec.fx || []).map(function (f, idx) { return { f: f, idx: idx }; }).filter(function (x) { return x.f.track === name; });
+        fxl.appendChild(el_('span', 'sv-dim', fxs.length ? name + ' hits in ' + sec.name + ' (click a step in the grid to add or remove):' : 'No ' + name + ' hits in ' + sec.name + '. Click a step in the grid to add one.'));
+        fxs.forEach(function (x) {
+          var box = el_('span'), bs = el_('select');
+          bs.setAttribute('aria-label', name + ' hit length in bars');
+          for (var n = 1; n <= 16; n++) { var o = el_('option', null, n + (n === 1 ? ' bar' : ' bars')); o.value = String(n); if (n === (x.f.bars || 1)) o.selected = true; bs.appendChild(o); }
+          bs.value = String(x.f.bars || 1);
+          bs.addEventListener('change', function () { group(function (e) { e.setFx(sec.name, x.idx, { bars: parseInt(bs.value, 10) || 1 }); }); refresh(); });
+          box.appendChild(el_('span', null, 'bar ' + ((x.f.bar | 0) + 1) + ', step ' + (((x.f.step | 0)) + 1) + '  '));
+          box.appendChild(bs);
+          fxl.appendChild(box);
+        });
+        lanes.appendChild(fxl);
       } else if (!g) {
         lanes.appendChild(el_('div', 'sv-msg sv-dim', name + ' has no variant in ' + sec.name + '. Choose one in the variant chip, or press + new.'));
       } else {
@@ -839,6 +885,16 @@
         var l2 = el_('label'); l2.appendChild(r2); l2.appendChild(el_('span', null, 'all ' + (users.length || 1) + ' sections'));
         vp.appendChild(el_('span', 'sv-dim', 'Edit scope:'));
         vp.appendChild(l1); vp.appendChild(l2);
+        var bsel = el_('select');
+        bsel.setAttribute('aria-label', 'length of variant ' + (cur || '') + ' in bars');
+        var blist = [1, 2, 4, 8, 16], curBars = g ? g.variant.bars : 1;
+        if (blist.indexOf(curBars) < 0) blist.push(curBars);
+        blist.sort(function (a, b) { return a - b; }).forEach(function (n) { var o = el_('option', null, n + (n === 1 ? ' bar' : ' bars')); o.value = String(n); if (n === curBars) o.selected = true; bsel.appendChild(o); });
+        bsel.value = String(curBars);
+        bsel.disabled = !g;
+        bsel.addEventListener('change', function () { setBars(name, parseInt(bsel.value, 10) || 1); });
+        var brow = el_('label'); brow.appendChild(el_('span', 'sv-dim', 'Pattern length:')); brow.appendChild(bsel);
+        vp.appendChild(brow);
         var add = btn('+ lane ▾', function () { laneMenu(name, add); }, null, 'add a lane: COND or a lock on a voice parameter');
         add.setAttribute('aria-haspopup', 'menu');
         vp.appendChild(add);
@@ -922,7 +978,10 @@
       }
       return changed;
     }
+    // called by app.js on every host 'section' event and when a view is mounted: honours the follow flag
+    // (a click on a section letter inside the view calls gotoSection directly and turns follow off)
     function selectSection(ref) {
+      if (!st.follow) return;
       var d = doc(), i;
       if (typeof ref === 'number') return gotoSection(ref);
       for (i = 0; i < d.sections.length; i++) if (d.sections[i].name === ref) return gotoSection(i);
