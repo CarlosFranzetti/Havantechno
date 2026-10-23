@@ -1,4 +1,4 @@
-/* aasssMaster studio - core.js
+/* Havantechno studio - core.js
  * Global `Kit`: small helpers shared by synths.js / processors.js / sequencer.js.
  * Plain browser JS, no build step. Nothing here throws on a missing or broken AudioContext.
  */

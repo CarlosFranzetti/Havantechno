@@ -1,4 +1,4 @@
-/* aasssMaster studio - processors.js
+/* Havantechno studio - processors.js
  * Global `Processors`: Web Audio effect units with a uniform shape.
  *
  *   var d = Processors.create(ctx, 'delay', {division: '3/16', bpm: 126, feedback: 0.45, mix: 0.2});

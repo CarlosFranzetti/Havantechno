@@ -1,4 +1,4 @@
-/* aasssMaster studio - studio.js
+/* Havantechno studio - studio.js
  * Page logic only: builds the UI from the sequencer and song data, no audio code of its own.
  * Exposes window.Studio = {seq, ctx, start} for tests and the console.
  */

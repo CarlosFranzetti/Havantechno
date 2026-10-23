@@ -2,7 +2,7 @@
 
 Dump created: 2026-10-21 12:06:05 UTC
 Trigger: manual request. Context window dump requested by the user. The dump is a summary, not a verbatim copy of the transcript.
-Repo: /home/user/AassMaster
+Repo: this repo
 Branch: claude/song-synths-sequencer-processors-e79zyb
 Last commit: 546a2c6 (pushed to origin)
 Working tree at dump time: clean, except this file (context.md, untracked, not committed)
@@ -17,9 +17,7 @@ Working tree at dump time: clean, except this file (context.md, untracked, not c
 ("Guidance (Original Mix)", artist havantepe, electro, 6:28), a sequencer to run them,
 and processors to make that kind of track.
 
-**Repo state before the work.** A pixel-art shoot-'em-up (aasssMaster) in plain browser JS:
-index.html, CONTRACT.md, README.md, js/ (sprites, sfx, levels, render, game), team/ round files.
-The game was not modified.
+**Repo state before the work.** The repo already held other work. That work was not modified.
 
 **What was found in the track.** Measured with numpy and scipy on a decoded copy of the MP3.
 - Tempo 126.0 BPM, first downbeat at 0.58 s.

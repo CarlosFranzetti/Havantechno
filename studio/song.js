@@ -1,4 +1,4 @@
-/* aasssMaster studio - song.js
+/* Havantechno studio - song.js
  * Global `Song`: a Guidance-style electro track (126 BPM, B) written for the studio sequencer.
  * The numbers come from an analysis of the reference mix (see docs/superpowers/specs/2026-10-21-guidance-studio-design.md):
  * four-on-the-floor kick with a long sub, a syncopated mid bass on B1, off-beat open hats, claps on 2 and 4,

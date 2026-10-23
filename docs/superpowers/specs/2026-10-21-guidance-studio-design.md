@@ -8,7 +8,7 @@ Recreate the sound of the reference track "Guidance (Original Mix)" (electro, 12
 6:28) with code only: one synth per element of the track, a step sequencer that plays
 them through a full arrangement, and a processor rack (per-track inserts, sends, master
 chain) that gives the mix its character. Plain browser JS, no build step, no files,
-same constraints as the game (`CONTRACT.md`): nothing throws, everything is a no-op
+same rules as any browser-only code here: nothing throws, everything is a no-op
 until the AudioContext exists.
 
 ## What the analysis of the reference found
@@ -53,7 +53,7 @@ studio/
   sequencer.js    global Sequencer: transport, patterns, arrangement, mixer, offline render
   song.js         global Song: the Guidance-style song data and Song.build(seq)
   studio.js       the page logic (DOM only; no audio code of its own)
-  selfcheck.js    node smoke test with a fake AudioContext (mirrors CONTRACT.md C8)
+  selfcheck.js    node smoke test with a fake AudioContext
 ```
 
 Load order: core → synths → processors → sequencer → song → studio.
@@ -81,7 +81,7 @@ limiter.
   even-numbered 16ths, tempo and swing changeable while playing.
 - Tracks: `seq.addTrack(name, {inst, patterns, note | notes | melody | chords, octave,
   gate, chain, sends, duck, gain, pan})`. Pattern strings: `x` hit, `X` accent, `o` soft,
-  `.` rest, 16 chars per bar (multi-bar patterns are arrays). Melodies use the game's
+  `.` rest, 16 chars per bar (multi-bar patterns are arrays). Melodies use this
   notation (8 or 16 tokens per bar, `-` sustains, `.` rests).
 - Arrangement: `seq.setArrangement([{name, bars, play:{track: pattern}, set:{param: v},
   ramp:[{param, from, to}], fx:[{bar, track, bars}]}])`. A track not listed in a section

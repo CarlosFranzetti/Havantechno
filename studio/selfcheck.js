@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-/* aasssMaster studio - selfcheck.js
- * Smoke test with a fake AudioContext (CONTRACT.md C8 style). Run: node studio/selfcheck.js
+/* Havantechno studio - selfcheck.js
+ * Smoke test with a fake AudioContext. Run: node studio/selfcheck.js
  * Checks: every module loads without a window, instruments and processors build on a fake context and on no
  * context, the song builds, all 200 bars schedule with every track playing, ducking fires, params clamp,
  * chord / melody / pattern parsing, section math, WAV encoding.

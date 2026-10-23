@@ -1,4 +1,4 @@
-/* aasssMaster studio - sequencer.js
+/* Havantechno studio - sequencer.js
  * Global `Sequencer`: a 16-step pattern sequencer with an arrangement, a mixer and offline rendering.
  *
  *   var seq = Sequencer.create(ctx, {bpm: 126, swing: 0.08});

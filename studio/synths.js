@@ -1,4 +1,4 @@
-/* aasssMaster studio - synths.js
+/* Havantechno studio - synths.js
  * Global `Synths`: one Web Audio instrument per element of a Guidance-style electro track.
  *
  *   var inst = Synths.create(ctx, 'kick', {level: 0.9});
