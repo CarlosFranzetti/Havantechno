@@ -108,5 +108,8 @@
     return seq;
   }
 
-  root.Song = { GUIDANCE: GUIDANCE, build: build, LEAD_BREAK: LEAD_BREAK, LEAD_HOOK: LEAD_HOOK };
+  // the song as an editable document (SongDoc); build(seq, doc) accepts it directly
+  function document() { return root.SongDoc.fromLegacy(GUIDANCE); }
+
+  root.Song = { GUIDANCE: GUIDANCE, build: build, document: document, LEAD_BREAK: LEAD_BREAK, LEAD_HOOK: LEAD_HOOK };
 })();

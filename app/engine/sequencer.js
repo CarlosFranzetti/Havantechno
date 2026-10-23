@@ -21,7 +21,7 @@
   'use strict';
 
   var root = (typeof window !== 'undefined') ? window : (typeof globalThis !== 'undefined' ? globalThis : this);
-  var K = root.Kit, Synths = root.Synths, Processors = root.Processors;
+  var K = root.Kit, Synths = root.Synths, Processors = root.Processors, SD = root.SongDoc;
   var clamp = K.clamp, disc = K.disc;
   var VEL = { x: 0.85, X: 1.0, o: 0.5, 'x!': 1 };
   var STEPS = 16;
@@ -85,6 +85,7 @@
       ctx: ctx || null, tracks: {}, order: [], sends: {}, sendOrder: [], sections: [], totalBars: 0, progression: ['C'],
       playing: false, loopSection: null, loopAll: true, master: null, out: null, analyser: null,
       _bpm: opts.bpm || 120, _swing: clamp(opts.swing || 0, 0, 1), _lookahead: opts.lookahead || 0.12, _interval: opts.interval || 25,
+      seed: opts.seed || 1, held: {},
       _step: 0, _next: 0, _timer: null, _events: [], _listeners: {}, _hitCount: {}, _pendingSet: [], _soloed: 0, _counted: 0
     };
     var live = !!ctx;
@@ -139,20 +140,23 @@
     // ---------------------------------------------------------- tracks
     seq.addTrack = function (name, def) {
       def = def || {};
-      var tr = { name: name, def: def, inst: null, chain: null, sc: null, channel: null, sendGains: {}, patterns: {}, melodies: {},
+      var tr = { name: name, def: def, inst: null, chain: null, sc: null, channel: null, sendGains: {}, variants: {},
                  muted: false, solo: false, noteIdx: 0, kind: 'drum' };
       tr.inst = (def.inst && def.inst.trigger) ? def.inst : Synths.create(seq.ctx, def.inst || name, def.params);
       if (def.params && tr.inst.set) for (var pk in def.params) if (def.params.hasOwnProperty(pk)) tr.inst.set(pk, def.params[pk]);
       var k;
-      if (def.patterns) for (k in def.patterns) if (def.patterns.hasOwnProperty(k)) tr.patterns[k] = parsePattern(def.patterns[k]);
-      if (def.pattern) tr.patterns.A = parsePattern(def.pattern);
-      if (def.melody) {
-        if (isArr(def.melody) || typeof def.melody === 'string') tr.melodies.A = parseMelody(def.melody);
-        else for (k in def.melody) if (def.melody.hasOwnProperty(k)) tr.melodies[k] = parseMelody(def.melody[k]);
-      }
-      if (def.chords) tr.kind = 'chord';
+      if (def.kind) tr.kind = def.kind;
+      else if (def.chords) tr.kind = 'chord';
       else if (def.melody) tr.kind = 'melody';
       else if (def.note != null || def.notes) tr.kind = 'note';
+      // variants: {A: 'x...' | ['x...', ...] | melody tokens | {bars, cells}} (SongDoc), plus the old patterns / melody keys
+      if (def.variants) for (k in def.variants) if (def.variants.hasOwnProperty(k)) tr.variants[k] = SD.parseVariant(def.variants[k], tr.kind);
+      if (def.patterns) for (k in def.patterns) if (def.patterns.hasOwnProperty(k)) tr.variants[k] = SD.parsePattern(def.patterns[k]);
+      if (def.pattern) tr.variants.A = SD.parsePattern(def.pattern);
+      if (def.melody) {
+        if (isArr(def.melody) || typeof def.melody === 'string') tr.variants.A = SD.parseMelody(def.melody);
+        else for (k in def.melody) if (def.melody.hasOwnProperty(k)) tr.variants[k] = SD.parseMelody(def.melody[k]);
+      }
       tr.note = def.note != null ? K.ntom(def.note) : null;
       tr.notes = def.notes ? (isArr(def.notes) ? def.notes : String(def.notes).trim().split(/\s+/)).map(K.ntom) : null;
       tr.octave = def.octave == null ? 4 : def.octave;
@@ -207,6 +211,13 @@
       if (tr.solo !== was) seq._soloed += tr.solo ? 1 : -1;
       applyMutes(); return tr.solo;
     };
+
+    // ---------------------------------------------------------- held parameters
+    // A path the user is holding is skipped by section `set` and `ramp` until released ("re-enable arranged").
+    seq.hold = function (path) { seq.held[String(path)] = true; return seq; };
+    seq.release = function (path) { delete seq.held[String(path)]; return seq; };
+    seq.releaseAll = function () { seq.held = {}; return seq; };
+    seq.heldCount = function () { var n = 0; for (var k in seq.held) if (seq.held.hasOwnProperty(k)) n++; return n; };
 
     // ---------------------------------------------------------- parameter paths
     // 'kick.decay' | 'stab.gain' | 'stab.delay.mix' | 'stab.sc.depth' | 'send.reverb.mix' | 'master.hp.cutoff' | 'bpm'
@@ -280,6 +291,7 @@
     function ramps(sec, bar, st, t) {
       for (var i = 0; i < sec.ramp.length; i++) {
         var r = sec.ramp[i], a = r.bars ? r.bars[0] : 0, b = r.bars ? r.bars[1] : sec.bars;
+        if (seq.held[r.param]) continue;
         var pos = (bar - sec.start) + st / STEPS;
         if (pos < a || pos > b) continue;
         var u = b > a ? clamp((pos - a) / (b - a), 0, 1) : 1, v;
@@ -287,8 +299,30 @@
         seq.setParam(r.param, v, { at: t });
       }
     }
+    // deterministic per (track, absolute step, variant, seed): export equals playback
+    function hash32(s) { var h = 2166136261 >>> 0; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h; }
+    function chance(name, absStep, variation) { return hash32(name + ':' + absStep + ':' + variation + ':' + seq.seed) / 4294967296; }
+    // 'a:b' plays on bar a (1-based) of every b bars of the section; '!a:b' plays on the others
+    function condOk(cond, bis) {
+      var m = /^(!?)(\d+):(\d+)$/.exec(String(cond)); if (!m) return true;
+      var a = +m[2], b = +m[3]; if (!(b > 0)) return true;
+      var hit = (bis % b) === ((a - 1) % b);
+      return m[1] ? !hit : hit;
+    }
+    // parameter locks: set the voice parameters for this trigger only, then restore (voices read inst.params at trigger
+    // time). `level` and processor parameters act on shared nodes and are not lockable here.
     function trigger(tr, t, ev) {
-      tr.inst.trigger(t, ev);
+      var saved = null, k;
+      if (ev && ev.locks && tr.inst.params && tr.inst.spec) {
+        saved = {};
+        for (k in ev.locks) if (ev.locks.hasOwnProperty(k) && tr.inst.spec.hasOwnProperty(k) && k !== 'level') {
+          var sp = tr.inst.spec[k], lv = ev.locks[k];
+          if (typeof sp.value === 'number') { lv = Number(lv); if (lv !== lv) continue; lv = clamp(lv, sp.min, sp.max); }
+          saved[k] = tr.inst.params[k]; tr.inst.params[k] = lv;
+        }
+      }
+      try { tr.inst.trigger(t, ev); }
+      finally { if (saved) for (k in saved) if (saved.hasOwnProperty(k)) tr.inst.params[k] = saved[k]; }
       seq._hitCount[tr.name]++;
       if (tr.duck) for (var i = 0; i < tr.duck.length; i++) { var d = seq.tracks[tr.duck[i]]; if (d && d.sc && d.sc.trigger) d.sc.trigger(t); }
     }
@@ -297,8 +331,9 @@
       var bar = Math.floor(absStep / STEPS), st = absStep % STEPS, sec = seq.sectionAt(bar);
       if (!sec || bar >= seq.totalBars) return false;
       var sd = seq.stepSec(), ts = t + ((st % 2) ? seq._swing * sd * 0.33 : 0), i, n, tr;
+      var tFloor = live ? ctx.currentTime : 0;      // a negative nudge cannot land in the past
       if (st === 0 && bar === sec.start) {
-        for (var p in sec.set) if (sec.set.hasOwnProperty(p)) seq.setParam(p, sec.set[p], { at: t });
+        for (var p in sec.set) if (sec.set.hasOwnProperty(p) && !seq.held[p]) seq.setParam(p, sec.set[p], { at: t });
         if (!quiet) seq._events.push({ time: t, type: 'section', section: sec.index, name: sec.name });
       }
       if (sec.ramp.length) ramps(sec, bar, st, t);
@@ -315,21 +350,36 @@
         if (!variation) continue;
         if (variation === true) variation = 'A';
         var bis = bar - sec.start;
+        var v = tr.variants[variation] || tr.variants.A;
+        if (!v) continue;
+        var cell = v.cells[(bis % v.bars) * STEPS + st];
+        if (!cell) continue;
+        if (cell.cond && !condOk(cell.cond, bis)) continue;
+        if (cell.prob != null && cell.prob < 1 && chance(tr.name, absStep, variation) >= cell.prob) continue;
+        var tc = ts + (cell.nudge ? cell.nudge * sd : 0);
+        if (tc < tFloor) tc = tFloor;
+        var e = { vel: cell.vel == null ? 0.85 : cell.vel, accent: !!cell.acc };
         if (tr.kind === 'melody') {
-          var mel = tr.melodies[variation] || tr.melodies.A;
-          if (!mel) continue;
-          var ev = mel.ev[(bis % mel.bars) * STEPS + st];
-          if (ev) trigger(tr, ts, { midi: ev.midi, vel: ev.vel, dur: Math.max(0.03, ev.len * sd * 0.95 - 0.01) });
-          continue;
+          if (cell.note == null) continue;
+          e.midi = cell.note;
+          e.dur = Math.max(0.03, (cell.len == null ? 1 : cell.len) * sd * 0.95 - 0.01);
+        } else {
+          e.dur = Math.max(0.02, (cell.len == null ? tr.gate : cell.len) * sd);
+          if (tr.kind === 'chord') e.notes = K.chordNotes(chordFor(sec, bar), tr.octave, tr.voicing);
+          else if (tr.kind === 'note') {
+            if (cell.note != null) e.midi = cell.note;
+            else if (tr.notes && tr.notes.length) { e.midi = tr.notes[tr.noteIdx % tr.notes.length]; tr.noteIdx++; }
+            else e.midi = tr.note;
+          }
         }
-        var pat = tr.patterns[variation] || tr.patterns.A;
-        if (!pat) continue;
-        var v = pat[bis % pat.length][st];
-        if (v == null) continue;
-        var e = { vel: v, accent: v >= 1, dur: Math.max(0.02, tr.gate * sd) };
-        if (tr.kind === 'chord') e.notes = K.chordNotes(chordFor(sec, bar), tr.octave, tr.voicing);
-        else if (tr.kind === 'note') { if (tr.notes && tr.notes.length) { e.midi = tr.notes[tr.noteIdx % tr.notes.length]; tr.noteIdx++; } else e.midi = tr.note; }
-        trigger(tr, ts, e);
+        if (cell.locks) e.locks = cell.locks;
+        var rep = cell.rep > 1 ? (cell.rep | 0) : 1;
+        if (rep === 1) trigger(tr, tc, e);
+        else for (var r = 0; r < rep; r++) {
+          var e2 = {}; for (var ek in e) if (e.hasOwnProperty(ek)) e2[ek] = e[ek];
+          e2.dur = Math.min(e.dur, sd / rep * 0.9);
+          trigger(tr, tc + r * sd / rep, e2);
+        }
       }
       if (!quiet) seq._events.push({ time: t, type: 'step', step: st, bar: bar, section: sec.index });
       return true;
@@ -444,5 +494,6 @@
     });
   }
 
-  root.Sequencer = { create: create, render: render, wav: wav, parsePattern: parsePattern, parseMelody: parseMelody, STEPS: STEPS };
+  root.Sequencer = { create: create, render: render, wav: wav, parsePattern: parsePattern, parseMelody: parseMelody,
+                     parseVariant: SD ? SD.parseVariant : null, STEPS: STEPS };
 })();

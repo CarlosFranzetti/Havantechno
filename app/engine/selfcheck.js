@@ -53,9 +53,26 @@ FakeContext.prototype.createAnalyser = function () { var n = new Node(this, 'ana
 FakeContext.prototype.flush = function () { var s = this._srcs.splice(0); for (var i = 0; i < s.length; i++) if (s[i].onended) s[i].onended(); };
 
 function load(sandbox) {
-  ['core', 'synths', 'processors', 'sequencer', 'song'].forEach(function (f) {
+  ['core', 'synths', 'processors', 'songdoc', 'sequencer', 'song'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, f + '.js'), 'utf8'), sandbox, { filename: f + '.js' });
   });
+}
+// the archived engine, the regression baseline for schedule equivalence
+var ARCHIVE = path.join(__dirname, '..', '..', 'olde Havantechno dub studio');
+function loadArchive(sandbox) {
+  ['core', 'synths', 'processors', 'sequencer', 'song'].forEach(function (f) {
+    vm.runInContext(fs.readFileSync(path.join(ARCHIVE, f + '.js'), 'utf8'), sandbox, { filename: 'archive/' + f + '.js' });
+  });
+}
+// record every trigger of every track: [track, time, vel, accent, midi, dur, notes]
+function recordSchedule(sb, seq, from, to) {
+  var log = [];
+  seq.order.forEach(function (name) {
+    var tr = seq.tracks[name], orig = tr.inst.trigger;
+    tr.inst.trigger = function (t, e) { log.push([name, +t.toFixed(9), e.vel, !!e.accent, e.midi == null ? null : e.midi, +(e.dur).toFixed(9), (e.notes || []).join('/')]); return orig(t, e); };
+  });
+  seq.scheduleAll(from, to, 0);
+  return log;
 }
 function sandbox() {
   var sb = { console: console, setInterval: setInterval, clearInterval: clearInterval, setTimeout: setTimeout, Promise: Promise, Float32Array: Float32Array, Uint8Array: Uint8Array, ArrayBuffer: ArrayBuffer, DataView: DataView, WeakMap: WeakMap };
@@ -67,7 +84,7 @@ function sandbox() {
 console.log('1. modules without any AudioContext');
 (function () {
   var sb = sandbox(); load(sb);
-  ok(sb.Kit && sb.Synths && sb.Processors && sb.Sequencer && sb.Song, 'globals defined');
+  ok(sb.Kit && sb.Synths && sb.Processors && sb.SongDoc && sb.Sequencer && sb.Song, 'globals defined');
   sb.Synths.types().forEach(function (t) { var i = sb.Synths.create(null, t); i.trigger(0, { midi: 60 }); i.set('level', 0.5); i.panic(); i.dispose(); ok(i.params.level === 0.5, t + ' params without ctx'); });
   sb.Processors.types().forEach(function (t) { var p = sb.Processors.create(null, t); p.set('mix', 0.1); p.trigger(0); p.bypass(true); p.dispose(); ok(p.type === t, t + ' builds without ctx'); });
   var seq = sb.Sequencer.create(null); sb.Song.build(seq);
@@ -147,7 +164,7 @@ console.log('3. fake AudioContext graph');
   ok(n === 32 && stats.started > before, 'scheduled 2 bars on the fake graph');
   var duckCalls = seq.tracks.bass.sc.node.gain.calls.length;
   ok(duckCalls >= 8, 'kick ducks the bass (' + duckCalls + ' automation calls)');
-  ok(!seq.tracks.sub.sc.node.gain.calls.some(function (c) { return c[0] === 'linearRampToValueAtTime'; }), 'the sub is not ducked (kick and sub are one event)');
+  ok(!seq.tracks.sub.sc.node.gain.calls.some(function (c) { return c[0] === 'linearRampToValueAtTime'; }), 'the sub is not ducked in the archived song (sidechain depth 0)');
   var bassTimes = []; var origTrig = seq.tracks.bass.inst.trigger;
   seq.tracks.bass.inst.trigger = function (t, e) { bassTimes.push(t); return origTrig(t, e); };
   seq.swing = 0; seq.scheduleAll(0, 1, 10);
@@ -176,6 +193,102 @@ console.log('3. fake AudioContext graph');
   var w = sb.Sequencer.wav(buf); var dv = new DataView(w);
   ok(w.byteLength === 44 + 400 && dv.getUint32(0, false) === 0x52494646 && dv.getInt16(44, true) === 32767 && dv.getInt16(50, true) === -32768, 'WAV encoding');
   console.log('   fake graph: ' + stats.nodes + ' nodes, ' + stats.started + ' sources');
+})();
+
+// ------------------------------------------------------------------ 4. song document and step record
+console.log('4. song document, step record, equivalence with the archived engine');
+(function () {
+  var sb = sandbox(); load(sb);
+  var ar = sandbox(); loadArchive(ar);
+  var SDoc = sb.SongDoc, G = sb.Song.GUIDANCE;
+  // 4a. the archived engine, the new engine on the legacy data, and the new engine on the document schedule identically
+  var base = recordSchedule(ar, (function () { var s = ar.Sequencer.create(null); ar.Song.build(s); return s; })(), 0, null);
+  var legacy = recordSchedule(sb, (function () { var s = sb.Sequencer.create(null); sb.Song.build(s); return s; })(), 0, null);
+  var doc = sb.Song.document();
+  var fromDoc = recordSchedule(sb, (function () { var s = sb.Sequencer.create(null); sb.Song.build(s, doc); return s; })(), 0, null);
+  var reloaded = SDoc.load(SDoc.save(doc));
+  var fromJson = recordSchedule(sb, (function () { var s = sb.Sequencer.create(null); sb.Song.build(s, reloaded); return s; })(), 0, null);
+  ok(base.length > 3000, 'baseline recorded ' + base.length + ' triggers');
+  ok(JSON.stringify(legacy) === JSON.stringify(base), 'new engine on legacy strings == archived engine (' + legacy.length + ' triggers)');
+  ok(JSON.stringify(fromDoc) === JSON.stringify(base), 'new engine on the document == archived engine');
+  ok(JSON.stringify(fromJson) === JSON.stringify(base), 'new engine on save/load round trip == archived engine');
+  // 4b. string round trips
+  var rt = 0, rtAll = 0;
+  G.tracks.forEach(function (t) {
+    if (t.patterns) for (var k in t.patterns) if (t.patterns.hasOwnProperty(k)) { rtAll++; if (SDoc.formatVariant(SDoc.parseVariant(t.patterns[k], 'drum'), 'drum') === t.patterns[k]) rt++; }
+  });
+  ok(rt === rtAll && rtAll > 20, 'pattern strings round-trip (' + rt + '/' + rtAll + ')');
+  var mel = SDoc.parseVariant(sb.Song.LEAD_HOOK, 'melody'), melTxt = SDoc.formatVariant(mel, 'melody');
+  ok(typeof melTxt !== 'object' || Array.isArray(melTxt), 'plain melody formats as text (' + (Array.isArray(melTxt) ? melTxt.length + ' bars' : '1 bar') + ')');
+  ok(JSON.stringify(SDoc.parseVariant(melTxt, 'melody')) === JSON.stringify(mel), 'melody text round-trips to the same cells');
+  var odd = SDoc.parseVariant('x...', 'drum'); odd.cells[0].nudge = 0.1;
+  ok(typeof SDoc.formatVariant(odd, 'drum') === 'object' && SDoc.formatVariant(odd, 'drum').cells[0].nudge === 0.1, 'a variant with per-step data formats as cells');
+  // 4c. nudge, probability, condition, repeats, locks on a small song (fake context, swing 0)
+  var ctx = new FakeContext(44100), sd = 60 / 126 / 4;
+  function tiny(cells, extra) {
+    var s = sb.Sequencer.create(ctx, { bpm: 126, swing: 0 });
+    var def = { bpm: 126, swing: 0, progression: ['Bmaj9'], sends: {}, tracks: [
+      { name: 'kick', inst: 'kick', duck: ['bass'], variants: { A: { bars: 1, cells: cells } } },
+      { name: 'bass', inst: 'bass', note: 'B2', sidechain: { depth: 0.5 }, variants: { A: 'x.x.x.x.x.x.x.x.' } } ],
+      sections: [{ name: 'a', bars: 4, play: { kick: 'A', bass: 'A' }, set: { 'kick.level': 1 } }] };
+    if (extra) extra(def);
+    sb.Song.build(s, def);
+    return s;
+  }
+  var cells = []; for (var i = 0; i < 16; i++) cells.push(null);
+  cells[0] = { vel: 1, nudge: 0.25 }; cells[4] = { vel: 0.7, nudge: -0.25 }; cells[8] = { vel: 0.85, len: 2 };
+  var s1 = tiny(cells), log = recordSchedule(sb, s1, 0, 1);
+  var kicks = log.filter(function (r) { return r[0] === 'kick'; });
+  ok(kicks.length === 3 && Math.abs(kicks[0][1] - 0.25 * sd) < 1e-9 && Math.abs(kicks[1][1] - 3.75 * sd) < 1e-9, 'nudge moves a step by a fraction of a step');
+  ok(Math.abs(kicks[2][5] - 2 * sd) < 1e-9 && kicks[0][2] === 1 && kicks[1][2] === 0.7, 'per-step length and velocity');
+  cells = []; for (i = 0; i < 16; i++) cells.push({ vel: 1, prob: 0.5 });
+  var s2 = tiny(cells), a = recordSchedule(sb, s2, 0, 4).filter(function (r) { return r[0] === 'kick'; }).map(function (r) { return r[1]; });
+  var s3 = tiny(cells), b = recordSchedule(sb, s3, 0, 4).filter(function (r) { return r[0] === 'kick'; }).map(function (r) { return r[1]; });
+  ok(a.length > 10 && a.length < 54 && JSON.stringify(a) === JSON.stringify(b), 'probability is deterministic (' + a.length + ' of 64 kicks, same twice)');
+  s3.seed = 2; var c = recordSchedule(sb, s3, 0, 4).filter(function (r) { return r[0] === 'kick'; }).map(function (r) { return r[1]; });
+  ok(JSON.stringify(a) !== JSON.stringify(c), 'a different seed gives different hits');
+  cells = []; for (i = 0; i < 16; i++) cells.push(null); cells[0] = { vel: 1, prob: 0 };
+  var s4 = tiny(cells); recordSchedule(sb, s4, 0, 2);
+  ok(s4.hits().kick === 0 && s4.tracks.bass.sc.node.gain.calls.length === 0, 'a probability-0 step neither plays nor ducks');
+  cells = []; for (i = 0; i < 16; i++) cells.push(null); cells[0] = { vel: 1, cond: '1:4' }; cells[8] = { vel: 1, cond: '!1:4' };
+  var s5 = tiny(cells), l5 = recordSchedule(sb, s5, 0, 4).filter(function (r) { return r[0] === 'kick'; });
+  ok(l5.length === 4 && Math.abs(l5[0][1]) < 1e-9 && l5[1][1] > 16 * sd, 'conditions a:b and !a:b select bars');
+  cells = []; for (i = 0; i < 16; i++) cells.push(null); cells[0] = { vel: 1, rep: 4 };
+  var s6 = tiny(cells), l6 = recordSchedule(sb, s6, 0, 1).filter(function (r) { return r[0] === 'kick'; });
+  ok(l6.length === 4 && Math.abs(l6[3][1] - 0.75 * sd) < 1e-9 && l6[0][5] <= sd / 4, 'repeats retrigger inside the step');
+  cells = []; for (i = 0; i < 16; i++) cells.push(null); cells[0] = { vel: 1, locks: { decay: 0.9, tune: 9999, level: 0.1, nope: 3 } };
+  var s7 = tiny(cells), seen = null, kinst = s7.tracks.kick.inst, orig = kinst.trigger;
+  kinst.trigger = function (t, e) { seen = { decay: kinst.params.decay, tune: kinst.params.tune, level: kinst.params.level }; return orig(t, e); };
+  s7.scheduleAll(0, 1, 0);
+  ok(seen && seen.decay === 0.9 && seen.tune === 90 && seen.level === 1, 'locks reach the trigger, clamped to the spec, level excluded');
+  ok(kinst.params.decay === 0.34 && kinst.params.tune === 45, 'locks are restored after the trigger');
+  // 4d. held parameters
+  var s8 = tiny(cells);
+  s8.setParam('kick.level', 0.3); s8.hold('kick.level'); s8.scheduleAll(0, 1, 0);
+  ok(s8.getParam('kick.level') === 0.3 && s8.heldCount() === 1, 'a held path is not overwritten by the section set');
+  s8.releaseAll(); s8.scheduleAll(0, 1, 0);
+  ok(s8.getParam('kick.level') === 1 && s8.heldCount() === 0, 'releasing lets the arrangement write again');
+  // 4e. save / load and the editor
+  var json = SDoc.save(doc), doc2 = SDoc.load(json);
+  ok(JSON.stringify(SDoc.load(SDoc.save(doc2))) === JSON.stringify(doc2) && doc2.tracks.length === 13 && doc2.sections.length === 9, 'save/load is stable (' + (json.length / 1024).toFixed(0) + ' KB)');
+  var threw = false; try { SDoc.load('{"v":2}'); } catch (e) { threw = true; } ok(threw, 'load rejects an unknown version');
+  var ed = SDoc.createEditor(SDoc.load(json));
+  ok(ed.variantUsage('bass', 'B').join() === 'mainA2,mainB' && ed.variantUsage('kick', 'A').length === 9, 'variant usage across sections');
+  var r1 = ed.setStepInSection('mainB', 'bass', 2, { vel: 0.6, locks: { cutoff: 900 } });
+  ok(r1 && r1.forked && r1.variant === 'D' && ed.section('mainB').play.bass === 'D' && ed.section('mainA2').play.bass === 'B', 'copy-on-write forks a shared variant (B -> D for mainB only)');
+  ok(ed.track('bass').variants.D.cells[2].vel === 0.6 && ed.track('bass').variants.D.cells[2].locks.cutoff === 900 && ed.track('bass').variants.B.cells[2].vel === 0.85, 'the edit lands on the fork, the original is untouched');
+  var r2 = ed.setStepInSection('mainB', 'bass', 2, { vel: 0.4 });
+  ok(r2 && !r2.forked && r2.variant === 'D', 'a second edit does not fork again');
+  ed.setStep('bass', 'D', 2, { locks: { cutoff: null } }); ok(!ed.track('bass').variants.D.cells[2].locks, 'a null lock removes the lock');
+  ed.setStep('bass', 'D', 2, null); ok(ed.track('bass').variants.D.cells[2] === null, 'a null patch clears the cell');
+  var r3 = ed.setStepInSection('mainA2', 'bass', 0, { vel: 1 }, 'all');
+  ok(r3 && !r3.forked && ed.track('bass').variants.B.cells[0].vel === 1, "scope 'all' edits the shared variant in place");
+  var n0 = ed._undo.length; ok(n0 >= 6 && ed.undo() && ed.track('bass').variants.B.cells[0] === null && ed.redo() && ed.track('bass').variants.B.cells[0].vel === 1, 'undo and redo');
+  ok(ed.setSectionParam('intro', 'kick.level', 0.5) && ed.section('intro').set['kick.level'] === 0.5 && ed.setProgression(null, 2, 'C#m9') && ed.doc.progression[2] === 'C#m9' && ed.rename('Guidance edit') && ed.doc.name === 'Guidance edit', 'section params, progression and name edits');
+  var s9 = sb.Sequencer.create(null); sb.Song.build(s9, ed.doc); s9.scheduleAll(0, null, 0);
+  ok(s9.hits().bass > 0 && s9.hits().kick === 800, 'an edited document still builds and plays');
+  var leg = SDoc.toLegacy(ed.doc);
+  ok(typeof leg.tracks[0].patterns.A === 'string' && typeof leg.tracks[2].patterns.D === 'string' && typeof leg.tracks[2].patterns.B === 'object' && leg.tracks[2].patterns.B.cells[0].vel === 1, 'toLegacy keeps plain variants readable (D, cleared back to plain) and per-step data as cells (B)');
 })();
 
 console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
