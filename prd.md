@@ -61,11 +61,22 @@ The owner set a longer-term direction for the studio. None of it is built; it is
 - Saving or loading songs, MIDI input, and plug-in formats.
 - Any server-side component.
 
+## 6b. Decisions taken on 2026-10-23
+
+The owner answered the questions the research raised:
+
+| # | Decision | Answer | What it rules in |
+|---|----------|--------|------------------|
+| 1 | Desktop shell | **Electron** around the existing JavaScript and Web Audio engine. | All current code and the Faceplate UI carry over; files, save/load and a Python sidecar. Plugin hosting stays a later decision behind a `Host` interface. |
+| 2 | Repo licence | **Whatever lets everything be used.** Recorded as **AGPL-3.0-or-later**: it is compatible with the GPL-3.0 and AGPL-3.0 sources the research found (Surge XT, junox, webOBXD, Mz101, Dragonfly, ZL EQ, Essentia.js, openDAW) and with JUCE's AGPL option, and permissive code (MIT, BSD, Apache, ISC) can be included. Anyone who distributes the app or serves it over a network must offer its source. CC BY-NC models (madmom, LarsNet) remain non-commercial under their own terms regardless. | 
+| 3 | Editing and saving | **Version 1 edits the song and saves it.** A song is saved under a name and stays an editable track in the DAW. Save/load is in scope from the first build. | The step record, the song document and the JSON save format come first in the build order. |
+| 4 | Audio files | **Yes.** | Stems as tracks, A/B against the source, a sampler fallback, impulse responses. Files are loaded by the user at runtime; the repo itself still carries none. |
+
 ## 7. Open questions
 
 Raised by the research and waiting on the owner:
 
-- **Desktop shell.** Electron or Tauri around the existing JavaScript and Web Audio engine (keeps all current code; plugin hosting needs a native bridge), or a native app (JUCE in C++, or Swift on Mac) with the engine rewritten. This decides almost everything else about plugin hosting.
+- **Desktop shell.** Decided: Electron (6b). Kept here for the record of the options: Electron or Tauri around the existing JavaScript and Web Audio engine (keeps all current code; plugin hosting needs a native bridge), or a native app (JUCE in C++, or Swift on Mac) with the engine rewritten. This decides almost everything else about plugin hosting.
 
 - **Licence.** The repo has no LICENSE file. Several candidate engines are GPL or AGPL (webOBXD, junox, Dexed, Mz101, Dragonfly Reverb, openDAW). Without a decision, only MIT/BSD/Apache code and reimplementation from published algorithms are safe.
 - **Offline or in-browser analysis.** Stem separation and transcription tools mostly run in Python. May the pipeline run offline and export a bundle (stems, MIDI, tempo/key/sections JSON) that the page imports?

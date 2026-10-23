@@ -25,6 +25,10 @@ From Gear Crew round 1, each a candidate task once the owner confirms:
 - Live tweaks are overwritten by section ramps within one step; a `held` set is needed in the engine (F-S5).
 - The master meter reads 256 samples every 60 ms, about 10% of the signal (F-O2).
 
+## Decisions taken (2026-10-23, later)
+
+Electron shell; AGPL-3.0-or-later licence; version 1 edits and saves songs (saved under a name, editable in the DAW); audio files allowed at runtime. See `prd.md` 6b and `docs/plans/2026-10-23-desktop-build-plan.md` for the milestones that follow from them.
+
 ## Direction change (2026-10-23, later): desktop DAW, floating device windows, Step View
 
 - The app is to be a **Mac or PC DAW**, not browser-only. That reopens plugin hosting (VST3, AU, CLAP) and changes the Gear Crew's platform conclusions; its round 4 was redirected to cover it.

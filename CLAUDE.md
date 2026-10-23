@@ -14,7 +14,9 @@ The repo has no package.json, no build step and no linter. The studio is plain b
 - `olde Havantechno dub studio/` is the archived first studio. Treat it as frozen: fix bugs there only if asked. New DAW work goes in new folders.
 - `docs/research/` holds Roundtable research (see its README): briefs, per-agent transcripts, discussion, votes and reports. Transcripts are records; do not edit them. Paths inside them that say `studio/` mean the archived folder.
 - `context history.md` gets a timestamped dump every 7 to 8 user updates, then the context is compacted. `memory.md` and `context.md` are earlier dumps.
-- `prd.md` section 4b holds the remix-DAW direction (D1 to D4). Read it before designing new UI or audio features.
+- `prd.md` section 4b holds the remix-DAW direction (D1 to D7) and section 6b the decisions taken: Electron shell, AGPL-3.0-or-later licence, version 1 edits and saves songs, audio files allowed at runtime. Read both before designing new UI or audio features.
+- The build plan is `docs/plans/2026-10-23-desktop-build-plan.md`. New DAW code goes in `app/` (engine, UI and shell), not in the archived folder.
+- Licence: AGPL-3.0-or-later (see `LICENSE`). Code from GPL-3.0 and AGPL-3.0 projects may be ported with attribution; keep a `THIRD_PARTY.md` entry for each. CC BY-NC material stays non-commercial.
 
 ## Architecture
 
