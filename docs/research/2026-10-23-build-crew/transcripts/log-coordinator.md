@@ -147,3 +147,7 @@ A1 part 1: Host builds every sampler with `getBuffer`; `loadAudio`, `audio()`, `
 Two transient failures reported by owners (A2's faces-check "lint got 2", A1's synths-check exit 1) happened while another owner was mid-edit of the file under test; both pass on the settled tree. Rule noted for REPORT.md: run cross-module checks only on a snapshot.
 
 Open from these hand-backs: A3 asks A1 for a `sampler` family (suggests drums); A1 asks A6 to call `Project.open({shell, host})` and expose `pathForFile` (Electron 32+ dropped `File.path`); A4 says nothing changes on its side now that A2's phases exist, and its check passes here with them. Committed all five; A6 part 2 still in progress (main.js, app.js snapshotted as WIP).
+
+## 2026-10-23 23:55:29 UTC — A6 part 2 verified
+
+Syntax passes on windows.js, app.js, shell/main.js, shell/preload.js, serve.js; `node tools/browser-check.js` PASS (26), exit 0. A6: `retargetDeviceWindow` IPC re-keys a child window on retarget, and a second cause was found and fixed (windows shared a name per device id, so `window.open` navigated the existing one); BPM and swing apply on change or Enter with one `hold` each; Bypass calls `host.bypass`/`isBypassed` when present (A1 part 2 adds them) and falls back meanwhile; child windows refresh on the host `'document'` event instead of polling. The Electron checks are A6's Xvfb runs, not reproduced here. Code was already in snapshot aa3c7e8; this records the verification. A6 has been resumed for `Project.open({shell, host})` and `pathForFile`.
