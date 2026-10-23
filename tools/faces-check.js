@@ -81,12 +81,12 @@ var created = [];
 });
 
 var TYPES = ['kick', 'sub', 'bass', 'stab', 'clap', 'hat_closed', 'hat_open', 'shaker', 'perc', 'lead', 'pad', 'riser', 'impact',
-  'filter', 'saturator', 'delay', 'reverb', 'eq3', 'compressor', 'limiter', 'sidechain', 'widener', 'chorus', 'channel'];
+  'filter', 'saturator', 'delay', 'reverb', 'eq3', 'compressor', 'limiter', 'sidechain', 'widener', 'chorus', 'channel', 'sampler'];
 var DENS = ['chip', 'strip', 'face', 'window'];
-eq(TYPES.length, 24, 'type list is 13 instruments + 10 processors + channel');
+eq(TYPES.length, 25, 'type list is 14 instruments + 10 processors + channel');
 TYPES.forEach(function (t) { check(Faces.has(t), 'Faces.has(' + t + ')'); });
 check(!Faces.has('nonesuch'), 'Faces.has is false for an unknown type');
-eq(Faces.types().length, 24, 'exactly 24 definitions (13 instruments, 10 processor types, channel)');
+eq(Faces.types().length, 25, 'exactly 25 definitions (14 instruments, 10 processor types, channel)');
 
 // ---------------------------------------------------------------- host, with a spy on the writes
 var host = global.Host.create();
@@ -285,6 +285,56 @@ devices.forEach(function (d) {
   eq(created.length, 3, 'a type with no face definition falls back to a generic list');
   u.dispose();
   eq(Faces.has('newthing'), false, 'fallback does not register a definition');
+})();
+
+// ---------------------------------------------------------------- sampler: waveform hero, drag handles, flags, buffer list
+(function () {
+  var d = byType.sampler, ov = { 'zz.sampler.buffer': 'b1', 'zz.sampler.start': 0.2, 'zz.sampler.end': 0 };
+  var sh = Object.create(host), sw = [], sholds = [];
+  sh.getParam = function (p) { return Object.prototype.hasOwnProperty.call(ov, p) ? ov[p] : host.getParam(p); };
+  sh.setParam = function (p, v) { sw.push([p, v]); ov[p] = v; return true; };
+  sh.hold = function (p) { sholds.push(p); };
+  sh.audio = function () { return [{ id: 'b1', name: 'loop.wav', duration: 2 }, { id: 'b2', name: 'hit.wav', duration: 0.4 }]; };
+  var data = new Float32Array(48000); for (var i = 0; i < data.length; i++) data[i] = Math.sin(i / 40) * (1 - i / data.length);
+  sh.getBuffer = function (id) { return id === 'b1' ? { duration: 2, getChannelData: function () { return data; } } : null; };
+  created.length = 0;
+  var f = Faces.render(d, 'window', sh); f.update(); f.resize(700, 600);
+  eq(f.error(), null, 'sampler hero draws a waveform');
+  check(heroOps(f.el) > 400, 'sampler hero painted the peaks (' + heroOps(f.el) + ' ops)');
+  var flags = created.filter(function (c) { return c.opts.label === 'loop' || c.opts.label === 'reverse'; });
+  check(flags.length === 2 && flags.every(function (c) { return c.kind === 'toggle'; }), 'loop and reverse are toggles');
+  var sel = created.filter(function (c) { return c.kind === 'select'; }).map(function (c) { return c.opts.label + ':' + c.opts.options.length; });
+  check(sel.indexOf('buffer:3') >= 0 && sel.indexOf('choke:5') >= 0, 'buffer select lists none + the 2 loaded sources, choke has its groups (' + sel.join(' ') + ')');
+  var loop = flags.filter(function (c) { return c.opts.label === 'loop'; })[0];
+  sw.length = 0; loop.opts.onInput(true);
+  check(sw.length === 1 && sw[0][0] === 'zz.sampler.loop' && sw[0][1] === 1, 'loop toggle writes 1 (' + JSON.stringify(sw) + ')');
+  // drag the start handle
+  var wrap = all(f.el, function (x) { return /face-hero/.test(x.className); })[0], cv = all(f.el, function (x) { return x.tagName === 'canvas'; })[0];
+  var W0 = Number(cv.getAttribute('width')), gx = 6, gw = W0 - 12;
+  sw.length = 0; sholds.length = 0;
+  fire(wrap, 'pointerdown', { button: 0, clientX: gx + 0.2 * gw + 3, clientY: 20, pointerId: 1 });
+  fire(wrap, 'pointermove', { clientX: gx + 0.45 * gw, clientY: 20, pointerId: 1 });
+  fire(wrap, 'pointermove', { clientX: gx + 0.5 * gw, clientY: 20, pointerId: 1 });
+  fire(wrap, 'pointerup', { clientX: gx + 0.5 * gw, clientY: 20, pointerId: 1 });
+  check(sw.length === 2 && sw[0][0] === 'zz.sampler.start' && Math.abs(sw[1][1] - 0.5) < 0.01, 'dragging the start handle writes start (' + JSON.stringify(sw) + ')');
+  eq(sholds.length, 1, 'one hold per hero gesture');
+  // a press far from both handles does nothing
+  sw.length = 0; fire(wrap, 'pointerdown', { button: 0, clientX: gx + 0.8 * gw, clientY: 20, pointerId: 1 }); fire(wrap, 'pointermove', { clientX: gx + 0.9 * gw, clientY: 20 });
+  eq(sw.length, 0, 'a press away from the handles writes nothing');
+  // end handle: end 0 means the whole buffer, so its handle sits at the right edge
+  sw.length = 0; fire(wrap, 'pointerdown', { button: 0, clientX: gx + gw - 2, clientY: 20, pointerId: 1 }); fire(wrap, 'pointermove', { clientX: gx + 0.8 * gw, clientY: 20 });
+  check(sw.length === 1 && sw[0][0] === 'zz.sampler.end' && Math.abs(sw[0][1] - 0.8) < 0.01, 'dragging the end handle writes end');
+  fire(wrap, 'pointerup', { clientX: gx + 0.8 * gw, clientY: 20 });
+  // options follow the host's audio list
+  var more = [{ id: 'b1', name: 'loop.wav' }, { id: 'b2', name: 'hit.wav' }, { id: 'b3', name: 'new.wav' }];
+  sh.audio = function () { return more; };
+  var setOpt = null; f.update();
+  eq(f.error(), null, 'sampler update with a longer audio list');
+  f.dispose();
+  // no buffer available: placeholder, no error
+  var g2 = Faces.render(d, 'face', host); g2.update();
+  eq(g2.error(), null, 'sampler hero with no sample');
+  g2.dispose();
 })();
 
 // ---------------------------------------------------------------- lint

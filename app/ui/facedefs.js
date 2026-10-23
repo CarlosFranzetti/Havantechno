@@ -426,6 +426,84 @@
     if (!g.small) { txt(c, 'gain ' + (Math.round(gain * 100) / 100) + (mute ? '  muted' : ''), g.x0, g.y1 + 10); txt(c, 'pan ' + (Math.round(pan * 100) / 100), g.x1, g.y1 + 10, 'right'); }
   }
 
+  // ------------------------------------------------------------------ sampler
+  // The buffer comes from the Host (CONTRACT Sampler section). The Host's accessor name is not fixed in the contract, so a few
+  // are tried; with none, the hero shows a flat line and "no sample" (the handles and the controls still work).
+  function bufferOf(d, host, id) {
+    if (!id) return null;
+    var names = ['getBuffer', 'buffer', 'audioBuffer'], i, b;
+    for (i = 0; i < names.length; i++) if (host && typeof host[names[i]] === 'function') { b = safe(function () { return host[names[i]](id); }, null); if (b && b.getChannelData) return b; }
+    if (d.ref && typeof d.ref.getBuffer === 'function') { b = safe(function () { return d.ref.getBuffer(id); }, null); if (b && b.getChannelData) return b; }
+    return null;
+  }
+  function audioList(host) {
+    var a = safe(function () { return host.audio(); }, null), out = [], k;
+    if (!a) return out;
+    if (Object.prototype.toString.call(a) === '[object Array]') { for (k = 0; k < a.length; k++) out.push({ id: a[k].id != null ? a[k].id : a[k].bufferId, name: a[k].name, duration: a[k].duration }); }
+    else for (k in a) if (Object.prototype.hasOwnProperty.call(a, k)) out.push({ id: k, name: a[k] && a[k].name, duration: a[k] && a[k].duration });
+    return out;
+  }
+  function audioInfo(host, id) { var l = audioList(host), i; for (i = 0; i < l.length; i++) if (l[i].id === id) return l[i]; return null; }
+  var PEAKS = [];
+  function peaksOf(buf, n) {
+    var i, hit;
+    for (i = 0; i < PEAKS.length; i++) if (PEAKS[i].buf === buf && PEAKS[i].n === n) return PEAKS[i].data;
+    var ch = buf.getChannelData(0), len = ch.length, step = Math.max(1, Math.floor(len / n)), data = [], x, j, mn, mx, v, stride = Math.max(1, Math.floor(step / 48));
+    for (x = 0; x < n; x++) {
+      mn = 0; mx = 0;
+      for (j = x * step; j < (x + 1) * step && j < len; j += stride) { v = ch[j]; if (v < mn) mn = v; if (v > mx) mx = v; }
+      data.push([mn, mx]);
+    }
+    hit = { buf: buf, n: n, data: data }; PEAKS.push(hit); if (PEAKS.length > 8) PEAKS.shift();
+    return data;
+  }
+  function heroSampler(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), id = P(d, host, 'buffer'), s = P(d, host, 'start') || 0, e = P(d, host, 'end') || 1, rev = P(d, host, 'reverse') >= 0.5, loop = P(d, host, 'loop') >= 0.5;
+    var buf = bufferOf(d, host, id), info = audioInfo(host, id), dur = (buf && buf.duration) || (info && info.duration) || 0, mid = g.y0 + g.h / 2, i, n = Math.max(32, Math.min(400, Math.round(g.w)));
+    line(c, g.x0, mid, g.x1, mid, p.line, 1);
+    if (buf) {
+      var pk = peaksOf(buf, n), amp = g.h * 0.46;
+      c.beginPath();
+      for (i = 0; i < n; i++) { var q = pk[rev ? n - 1 - i : i], x = g.x0 + (i + 0.5) / n * g.w; c.moveTo(x, mid - q[1] * amp - 0.5); c.lineTo(x, mid - q[0] * amp + 0.5); }
+      c.strokeStyle = p.ink; c.lineWidth = Math.max(1, g.w / n); dash(c, false); c.stroke();
+    } else if (!g.small) txt(c, id ? 'sample not loaded' : 'no sample', g.x0 + g.w / 2, mid - 6, 'center');
+    var xs = g.x0 + s * g.w, xe = g.x0 + e * g.w;
+    c.globalAlpha = 0.55; c.fillStyle = p.bg; c.fillRect(g.x0, g.y0, Math.max(0, xs - g.x0), g.h); c.fillRect(xe, g.y0, Math.max(0, g.x1 - xe), g.h); c.globalAlpha = 1;
+    if (dur > 0) {
+      var att = P(d, host, 'attack') || 0, rel = P(d, host, 'release') || 0, span = (e - s) * dur, fa = clamp(att / Math.max(span, 1e-6), 0, 0.5), fr = clamp(rel / Math.max(span, 1e-6), 0, 0.5);
+      path(c, [[xs, g.y1], [xs + fa * (xe - xs), g.y0 + 2], [xe - fr * (xe - xs), g.y0 + 2], [xe, g.y1]], p.fg, 1, true);
+    }
+    [xs, xe].forEach(function (hx, k) {
+      line(c, hx, g.y0, hx, g.y1, p.fg, 2);
+      c.fillStyle = p.fg; c.fillRect(k === 0 ? hx : hx - 7, g.y0, 7, 10);
+    });
+    if (!g.small) {
+      txt(c, 'start ' + Math.round(s * 100) + '%   end ' + (P(d, host, 'end') ? Math.round(e * 100) + '%' : 'whole'), g.x0 + 2, g.y1 + 10);
+      txt(c, (dur ? (Math.round(dur * 100) / 100) + ' s   ' : '') + (P(d, host, 'pitch') ? 'pitch ' + (Math.round(P(d, host, 'pitch') * 10) / 10) + ' st   ' : '') + (loop ? 'loop' : ''), g.x1, g.y1 + 10, 'right');
+    }
+  }
+  function samplerPointer(phase, pt, d, host, api, st) {
+    var g = plot(pt.w, pt.h, pt.h < 64), s = P(d, host, 'start') || 0, e = P(d, host, 'end') || 1;
+    if (phase === 'down') {
+      var xs = g.x0 + s * g.w, xe = g.x0 + e * g.w, ds = Math.abs(pt.x - xs), de = Math.abs(pt.x - xe);
+      if (Math.min(ds, de) > 12) return null;
+      return { which: ds < de ? 'start' : (de < ds ? 'end' : (pt.x < xs ? 'start' : 'end')) };
+    }
+    if (phase === 'move' && st) {
+      var v = clamp((pt.x - g.x0) / g.w, 0, 1);
+      if (st.which === 'start') api.write('start', Math.min(v, e - 0.001));
+      else { var ev = Math.max(v, s + 0.001); api.write('end', ev >= 0.995 ? 0 : ev); }
+    }
+    return st || null;
+  }
+  function bufferOptions(d, host) {
+    var out = [{ value: '', label: '(none)' }], l = audioList(host), i;
+    for (i = 0; i < l.length; i++) out.push({ value: l[i].id, label: l[i].name || String(l[i].id) });
+    var cur = P(d, host, 'buffer');
+    if (cur && !l.some(function (x) { return x.id === cur; })) out.push({ value: cur, label: cur + ' (missing)' });
+    return out;
+  }
+
   // ------------------------------------------------------------------ definitions
   function W(s, f, w) { return { strip: s, face: f, window: w }; }
   function sec(title, params, widget) { var o = { title: title, params: params }; if (widget) o.widget = widget; return o; }
@@ -443,7 +521,7 @@
     reverb: '<path d="M2 3v10M2 5Q6 5 14 13"/>', chorus: '<path d="M1 8c2-6 4-6 5 0s3 6 5 0 3-3 4 0"/>',
     filter: '<path d="M1 6h8Q12 6 15 14"/>', eq3: '<path d="M1 10Q4 4 8 9T15 6"/><circle cx="3" cy="8" r="1"/><circle cx="8" cy="9" r="1"/><circle cx="13" cy="7" r="1"/>',
     saturator: '<path d="M2 13C7 13 5 3 14 3"/>', widener: '<path d="M3 3Q-1 8 3 13M13 3Q17 8 13 13M8 4v8"/>',
-    channel: '<path d="M5 2v12M11 2v12M3 6h4M9 10h4"/>'
+    channel: '<path d="M5 2v12M11 2v12M3 6h4M9 10h4"/>', sampler: '<path d="M2 8h1M4 5v6M6 3v10M8 6v4M10 2v12M12 5v6M14 7v2"/>'
   };
 
   Faces.define('kick', { glyph: G.kick, hero: heroKick, width: W(176, 440, 560),
@@ -498,6 +576,11 @@
     sections: [sec('width', ['width', 'monoBelow'])], strip: ['width'] });
   Faces.define('chorus', { glyph: G.chorus, hero: heroChorus, width: W(176, 340, 460),
     sections: [sec('modulation', ['rate', 'depth']), sec('voices', ['base', 'invert']), sec('mix', ['mix'])], strip: ['rate', 'depth', 'mix'] });
+  Faces.define('sampler', { glyph: G.sampler, hero: heroSampler, heroPointer: samplerPointer, sigExtra: function (d, host) { var id = P(d, host, 'buffer'); return !!bufferOf(d, host, id) + ':' + (audioInfo(host, id) ? 1 : 0); },
+    width: W(176, 460, 620), heroH: { strip: 44, face: 90, window: 200 },
+    options: { buffer: bufferOptions, choke: ['', 'A', 'B', 'C', 'D'] },
+    sections: [sec('sample', ['buffer', 'start', 'end', 'pitch']), sec('envelope', ['attack', 'release', { p: 'loop', widget: 'toggle' }, { p: 'reverse', widget: 'toggle' }]), sec('out', ['gain', 'level', 'choke'])],
+    strip: ['start', 'end', 'pitch', 'gain'] });
   Faces.define('channel', { glyph: G.channel, hero: heroChannel, live: true, width: W(176, 280, 400), heroH: { strip: 44, face: 70, window: 110 },
     labels: { gain: 'level' }, sections: [sec('level', ['gain']), sec('pan', ['pan']), sec('mute', ['mute']), { title: 'sends', match: '^send\\.' }], strip: ['gain', 'pan', 'mute'] });
 })();

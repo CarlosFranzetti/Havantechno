@@ -34,7 +34,17 @@ function FakeContext(sr) {
 FakeContext.prototype.resume = function () { this.state = 'running'; return Promise.resolve(); };
 FakeContext.prototype.createGain = function () { var n = new Node(this, 'gain'); n.gain = new Param(1); return n; };
 FakeContext.prototype.createOscillator = function () { var n = new Src(this, 'osc'); n.frequency = new Param(440); n.detune = new Param(0); n.type = 'sine'; return n; };
-FakeContext.prototype.createBufferSource = function () { var n = new Src(this, 'bufsrc'); n.buffer = null; n.loop = false; return n; };
+FakeContext.prototype.createBufferSource = function () { var n = new Src(this, 'bufsrc'); n.buffer = null; n.loop = false; n.loopStart = 0; n.loopEnd = 0; n.playbackRate = new Param(1); n.detune = new Param(0); return n; };
+// decodeAudioData: one frame per input byte, two channels at the context rate; a first byte of 255 is undecodable
+FakeContext.prototype.decodeAudioData = function (ab, ok, err) {
+  var self = this;
+  return new Promise(function (resolve, reject) {
+    var good = Object.prototype.toString.call(ab) === '[object ArrayBuffer]' && ab.byteLength > 0 && new Uint8Array(ab)[0] !== 255;
+    if (!good) { var e = new Error('EncodingError'); if (err) err(e); reject(e); return; }
+    var b = self.createBuffer(2, ab.byteLength, self.sampleRate);
+    if (ok) ok(b); resolve(b);
+  });
+};
 FakeContext.prototype.createConstantSource = function () { var n = new Src(this, 'const'); n.offset = new Param(1); return n; };
 FakeContext.prototype.createBuffer = function (ch, len, sr) {
   var data = []; for (var i = 0; i < ch; i++) data.push(new Float32Array(len));
@@ -490,7 +500,131 @@ var section5 = (function () {
   });
 })();
 
-section5.then(function () {
+// ------------------------------------------------------------------ 6. sampler: audio map, sampler tracks, Host audio (A1, wave 2)
+// SongDoc carries doc.audio (references, never bytes) and sampler tracks; the Host builds samplers with its getBuffer,
+// loads audio (fake decodeAudioData), relinks missing files, and Project.open reloads what the shell can read.
+function section6() {
+  console.log('6. sampler: audio map, sampler tracks, Host audio');
+  var sb = sandbox(); load(sb); loadHost(sb);
+  var H = sb.Host, P = sb.Project, SDoc = sb.SongDoc;
+  var made = [], origCreate = sb.Synths.create;
+  sb.Synths.create = function (ctx, type, opts) { if (type === 'sampler') made.push(opts); return origCreate.apply(this, arguments); };
+  var hasSampler = origCreate(null, 'sampler').type === 'sampler';
+  function lastGetBuffer() { for (var i = made.length - 1; i >= 0; i--) if (made[i] && typeof made[i].getBuffer === 'function') return made[i].getBuffer; return null; }
+
+  // 6a. the document
+  var json0 = SDoc.save(sb.Song.document());
+  ok(json0.indexOf('"audio"') < 0, 'a song without samples saves no audio map (files stay as before)');
+  var ed = SDoc.createEditor(SDoc.load(json0));
+  var t = ed.addTrack({ name: 'chop', type: 'sampler', gain: 0.7, params: { buffer: 'vox_chop', pitch: 2 }, variants: { A: 'x...x...' } });
+  ok(t && t.type === 'sampler' && t.inst === 'sampler' && t.kind === 'drum' && t.params.buffer === 'vox_chop' && t.variants.A.cells[4].vel === 0.85 && ed.doc.tracks.length === 14, 'ed.addTrack adds a sampler track (type and inst sampler, variants parsed)');
+  ok(ed.addTrack({ name: 'chop', inst: 'kick' }) === null && ed.addTrack({}) === null, 'addTrack refuses a duplicate or unnamed track');
+  ed.setPlay('mainA', 'chop', 'A');
+  ed.doc.audio = {
+    vox_chop: { name: 'Vox Chop.wav', src: '/samples/Vox Chop.wav', duration: 1.5, sampleRate: 48000, channels: 2, bytes: [1, 2, 3], data: 'AAAA' },
+    kick_loop: { name: 'kick loop.wav', src: 'kick loop.wav', duration: 2, sampleRate: 44100, channels: 1 }
+  };
+  var js = SDoc.save(ed.doc), d2 = SDoc.load(js);
+  ok(js.indexOf('bytes') < 0 && js.indexOf('AAAA') < 0, 'save keeps audio references only, never bytes');
+  ok(JSON.stringify(d2.audio.vox_chop) === JSON.stringify({ name: 'Vox Chop.wav', src: '/samples/Vox Chop.wav', duration: 1.5, sampleRate: 48000, channels: 2 }) && d2.audio.kick_loop.channels === 1, 'the audio map round-trips {name, src, duration, sampleRate, channels}');
+  var ct = d2.tracks[13];
+  ok(ct.name === 'chop' && ct.type === 'sampler' && ct.inst === 'sampler' && ct.params.buffer === 'vox_chop' && ct.params.pitch === 2 && ct.gain === 0.7 && d2.sections[3].play.chop === 'A', 'the sampler track round-trips');
+  ok(SDoc.save(d2) === js && SDoc.save(P.parse(P.serialize(d2))) === js, 'save/load and Project serialize/parse are stable with an audio map and a sampler track');
+  var leg = SDoc.toLegacy(d2), d3 = SDoc.fromLegacy(leg);
+  ok(leg.audio.vox_chop.name === 'Vox Chop.wav' && leg.tracks[13].type === 'sampler' && JSON.stringify(d3.audio) === JSON.stringify(d2.audio) && d3.tracks[13].type === 'sampler' && JSON.stringify(d3.tracks[13].variants) === JSON.stringify(d2.tracks[13].variants), 'toLegacy / fromLegacy keep the audio map and the sampler');
+  var d4 = SDoc.load({ v: 1, tracks: [{ name: 's', inst: 'sampler', variants: {} }], sections: [], audio: 'nonsense' });
+  ok(d4.tracks[0].type === 'sampler' && d4.tracks[0].params.buffer === '' && JSON.stringify(d4.audio) === '{}', "inst 'sampler' alone marks a sampler (buffer ''); a bad audio map loads empty");
+  ok(ed.removeTrack('chop') && !ed.track('chop') && ed.section('mainA').play.chop === undefined && ed.removeTrack('chop') === false && ed.undo() && ed.track('chop') && ed.section('mainA').play.chop === 'A', 'ed.removeTrack removes the track and its references; undo brings it back');
+  var e5 = SDoc.createEditor(SDoc.load(json0));
+  e5.setSectionParam('intro', 'clap.level', 0.5); e5.removeTrack('clap');
+  ok(!e5.section('intro').set['clap.level'] && !e5.section('build').ramp.some(function (r) { return r.param.indexOf('clap.') === 0; }) && e5.section('mainA').play.clap === undefined, 'removeTrack also clears its section set / ramp paths');
+
+  // 6b. a Host with no AudioContext (Node) on a document with samples
+  var host = H.create({ doc: d2 }), aev = [];
+  host.on('audio', function (e) { aev.push(e.id + ':' + e.status); });
+  var dv = host.device('track:chop');
+  ok(host.devices().length === 52 && dv && dv.kind === 'instrument' && dv.family === 'drums' && dv.pathPrefix === 'chop' && host.device('track:chop:sc') && host.device('track:chop:channel'), 'a sampler track is a device like any other (52 devices, family drums)');
+  ok(dv.type === (hasSampler ? 'sampler' : 'unknown') && (!hasSampler || (dv.spec.buffer && dv.spec.pitch && host.getParam('chop.buffer') === 'vox_chop' && host.getParam('chop.pitch') === 2)), 'the sampler instrument and its params (' + dv.type + ')');
+  var gb = lastGetBuffer();
+  ok(made.length >= 1 && typeof gb === 'function' && gb('vox_chop') === null && host.buffer('vox_chop') === null, 'every sampler the Host builds gets getBuffer; nothing is loaded without audio');
+  var au = host.audio();
+  ok(au.length === 2 && au.every(function (a) { return a.missing && !a.loaded; }) && au[0].usedBy.join() === 'chop' && au[1].usedBy.length === 0, 'host.audio() lists the document entries as missing, with the tracks that use them');
+  var hs = host.engine(), h0 = hs.hits().chop; hs.scheduleAll(0, null, 0);
+  ok(hs.hits().chop - h0 === 64, 'the sampler track schedules like any track (64 hits in mainA), silent while its file is missing');
+  return host.audioReady().then(function (r) {
+    ok(r.missing.join() === 'vox_chop,kick_loop' && r.loaded.length === 0 && aev.join() === 'vox_chop:missing,kick_loop:missing', "without a decoder every entry is missing and an 'audio' event says so; nothing throws");
+    return host.loadAudio(new ArrayBuffer(8)).then(function () { return 'loaded'; }, function (e) { return e.message; });
+  }).then(function (msg) {
+    ok(/no AudioContext/.test(msg), 'loadAudio rejects cleanly without any AudioContext');
+    ok(H.create().devices().length === 49 && H.create({ doc: d2 }).tracks().length === 14, 'Host.create still works with no audio in Node');
+
+    // 6c. a Host on the fake context: load, relink, URLs, blobs, bad data, unload, addSampler
+    var ctx = new FakeContext(48000), decoded = [], srcs = [];
+    var od = ctx.decodeAudioData; ctx.decodeAudioData = function (ab, a, b) { decoded.push(ab); return od.call(this, ab, a, b); };
+    var ocb = ctx.createBufferSource; ctx.createBufferSource = function () { var n = ocb.call(this); srcs.push(n); return n; };
+    var lh = H.create({ context: ctx, doc: d2 }), lev = [];
+    lh.on('audio', function (e) { lev.push(e.id + ':' + e.status); });
+    sb.fetch = function (url) {
+      if (/missing/.test(url)) return Promise.resolve({ ok: false, status: 404 });
+      return Promise.resolve({ ok: true, status: 200, arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(960)); } });
+    };
+    var view = new Uint8Array(4800), raw = new ArrayBuffer(480);
+    return lh.start().then(function (started) {
+      ok(started === true && lh.started(), 'the fake-context Host starts');
+      return lh.loadAudio(view.subarray(0, 4800), { name: 'Vox Chop.wav', src: '/samples/Vox Chop.wav' });
+    }).then(function (id) {
+      var a = lh.document().audio[id], g = lastGetBuffer();
+      ok(id === 'vox_chop' && Math.abs(a.duration - 0.1) < 1e-9 && a.sampleRate === 48000 && a.channels === 2 && a.src === '/samples/Vox Chop.wav', 'loadAudio decodes, relinks the missing entry with the same file name, writes doc.audio (' + id + ')');
+      ok(g && g('vox_chop') === lh.buffer('vox_chop') && lh.buffer('vox_chop').length === 4800 && lev.indexOf('vox_chop:loaded') >= 0, "getBuffer resolves the decoded buffer; 'audio' loaded event");
+      var before = srcs.length; lh.engine().scheduleAll(40, 41, 0);
+      var vox = srcs.slice(before).filter(function (n) { return n.buffer === lh.buffer('vox_chop'); }).length;
+      ok(!hasSampler || vox === 2, 'the sampler plays the loaded buffer (' + (hasSampler ? vox + ' voices in one bar of mainA' : 'no sampler instrument yet') + ')');
+      return Promise.all([
+        lh.loadAudio({ name: 'Snare.wav', arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(96)); } }),
+        lh.loadAudio({ name: 'Snare.wav', arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(96)); } }),
+        lh.loadAudio('https://samples.test/a/Hat%20One.wav'),
+        lh.loadAudio(raw),
+        lh.loadAudio(new Uint8Array([255, 0, 0, 0])).then(function () { return 'ok'; }, function (e) { return e.message; }),
+        lh.loadAudio('https://samples.test/missing.wav').then(function () { return 'ok'; }, function (e) { return e.message; }),
+        lh.loadAudio(42).then(function () { return 'ok'; }, function (e) { return e.message; })
+      ]);
+    }).then(function (r) {
+      var A = lh.document().audio;
+      ok(r[0] === 'snare' && r[1] === 'snare_2' && r[2] === 'hat_one' && A.hat_one.src === 'https://samples.test/a/Hat%20One.wav' && A.hat_one.name === 'Hat One.wav', 'Blob-like and URL sources; ids from file names, unique (' + r.slice(0, 4).join(', ') + ')');
+      ok(r[3] === 'audio' && decoded.indexOf(raw) < 0 && raw.byteLength === 480, 'an ArrayBuffer is copied before decoding (the caller keeps it)');
+      ok(/could not decode/.test(r[4]) && /could not load/.test(r[5]) && /unsupported/.test(r[6]) && Object.keys(A).length === 6, 'bad data, a 404 and an unsupported source reject without touching the document');
+      ok(lh.unloadAudio('snare_2') && !A.snare_2 && lh.buffer('snare_2') === null && lh.unloadAudio('snare_2') === false, 'unloadAudio drops an unused file from the table and the document');
+      ok(lh.unloadAudio('vox_chop') && A.vox_chop && lh.buffer('vox_chop') === null && lh.audio().filter(function (x) { return x.id === 'vox_chop'; })[0].missing === true, 'a file a track still uses stays in the document as missing');
+      return lh.addSampler({ name: 'Clap Stack.wav', arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(48)); } }, { family: 'fx' });
+    }).then(function (name) {
+      var d = lh.device('track:' + name);
+      ok(name === 'clap_stack' && d && d.family === 'fx' && lh.editor().track(name).params.buffer === 'clap_stack' && lh.editor().track(name).type === 'sampler' && lastGetBuffer()('clap_stack') === lh.buffer('clap_stack'), 'addSampler loads a file, adds a sampler track and rebuilds with getBuffer (' + name + ')');
+      return lh.loadAudio(view, { name: 'Vox Chop.wav', src: '/samples/Vox Chop.wav' });
+    }).then(function () {
+      // 6d. Project.open with a shell and a host: readable files reload, the rest are missing; nothing throws
+      var json = P.serialize(lh.document()), reads = [];
+      var shell = {
+        openFile: function () { return Promise.resolve({ name: 'p.havantechno.json', path: '/songs/p.havantechno.json', text: json }); },
+        readFile: function (p, o) { reads.push(p + '|' + (o && o.base)); return Promise.resolve(p === '/samples/Vox Chop.wav' ? new ArrayBuffer(4800) : null); }
+      };
+      var h3 = H.create({ context: new FakeContext(48000) }), ev3 = [];
+      h3.on('audio', function (e) { ev3.push(e.id + ':' + e.status); });
+      return h3.start().then(function () { return P.open({ shell: shell, host: h3 }); }).then(function (doc) {
+        var st = {}; h3.audio().forEach(function (a) { st[a.id] = a.loaded ? 'loaded' : 'missing'; });
+        ok(doc === h3.document() && doc.tracks.length === 15 && Object.keys(doc.audio).length === 6, 'Project.open({shell, host}) loads the song into the Host');
+        ok(st.vox_chop === 'loaded' && st.hat_one === 'loaded' && st.kick_loop === 'missing' && st.snare === 'missing' && st.clap_stack === 'missing', 'readable paths and URLs reload, the rest are missing (' + JSON.stringify(st) + ')');
+        ok(reads.indexOf('/samples/Vox Chop.wav|/songs') >= 0 && reads.indexOf('kick loop.wav|/songs') >= 0 && reads.every(function (x) { return x.indexOf('https:') < 0; }), 'paths go through HavantechnoShell.readFile with the project folder as base; URLs do not');
+        ok(ev3.indexOf('kick_loop:missing') >= 0 && ev3.indexOf('vox_chop:loaded') >= 0 && h3.buffer('clap_stack') === null && h3.devices().length === 55, "'audio' events report each file; the missing ones leave their tracks silent");
+        return P.open({ shell: shell }).then(function (bare) {
+          ok(bare && bare.tracks.length === 15 && bare !== h3.document(), 'Project.open without a host still resolves the parsed document');
+          lh.dispose(); h3.dispose();
+        });
+      });
+    });
+  });
+}
+
+section5.then(section6).then(function () {
   console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
   process.exit(fails ? 1 : 0);
 }, function (e) {

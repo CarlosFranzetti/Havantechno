@@ -177,7 +177,7 @@
       lanes: {},          // track -> ['cond', 'lock:cutoff', ...]
       collapsed: {},      // group id -> true
       mute: {}, solo: {}, // local M/S state; applied through host.setParam('<track>.mute')
-      msg: null, dragging: false, pending: false, menu: null
+      msg: null, dragging: false, gesture: false, pendingSection: null, pending: false, menu: null
     };
     var disposed = false, lastDoc = null, phCol = -1, frame = 0, lastSig = '', lastClick = null;
     var flagsNow = {};    // track -> {muted, solo} read once per build
@@ -445,7 +445,8 @@
             var f = cellEl.querySelector && cellEl.querySelector('.sv-fill'); if (f) f.style.height = Math.round(gs.vel * 100) + '%';
           }
         }
-        function up(e2) {
+        function up(e2) { try { upInner(e2); } finally { endGesture(); } }
+        function upInner(e2) {
           D.removeEventListener('pointermove', mv);
           D.removeEventListener('pointerup', up);
           D.removeEventListener('pointercancel', up);
@@ -472,6 +473,7 @@
           else if (e2 && e2.altKey) softCell(name, step);
           else toggleCell(name, step);
         }
+        st.gesture = true;
         D.addEventListener('pointermove', mv);
         D.addEventListener('pointerup', up);
         D.addEventListener('pointercancel', up);
@@ -579,13 +581,15 @@
         st.dragging = true;
         setFrom(ev);
         function mv(e2) { setFrom(e2); }
-        function up() {
+        function up() { try { upInner(); } finally { endGesture(); } }
+        function upInner() {
           D.removeEventListener('pointermove', mv);
           D.removeEventListener('pointerup', up);
           D.removeEventListener('pointercancel', up);
           st.dragging = false;
           if (value != null && value !== v0) write(name, step, lanePatch(def, value)); else refresh();
         }
+        st.gesture = true;
         D.addEventListener('pointermove', mv);
         D.addEventListener('pointerup', up);
         D.addEventListener('pointercancel', up);
@@ -980,8 +984,17 @@
     }
     // called by app.js on every host 'section' event and when a view is mounted: honours the follow flag
     // (a click on a section letter inside the view calls gotoSection directly and turns follow off)
+    // a pointer gesture (pointerdown to pointerup/cancel) in a cell or lane defers section changes from outside;
+    // the latest one is applied when the gesture ends
+    function endGesture() {
+      st.gesture = false;
+      var ref = st.pendingSection;
+      st.pendingSection = null;
+      if (ref != null && !disposed) selectSection(ref);
+    }
     function selectSection(ref) {
       if (!st.follow) return;
+      if (st.gesture) { st.pendingSection = ref; return; }
       var d = doc(), i;
       if (typeof ref === 'number') return gotoSection(ref);
       for (i = 0; i < d.sections.length; i++) if (d.sections[i].name === ref) return gotoSection(i);
@@ -1037,7 +1050,7 @@
       var d = doc();
       if (d !== lastDoc) { refresh(); return; }
       var info = playInfo();
-      if (st.follow && info && playing() && !st.dragging && (info.sec !== st.sec || info.bar !== st.bar)) {
+      if (st.follow && info && playing() && !st.dragging && !st.gesture && (info.sec !== st.sec || info.bar !== st.bar)) {
         st.sec = info.sec; st.bar = info.bar; st.msg = null; refresh(); return;
       }
       applyPlayhead(info);

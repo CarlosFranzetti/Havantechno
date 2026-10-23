@@ -274,6 +274,7 @@
   function heroSig(R) {
     var spec = R.device.spec || {}, s = '', k;
     for (k in spec) if (has(spec, k)) s += paramOf(R.device, R.host, k) + '|';
+    if (R.layout.sigExtra) s += safe(function () { return R.layout.sigExtra(R.device, R.host); }, '') + '|';
     return s + (R.device.ref && R.device.ref._bypassed ? 'b' : '');
   }
 
@@ -457,6 +458,7 @@
         var minH = (R.layout.heroH && R.layout.heroH.window) || HERO_H.window;
         w = Math.max(60, w - 32); hh = Math.round(Math.min(Math.max(hh * 0.42, Math.min(minH, 120)), 340));
       }
+      R.heroW = w; R.heroH = hh;
       if (R.hero && typeof R.hero.resize === 'function') { R.hero.resize(w, hh); R.sig = null; return; }
       var old = R.hero && R.hero.el, nh = buildHero(R, w, hh);
       if (old && R.heroWrap.replaceChild) R.heroWrap.replaceChild(nh.el, old); else add(R.heroWrap, nh.el);

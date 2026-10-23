@@ -240,6 +240,31 @@ ok(view.state.sec === 0 && view.state.follow === false, 'a click on a section nu
 view.state.follow = true; view.selectSection('mainA2');
 ok(view.state.sec === 4, 'follow on: selectSection moves the view');
 
+// ---- 6d. a section event during a pointer gesture is deferred until the gesture ends (latest wins)
+view.state.follow = true; view.selectSection('mainA2'); view.select('kick');
+ok(view.state.sec === 4, 'precondition: viewing mainA2');
+cell('kick', 3).dispatch('pointerdown', { button: 0, clientX: 0, clientY: 50 });
+view.selectSection('intro'); view.selectSection('break');
+ok(view.state.sec === 4, 'pointer down in a cell: a section event does not move the view');
+ok(view.state.pendingSection === 'break', 'the latest section is kept pending');
+document.dispatch('pointerup', { clientX: 0, clientY: 50 });
+ok(view.state.sec === 5 && view.state.pendingSection === null, 'pointer up applies the pending section (break)');
+view.selectSection('mainA2');
+cell('kick', 4).dispatch('pointerdown', { button: 0, clientX: 0, clientY: 50 });
+view.selectSection('build');
+ok(view.state.sec === 4, 'second gesture: still deferred');
+document.dispatch('pointercancel', {});
+ok(view.state.sec === 2, 'pointercancel also applies the pending section (build)');
+view.selectSection('mainA2');
+var lcd = rootEl.all('.sv-lane')[0].all('.sv-lcell').filter(function (c) { return !c.hasClass('off'); })[0];
+if (lcd) {
+  lcd.dispatch('pointerdown', { button: 0, clientY: 112 });
+  view.selectSection('outro');
+  ok(view.state.sec === 4, 'pointer down in a lane cell: deferred');
+  document.dispatch('pointerup', { clientY: 112 });
+  ok(view.state.sec === 8, 'lane gesture end applies the pending section (outro)');
+}
+view.selectSection('mainA2');
 // ---- 7. dispose
 var nDoc = document.count();
 view.dispose();
