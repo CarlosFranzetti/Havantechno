@@ -140,6 +140,29 @@
   }
 
   // ------------------------------------------------------------ documents
+  // a sampler track: type 'sampler' and inst 'sampler' (either one marks it), params.buffer = an id of doc.audio
+  function isSampler(t) { return !!t && (t.type === 'sampler' || t.inst === 'sampler'); }
+  function normSampler(t) {
+    if (!isSampler(t)) return t;
+    t.type = 'sampler'; t.inst = 'sampler';
+    t.params = t.params || {};
+    if (t.params.buffer == null) t.params.buffer = '';
+    else t.params.buffer = String(t.params.buffer);
+    return t;
+  }
+  // doc.audio: {bufferId: {name, src, duration, sampleRate, channels}}, references to audio files, never their bytes
+  var AUDIO_KEYS = { name: 'string', src: 'string', duration: 'number', sampleRate: 'number', channels: 'number' };
+  function normAudio(a) {
+    var out = {}, id, k;
+    if (!a || typeof a !== 'object' || isArr(a)) return out;
+    for (id in a) if (has(a, id) && a[id] && typeof a[id] === 'object') {
+      var e = a[id], o = {};
+      for (k in AUDIO_KEYS) if (has(AUDIO_KEYS, k) && typeof e[k] === AUDIO_KEYS[k] && (AUDIO_KEYS[k] !== 'number' || isFinite(e[k]))) o[k] = e[k];
+      if (o.name == null) o.name = String(id);
+      out[id] = o;
+    }
+    return out;
+  }
   function kindOf(t) {
     if (t.kind) return t.kind;
     if (t.chords) return 'chord';
@@ -151,21 +174,24 @@
   function fromLegacy(def) {
     var doc = { v: 1, name: def.name || 'song', bpm: def.bpm || 120, swing: def.swing || 0, key: def.key || null,
                 progression: (def.progression || []).slice(), sends: clone(def.sends || {}), tracks: [], sections: clone(def.sections || []) };
-    for (var i = 0; i < (def.tracks || []).length; i++) {
-      var t = def.tracks[i], tr = {}, k;
-      for (k in t) if (has(t, k) && k !== 'patterns' && k !== 'pattern' && k !== 'melody' && k !== 'variants') tr[k] = clone(t[k]);
-      tr.kind = kindOf(t);
-      tr.variants = {};
-      if (t.variants) for (k in t.variants) if (has(t.variants, k)) tr.variants[k] = parseVariant(t.variants[k], tr.kind);
-      if (t.patterns) for (k in t.patterns) if (has(t.patterns, k)) tr.variants[k] = parsePattern(t.patterns[k]);
-      if (t.pattern) tr.variants.A = parsePattern(t.pattern);
-      if (t.melody) {
-        if (isArr(t.melody) || typeof t.melody === 'string') tr.variants.A = parseMelody(t.melody);
-        else for (k in t.melody) if (has(t.melody, k)) tr.variants[k] = parseMelody(t.melody[k]);
-      }
-      doc.tracks.push(tr);
-    }
+    for (var i = 0; i < (def.tracks || []).length; i++) doc.tracks.push(trackFromLegacy(def.tracks[i]));
+    if (def.audio) doc.audio = normAudio(def.audio);
     return doc;
+  }
+  // one legacy track (patterns / melody strings, or variants) -> a document track
+  function trackFromLegacy(t) {
+    var tr = {}, k;
+    for (k in t) if (has(t, k) && k !== 'patterns' && k !== 'pattern' && k !== 'melody' && k !== 'variants') tr[k] = clone(t[k]);
+    tr.kind = kindOf(t);
+    tr.variants = {};
+    if (t.variants) for (k in t.variants) if (has(t.variants, k)) tr.variants[k] = parseVariant(t.variants[k], tr.kind);
+    if (t.patterns) for (k in t.patterns) if (has(t.patterns, k)) tr.variants[k] = parsePattern(t.patterns[k]);
+    if (t.pattern) tr.variants.A = parsePattern(t.pattern);
+    if (t.melody) {
+      if (isArr(t.melody) || typeof t.melody === 'string') tr.variants.A = parseMelody(t.melody);
+      else for (k in t.melody) if (has(t.melody, k)) tr.variants[k] = parseMelody(t.melody[k]);
+    }
+    return normSampler(tr);
   }
   // document -> Song.GUIDANCE-style data with readable strings where the variants are plain.
   function toLegacy(doc) {
@@ -177,12 +203,17 @@
       if (tr.kind === 'melody') t.melody = out; else t.patterns = out;
       def.tracks.push(t);
     }
+    if (doc.audio) def.audio = normAudio(doc.audio);
     return def;
   }
   function save(doc) {
     var d = clone(doc);
     d.v = 1;
-    for (var i = 0; i < d.tracks.length; i++) for (var k in d.tracks[i].variants) if (has(d.tracks[i].variants, k)) d.tracks[i].variants[k] = compact(d.tracks[i].variants[k]);
+    for (var i = 0; i < d.tracks.length; i++) {
+      normSampler(d.tracks[i]);
+      for (var k in d.tracks[i].variants) if (has(d.tracks[i].variants, k)) d.tracks[i].variants[k] = compact(d.tracks[i].variants[k]);
+    }
+    if (d.audio != null) d.audio = normAudio(d.audio);
     return JSON.stringify(d);
   }
   function load(json) {
@@ -195,8 +226,10 @@
       var vs = tr.variants || {};
       tr.variants = {};
       for (k in vs) if (has(vs, k)) tr.variants[k] = parseVariant(vs[k], tr.kind);
+      normSampler(tr);
     }
     d.progression = d.progression || []; d.sends = d.sends || {};
+    if (d.audio != null) d.audio = normAudio(d.audio);
     return d;
   }
 
@@ -280,6 +313,36 @@
     };
     ed.setTrackParam = function (track, key, value) { var tr = ed.track(track); if (!tr) return false; snap(); tr.params = tr.params || {}; tr.params[key] = value; return true; };
     ed.rename = function (name) { snap(); ed.doc.name = String(name); return true; };
+    // add a track (legacy strings or variants; a sampler: {name, type: 'sampler', params: {buffer}}) at index (default: the end)
+    ed.addTrack = function (def, index) {
+      if (!def || !def.name || ed.track(def.name)) return null;
+      var t = trackFromLegacy(def);
+      snap();
+      var n = ed.doc.tracks.length, at = (index == null || index < 0 || index > n) ? n : index | 0;
+      ed.doc.tracks.splice(at, 0, t);
+      return t;
+    };
+    // remove a track and every reference to it: section play and fx, duck lists, section set and ramp paths
+    ed.removeTrack = function (name) {
+      var i, j, idx = -1;
+      for (i = 0; i < ed.doc.tracks.length; i++) if (ed.doc.tracks[i].name === name) idx = i;
+      if (idx < 0) return false;
+      snap();
+      ed.doc.tracks.splice(idx, 1);
+      var pre = name + '.';
+      for (i = 0; i < ed.doc.tracks.length; i++) {
+        var dk = ed.doc.tracks[i].duck;
+        if (dk) ed.doc.tracks[i].duck = dk.filter(function (x) { return x !== name; });
+      }
+      for (i = 0; i < ed.doc.sections.length; i++) {
+        var s = ed.doc.sections[i], k;
+        if (s.play) delete s.play[name];
+        if (s.fx) s.fx = s.fx.filter(function (f) { return f.track !== name; });
+        if (s.set) for (k in s.set) if (has(s.set, k) && k.indexOf(pre) === 0) delete s.set[k];
+        if (s.ramp) { var keep = []; for (j = 0; j < s.ramp.length; j++) if (String(s.ramp[j].param).indexOf(pre) !== 0) keep.push(s.ramp[j]); s.ramp = keep; }
+      }
+      return true;
+    };
     ed.canUndo = function () { return ed._undo.length > 0; };
     ed.canRedo = function () { return ed._redo.length > 0; };
     ed.undo = function () { if (!ed._undo.length) return false; ed._redo.push(JSON.stringify(ed.doc)); ed.doc = JSON.parse(ed._undo.pop()); return true; };
@@ -288,5 +351,6 @@
   }
 
   root.SongDoc = { STEPS: STEPS, parsePattern: parsePattern, parseMelody: parseMelody, parseVariant: parseVariant, formatVariant: formatVariant,
-                   emptyVariant: emptyVariant, fromLegacy: fromLegacy, toLegacy: toLegacy, save: save, load: load, createEditor: createEditor };
+                   emptyVariant: emptyVariant, fromLegacy: fromLegacy,
+                   isSampler: isSampler, normAudio: normAudio, toLegacy: toLegacy, save: save, load: load, createEditor: createEditor };
 })();

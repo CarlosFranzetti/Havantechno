@@ -131,7 +131,18 @@ TYPES.forEach(function (t) {
     check(all(f.el, function (x) { return x.tagName === 'canvas'; }).length === 1, id + ' has one hero canvas');
     check(heroOps(f.el) > 8, id + ' hero painted (' + heroOps(f.el) + ' canvas ops)');
     heroCount++;
-    check(all(f.el, function (x) { return /hv-head/.test(x.className); }).length === 1, id + ' has one .hv-head');
+    eq(all(f.el, function (x) { return /hv-head/.test(x.className); }).length, dens === 'window' ? 0 : 1, id + (dens === 'window' ? ' has no head (the window owns the title bar)' : ' has one .hv-head'));
+    if (dens === 'window') {
+      var kids = all(f.el, function (x) { return /face-body/.test(x.className); })[0].children;
+      check(/face-hero/.test(kids[0].className), id + ' hero comes first');
+      check(all(f.el, function (x) { return /face-section/.test(x.className) && x.tagName === 'section'; }).length >= 1, id + ' has its section controls below the hero');
+      f.resize(700, 600);
+      var cv = all(f.el, function (x) { return x.tagName === 'canvas'; })[0];
+      eq(cv.getAttribute('width'), '668', id + ' hero takes the window width after resize');
+      check(Number(cv.getAttribute('height')) <= 340 && Number(cv.getAttribute('height')) >= 96, id + ' hero keeps room for the controls (height ' + cv.getAttribute('height') + ')');
+      f.update();
+      eq(f.error(), null, id + ' hero draws after resize');
+    }
     eq(f.el.getAttribute('data-density'), dens, id + ' data-density');
     var want = dens === 'strip' ? layout.strip.length : renderable(d.spec).length;
     if (dens === 'strip') want = layout.strip.filter(function (p) { return d.spec[p]; }).length;

@@ -20,6 +20,8 @@
  * Hold is released only by the host's "re-enable arranged", not here. Spec params that no section names go to a "more"
  * drawer, so no parameter is ever unreachable. A section may give `match: '^send\\.'` (a regexp source) instead of
  * `params`, to take every spec param whose name matches (used by the channel strip for its per-send levels).
+ * Window density: no head of its own (the window owns the title bar); hero first, then the same sections and "more" drawer
+ * as the face density. resize(w, h) there takes the whole body below the title bar: the hero gets the width and ~42% of the height.
  * Markup uses theme.css (A2) classes: .face[data-density] > .face-head (.face-glyph .face-title .face-sub) + .face-body
  * (.face-hero, .face-section > .face-section-title + .face-controls, details.face-more); head and title also carry
  * hv-head / hv-title (A4 hooks a double-click on them). The chip density is inline glyph + name with no border
@@ -331,10 +333,13 @@
     setAttr(el, 'data-density', d);
     R.root = el;
     if (d !== 'window' && L.width && L.width[d]) el.style.width = L.width[d] + 'px';
-    var head = h('div', 'face-head hv-head');
-    add(head, glyph(R.device)); add(head, h('span', 'face-title hv-title', R.device.name || R.device.type));
-    if (R.device.name && R.device.name !== R.device.type) add(head, h('span', 'face-sub hv-type', R.device.type));
-    add(el, head);
+    if (d === 'window') { el.style.border = '0'; el.style.borderRadius = '0'; el.style.minHeight = '100%'; }   // the window owns the frame and the title bar
+    else {
+      var head = h('div', 'face-head hv-head');
+      add(head, glyph(R.device)); add(head, h('span', 'face-title hv-title', R.device.name || R.device.type));
+      if (R.device.name && R.device.name !== R.device.type) add(head, h('span', 'face-sub hv-type', R.device.type));
+      add(el, head);
+    }
     var body = h('div', 'face-body');
     add(el, body);
 
@@ -402,6 +407,12 @@
     function resize(w, hh) {
       if (R.disposed || !R.heroWrap || !R.layout.hero) return;
       w = Math.max(60, w | 0); hh = Math.max(24, hh | 0);
+      // window density: (w, hh) is the whole body below the title bar; the hero takes the width and a share of the height,
+      // the sections and the "more" drawer sit below it (the body scrolls when they do not fit)
+      if (R.density === 'window') {
+        var minH = (R.layout.heroH && R.layout.heroH.window) || HERO_H.window;
+        w = Math.max(60, w - 32); hh = Math.round(Math.min(Math.max(hh * 0.42, Math.min(minH, 120)), 340));
+      }
       if (R.hero && typeof R.hero.resize === 'function') { R.hero.resize(w, hh); R.sig = null; return; }
       var old = R.hero && R.hero.el, nh = buildHero(R, w, hh);
       if (old && R.heroWrap.replaceChild) R.heroWrap.replaceChild(nh.el, old); else add(R.heroWrap, nh.el);
