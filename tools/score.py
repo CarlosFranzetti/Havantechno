@@ -157,40 +157,46 @@ def sample_range(tr, win, tail_s):
 
 # ----------------------------------------------------------------- measures
 
-def tempo(seg):
-    """Onset-flux autocorrelation. 5 ms hop, 10 ms RMS frames, half-wave-rectified dB flux,
-    autocorrelation peak searched over 60 to 200 BPM with parabolic refinement."""
+def tempo(seg, want_candidates=False):
+    """Onset-flux autocorrelation. 2 ms hop, 10 ms RMS frames, half-wave-rectified dB flux smoothed with a
+    14 ms Gaussian. Lags for 60 to 200 BPM. Octave guard (a choice, not from a source): the shortest-lag
+    local peak whose autocorrelation is at least 50 % of the maximum wins, so a 2-beat clap pattern does
+    not replace a 1-beat kick. Parabolic refinement of the peak."""
     mono = seg.mean(axis=1).astype(np.float64)
-    hop, frame = int(0.005 * SR), int(0.010 * SR)
+    hop, frame = int(0.002 * SR), int(0.010 * SR)
     n = (len(mono) - frame) // hop
-    if n < 200:
-        return float('nan'), float('nan')
-    rms = np.array([np.sqrt(np.mean(mono[i * hop:i * hop + frame] ** 2)) for i in range(n)])
+    if n < 400:
+        return (float('nan'), float('nan'))
+    win = np.lib.stride_tricks.sliding_window_view(mono, frame)[::hop][:n]
+    rms = np.sqrt(np.mean(win ** 2, axis=1))
     env = 20 * np.log10(rms + 1e-7)
     flux = np.maximum(0.0, np.diff(env))
-    # smooth with a 15 ms Gaussian: one beat is 95.45 frames, so unsmoothed sparse flux peaks at
-    # fractional lags fall between integer lags and the 2-beat lag wins (checked on a click train)
-    g = np.exp(-0.5 * (np.arange(-12, 13) / 3.0) ** 2)
+    g = np.exp(-0.5 * (np.arange(-21, 22) / 7.0) ** 2)
     flux = np.convolve(flux, g / g.sum(), mode='same')
     flux = flux - flux.mean()
     ac = np.correlate(flux, flux, 'full')[len(flux) - 1:]
     if ac[0] <= 0:
-        return float('nan'), float('nan')
+        return (float('nan'), float('nan'))
     ac = ac / ac[0]
-    lo = int(round(60.0 / 200.0 / 0.005))
-    hi = int(round(60.0 / 60.0 / 0.005))
-    hi = min(hi, len(ac) - 2)
+    lo = int(round(60.0 / 200.0 / 0.002))
+    hi = min(int(round(60.0 / 60.0 / 0.002)), len(ac) - 2)
     seg_ac = ac[lo:hi + 1]
     m = float(seg_ac.max())
-    # octave guard (a choice, not from a source): the shortest-lag local peak within 85 % of the maximum
-    # wins, so an exactly periodic track does not report 2 or 4 beats
-    cands = [i for i in range(1, len(seg_ac) - 1)
-             if seg_ac[i] >= seg_ac[i - 1] and seg_ac[i] >= seg_ac[i + 1] and seg_ac[i] >= 0.85 * m]
+    peaks = [i for i in range(1, len(seg_ac) - 1)
+             if seg_ac[i] >= seg_ac[i - 1] and seg_ac[i] >= seg_ac[i + 1]]
+    cands = [i for i in peaks if seg_ac[i] >= 0.5 * m]
     best = lo + (cands[0] if cands else int(np.argmax(seg_ac)))
-    y0, y1, y2 = ac[best - 1], ac[best], ac[best + 1]
-    d = 0.5 * (y0 - y2) / (y0 - 2 * y1 + y2) if (y0 - 2 * y1 + y2) != 0 else 0.0
-    lag = best + d
-    return 60.0 / (lag * 0.005), float(ac[best])
+
+    def refine(b):
+        y0, y1, y2 = ac[b - 1], ac[b], ac[b + 1]
+        d = 0.5 * (y0 - y2) / (y0 - 2 * y1 + y2) if (y0 - 2 * y1 + y2) != 0 else 0.0
+        return 60.0 / ((b + d) * 0.002)
+
+    bpm = refine(best)
+    if want_candidates:
+        top = sorted(peaks, key=lambda i: -seg_ac[i])[:3]
+        return bpm, float(ac[best]), [(round(refine(lo + i), 2), round(float(seg_ac[i]), 3)) for i in top]
+    return bpm, float(ac[best])
 
 
 def band_levels(seg):
@@ -361,7 +367,11 @@ def fit_glide(t, fv):
     except (RuntimeError, ValueError) as e:
         return {'error': str(e)}
     rms = float(np.sqrt(np.mean((fv - model(t, *popt)) ** 2)))
-    return {'f0_hz': float(popt[0]), 'fT_hz': float(popt[1]), 'tau_ms': float(popt[2] * 1000), 'rms_resid_hz': rms}
+    at_bound = bool(popt[0] >= 4999 or popt[1] <= 5.01 or popt[1] >= 499 or popt[2] <= 0.0011 or popt[2] >= 0.99)
+    # a choice, not from a source: the fit is flagged when it sits on a bound or the residual exceeds 50 Hz
+    unreliable = at_bound or rms > 50.0
+    return {'f0_hz': float(popt[0]), 'fT_hz': float(popt[1]), 'tau_ms': float(popt[2] * 1000),
+            'rms_resid_hz': rms, 'unreliable': unreliable}
 
 
 def sub_duck(tr, s0, s1, lo=30.0, hi=40.0, pre=0.010, span=0.480, smooth_ms=5.0, plateau=(0.300, 0.450)):
@@ -480,7 +490,9 @@ def fmt(v, f):
 
 
 def print_report(out, labels):
-    print('window: %s' % out['window'])
+    w = out['window']
+    print('window: %s' % ('whole file' if w is None else 'song bars %d..%d%s' % (
+        w['bars'][0], w['bars'][1] - 1, (' (section %s)' % w['section']) if w.get('section') else '')))
     for lab in labels:
         t = out['tracks'][lab]
         print('%s: %s (decoder %s), %.2f s measured' % (lab, t['path'], t['decoder'], t['window_seconds']))
@@ -514,9 +526,12 @@ def print_report(out, labels):
         g = out['tracks'][lab]['kick_glide']
         if 'coherent' in g:
             c, m = g['coherent'], g['median_per_beat']
-            print('  %-10s beats %3d  coherent f0 %s fT %s tau %s ms rms %s Hz | median f0 %s fT %s tau %s ms' % (
+            flag = ''
+            if c.get('unreliable') or m.get('unreliable'):
+                flag = '  UNRELIABLE (fit on a bound or residual > 50 Hz: low-band content other than the kick)'
+            print('  %-10s beats %3d  coherent f0 %s fT %s tau %s ms rms %s Hz | median f0 %s fT %s tau %s ms%s' % (
                 lab, g['n_hits'], fmt(c.get('f0_hz'), '%.1f'), fmt(c.get('fT_hz'), '%.1f'), fmt(c.get('tau_ms'), '%.2f'),
-                fmt(c.get('rms_resid_hz'), '%.2f'), fmt(m.get('f0_hz'), '%.1f'), fmt(m.get('fT_hz'), '%.1f'), fmt(m.get('tau_ms'), '%.2f')))
+                fmt(c.get('rms_resid_hz'), '%.2f'), fmt(m.get('f0_hz'), '%.1f'), fmt(m.get('fT_hz'), '%.1f'), fmt(m.get('tau_ms'), '%.2f'), flag))
         else:
             print('  %-10s %s' % (lab, g.get('error')))
     print()
@@ -539,10 +554,10 @@ def print_report(out, labels):
     print('per-band L/R correlation, octave bands (all steps), onset | tail:')
     for band in OCT_BANDS:
         key = '%g-%g' % band
-        vals = [out['tracks'][lab]['corr'][key] for lab in labels]
-        line = '  %6s-%-6s ' % (band[0], band[1])
-        for lab, v in zip(labels, vals):
-            line += ' %s %5.2f|%5.2f  ' % (lab[:4], v['onset_all'], v['tail_all'])
+        line = '  %6s-%-6s' % (band[0], band[1])
+        for lab in labels:
+            v = out['tracks'][lab]['corr'][key]
+            line += '   %-9s %5.2f | %5.2f' % (lab, v['onset_all'], v['tail_all'])
         print(line)
 
 
