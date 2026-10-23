@@ -1,0 +1,15 @@
+{
+  "name": "havantechno",
+  "version": "0.1.0",
+  "description": "Havantechno: a remix DAW (web and Electron, plain JavaScript, no bundler)",
+  "main": "shell/main.js",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "web": "node ../tools/serve.js"
+  },
+  "devDependencies": {
+    "electron": "45.0.0"
+  }
+}
