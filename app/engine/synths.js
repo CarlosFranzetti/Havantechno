@@ -76,6 +76,14 @@
     expo(g, 0.0001, t + a + hold + rel);
     return t + a + hold + rel + 0.03;   // stop time
   }
+  // attack, hold near full level for `hold` seconds, then exponential decay to -80 dB over `dec` (kick body)
+  function envHold(g, t, vel, a, hold, dec) {
+    setV(g, 0.0001, t);
+    lin(g, vel, t + a);
+    setV(g, vel, t + a + hold);
+    expo(g, 0.0001, t + a + hold + dec);
+    return t + a + hold + dec + 0.03;
+  }
   // pluck envelope: instant attack, exponential decay
   function envDecay(g, t, vel, a, dec) {
     setV(g, 0.0001, t);
@@ -154,17 +162,24 @@
   var BUILD = {};
 
   // KICK: sine body with a fast pitch sweep (punch -> tune), a noise click and a short knock, soft-clipped.
+  // Pitch: tau 0 keeps the log-linear ramp over `sweep`; tau > 0 is a first-order approach, punch -> tune with
+  // time constant tau (setTargetAtTime; the reference reads 264 Hz -> 51 Hz, tau 0.024 s).
+  // Amplitude: hold 0 keeps the single exponential over `decay`; hold > 0 holds full level for `hold`, then decays.
   BUILD.kick = {
     spec: { tune: { min: 30, max: 90, value: 45, unit: 'Hz' }, punch: { min: 80, max: 400, value: 170, unit: 'Hz' },
             sweep: { min: 0.01, max: 0.3, value: 0.06, unit: 's' }, decay: { min: 0.05, max: 1.2, value: 0.34, unit: 's' },
+            tau: { min: 0, max: 0.1, value: 0, unit: 's' }, hold: { min: 0, max: 0.3, value: 0, unit: 's' },
             click: { min: 0, max: 1, value: 0.4 }, drive: { min: 0, max: 1, value: 0.35 }, level: { min: 0, max: 1.5, value: 1 } },
     build: function (inst) {
       var ctx = inst.ctx, P = inst.params;
       inst.trigger = function (t, ev) {
         var g = vel(ev), v = voice(ctx, inst);
-        var body = v.osc('sine', P.punch, t, t + P.decay + 0.1);
-        expo(body.frequency, P.tune, t + P.sweep);
-        var bg = v.gain(0); envDecay(bg.gain, t, g, 0.0015, P.decay);
+        var body = v.osc('sine', P.punch, t, t + P.hold + P.decay + 0.1);
+        if (P.tau > 0) K.target(body.frequency, P.tune, t, P.tau);
+        else expo(body.frequency, P.tune, t + P.sweep);
+        var bg = v.gain(0);
+        if (P.hold > 0) envHold(bg.gain, t, g, 0.0015, P.hold, P.decay);
+        else envDecay(bg.gain, t, g, 0.0015, P.decay);
         body.connect(bg); bg.connect(inst.pre);
         if (P.click > 0) {
           var n = v.noise(t, t + 0.03);
@@ -182,15 +197,34 @@
     }
   };
 
-  // SUB: pure sine on the root, plucked on every beat, optional 2nd harmonic for small speakers.
+  // SUB: pure sine on the root, plucked on every beat (mode 'pluck', default), optional 2nd harmonic for small speakers.
+  // mode 'drone': one continuous sine per trigger, sustained for ev.dur (whole bar on a gate-16 note track) with a
+  // short attack and release; a new note glides from the previous one over `glide`. Drone triggers must not overlap
+  // more than one per bar (a pattern of one hit per bar), or the voices stack.
   BUILD.sub = {
     spec: { decay: { min: 0.05, max: 2, value: 0.4, unit: 's' }, attack: { min: 0.001, max: 0.1, value: 0.005, unit: 's' },
             harmonic: { min: 0, max: 1, value: 0.12 }, glide: { min: 0, max: 0.3, value: 0, unit: 's' },
-            level: { min: 0, max: 1.5, value: 1 } },
+            level: { min: 0, max: 1.5, value: 1 }, mode: { value: 'pluck' }, release: { min: 0.005, max: 1, value: 0.03, unit: 's' } },
     build: function (inst) {
       var ctx = inst.ctx, P = inst.params;
       inst.trigger = function (t, ev) {
         var g = vel(ev), v = voice(ctx, inst), f = mtof(notesOf(ev, 35)[0]);
+        if (P.mode === 'drone') {
+          var hold = ev.dur || 1, dend = t + P.attack + hold + P.release + 0.05;
+          var df0 = (P.glide > 0 && inst._lastF) ? inst._lastF : f;
+          var dO = v.osc('sine', df0, t, dend);
+          if (df0 !== f) expo(dO.frequency, f, t + P.glide);
+          inst._lastF = f;
+          var dg = v.gain(0);
+          envAHR(dg.gain, t, g, P.attack, hold, P.release);
+          dO.connect(dg); dg.connect(inst.pre);
+          if (P.harmonic > 0) {
+            var dh = v.osc('sine', f * 2, t, dend), dhg = v.gain(0);
+            envAHR(dhg.gain, t, g * P.harmonic, P.attack, hold, P.release);
+            dh.connect(dhg); dhg.connect(inst.pre);
+          }
+          return;
+        }
         var cut = (ev.dur && ev.dur < P.decay) ? ev.dur : 0;       // a short gate cuts the pluck early
         var end = t + P.attack + (cut || P.decay) + 0.08;
         var o = v.osc('sine', (P.glide > 0 && inst._lastF) ? inst._lastF : f, t, end);
@@ -304,6 +338,7 @@
     return {
       spec: { decay: { min: 0.01, max: 1.5, value: openHat ? 0.26 : 0.055, unit: 's' }, tone: { min: 2000, max: 12000, value: 7200, unit: 'Hz' },
               ring: { min: 400, max: 6000, value: 1500, unit: 'Hz' }, metal: { min: 0, max: 1, value: 0.5 },
+              metalHp: { min: 0, max: 12000, value: 0, unit: 'Hz' },   // highpass on the metal bank; 0 = tone * 0.5 (today)
               level: { min: 0, max: 1.5, value: 1 } },
       build: function (inst) {
         var ctx = inst.ctx, P = inst.params, R = [0.62, 0.78, 1.0, 1.21, 1.47, 1.73];
@@ -316,7 +351,7 @@
             series([n, hp, ng, inst.pre]);
           }
           if (P.metal > 0) {
-            var bp = v.filter('bandpass', P.ring, 4), hp2 = v.filter('highpass', P.tone * 0.5, 0.7), mg = v.gain(0);
+            var bp = v.filter('bandpass', P.ring, 4), hp2 = v.filter('highpass', P.metalHp > 0 ? P.metalHp : P.tone * 0.5, 0.7), mg = v.gain(0);
             for (i = 0; i < R.length; i++) v.osc('square', P.ring * R[i], t, end).connect(bp);
             envDecay(mg.gain, t, g * P.metal * 0.12, 0.001, P.decay * (openHat ? 1 : 0.8));
             series([bp, hp2, mg, inst.pre]);
