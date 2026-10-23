@@ -1,7 +1,7 @@
 /* Exposes window.HavantechnoShell to the page (present only in Electron). Sandboxed preload: electron APIs only. */
 'use strict';
 var electron = require('electron');
-var contextBridge = electron.contextBridge, ipcRenderer = electron.ipcRenderer;
+var contextBridge = electron.contextBridge, ipcRenderer = electron.ipcRenderer, webUtils = electron.webUtils;
 
 var closedHandlers = [];
 ipcRenderer.on('shell:deviceClosed', function (e, id) {
@@ -23,6 +23,10 @@ contextBridge.exposeInMainWorld('HavantechnoShell', {
       if (!u) return null;
       return u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength);
     });
+  },
+  // pathForFile(file) -> the file's path on disk, '' when unknown (Electron 32+ removed File.path). For dropped or picked samples.
+  pathForFile: function (file) {
+    try { return (webUtils && webUtils.getPathForFile) ? (webUtils.getPathForFile(file) || '') : ''; } catch (e) { return ''; }
   },
   appDataPath: function () { return ipcRenderer.invoke('shell:appDataPath'); },
   readAppData: function (name) { return ipcRenderer.invoke('shell:readAppData', name); },

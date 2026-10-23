@@ -196,10 +196,13 @@
 
   function doOpen() {
     var h = S.host; if (!h || !root.Project) { toast('Opening is not available.'); return Promise.resolve(null); }
-    return root.Project.open({ shell: shell }).then(function (d) {
+    // Project.open loads the song into the host, reloads its audio files (project folder as base for relative
+    // paths) and resolves after that; missing samples play silent and are listed by host.audio().
+    return root.Project.open({ shell: shell, host: h }).then(function (d) {
       if (!d) return null;
-      h.loadDocument(d);
-      toast('Opened song');
+      var miss = 0;
+      try { if (typeof h.audio === 'function') h.audio().forEach(function (a) { if (a && a.missing) miss++; }); } catch (e2) { miss = 0; }
+      toast(miss ? 'Opened song; ' + miss + ' sample' + (miss === 1 ? '' : 's') + ' missing' : 'Opened song', miss ? 6000 : 4000);
       return d;
     }, function (e) { report('open', e); toast('Could not open: ' + (e && e.message ? e.message : e)); return null; });
   }
