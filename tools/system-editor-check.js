@@ -41,11 +41,13 @@ function hasClass(n, c) { return n.className.split(/\s+/).indexOf(c) >= 0; }
 
 var head = new FakeNode('head'), byId = {};
 var fakeDoc = {
-  head: head,
+  head: head, body: new FakeNode('body'),
   createElement: function (t) { return new FakeNode(t); },
+  createElementNS: function (ns, t) { return new FakeNode(t); },
   createTextNode: function (s) { var n = new FakeNode('#text'); n._text = String(s); return n; },
   getElementById: function (id) { return byId[id] || null; }
 };
+var winLayer = new FakeNode('div'); winLayer.id = 'windows'; byId.windows = winLayer; fakeDoc.body.appendChild(winLayer);   // app.js provides #windows in the real page
 var origAppend = head.appendChild;
 head.appendChild = function (c) { if (c.id) byId[c.id] = c; return origAppend.call(head, c); };
 
@@ -94,6 +96,13 @@ if (!used.faces) {
 if (!used.windows) {
   sb.Windows = { open: function (id) { fakeCalls.winOpen.push(id); }, onSelect: function (id) { fakeCalls.onSelect.push(id); } };
 }
+
+// spy on Windows.open / onSelect whether real or fake (real call goes through, errors are recorded)
+(function () {
+  var realOpen = sb.Windows.open, realSel = sb.Windows.onSelect;
+  sb.Windows.open = function (id, h) { fakeCalls.winOpen.push([id, h]); var r; try { r = realOpen.apply(this, arguments); } catch (e) { fakeCalls.winErr = e.message; } return r; };
+  sb.Windows.onSelect = function (id) { fakeCalls.onSelect.push(id); try { return realSel && realSel.apply(this, arguments); } catch (e) { fakeCalls.winErr = e.message; } };
+})();
 
 // ------------------------------------------------------------------ host: real if host.js exists, else fake
 var host, hostKind = 'fake';
@@ -192,11 +201,14 @@ view.select('kick');
 var devBoxes = mountEl.find(function (n) { return hasClass(n, 'se-dev') && n.listeners.dblclick; });
 ok(devBoxes.length >= 3, 'device boxes listen for dblclick on the face head (' + devBoxes.length + ')');
 var headNode = devBoxes[0].find(function (n) { return hasClass(n, 'hv-head'); })[0];
+ok(headNode, 'device face draws a head element');
 if (headNode) {
   devBoxes[0].fire('dblclick', { target: headNode });
-  if (!used.faces) ok(fakeCalls.winOpen.length === 1, 'Windows.open called on head double-click');
+  ok(fakeCalls.winOpen.length === 1 && typeof fakeCalls.winOpen[0][0] === 'string' && fakeCalls.winOpen[0][1] === host, 'Windows.open(deviceId, host) called on head double-click');
+  ok(!fakeCalls.winErr, 'Windows.open did not throw: ' + fakeCalls.winErr);
+  if (used.windows) ok(winLayer.children.length >= 1, 'real Windows.open put a window into #windows');
   devBoxes[0].fire('dblclick', { target: devBoxes[0] });
-  if (!used.faces) ok(fakeCalls.winOpen.length === 1, 'double-click outside the head does not open a window');
+  ok(fakeCalls.winOpen.length === 1, 'double-click outside the head does not open a window');
 }
 
 // ruler: click = jump, loop button = loop
@@ -217,19 +229,22 @@ heads[0].fire('click'); ok(rows[0].hidden === false, 'expanding shows them again
 // step edit goes through the editor and commit; document event rebuilds
 var stepsEl = rows[0].find(function (n) { return n.opts && n.opts.onToggle; })[0];
 var commits = host.calls ? host.calls.commit : 0;
+var editSec = host.transport.pos().section;   // the section the transport is in now (the ruler click above moved it)
+var kickBefore = host.document().sections[editSec].play.kick;
 if (used.widgets) {
   var realStep = rows[0].find(function (n) { return n.attrs['data-i'] === '1'; })[0];
   ok(realStep, 'real Widgets.steps renders step buttons'); realStep.fire('click');
 } else if (stepsEl) { stepsEl.opts.onToggle(1); } else { rows[0].find(function (n) { return n.tagName === 'BUTTON' && n.attrs['aria-label'] === 'step 2'; })[0].fire('click'); }
 if (host.calls) ok(host.calls.commit === commits + 1, 'toggling a step calls host.commit()');
-var d1 = host.document(), forked = d1.sections[0].play.kick;
-ok(forked !== 'A' && d1.tracks[0].variants[forked].cells[1], 'step edit forked kick A for the intro and set step 2 (variant ' + forked + ')');
+var d1 = host.document(), forked = d1.sections[editSec].play.kick;
+ok(forked !== kickBefore && d1.tracks[0].variants[forked].cells[1], 'step edit forked kick ' + kickBefore + ' for section ' + d1.sections[editSec].name + ' and set step 2 (variant ' + forked + ')');
 var rowsAfter = mountEl.find(function (n) { return n.attrs['data-track']; });
 ok(rowsAfter.length === 13, 'still thirteen rows after the document event');
-if (host.calls) {
+{
   ok(rowsAfter[0] === rows[0], 'incremental commit refreshes in place (same row nodes, focus survives)');
-  ok(rows[0].find(function (n) { return hasClass(n, 'se-cell'); })[0].textContent === forked, 'section cell shows the forked variant letter');
-  host.forceRebuild = true; host.commit(); host.forceRebuild = false;
+  ok(rows[0].find(function (n) { return hasClass(n, 'se-cell'); })[editSec].textContent === forked, 'section cell shows the forked variant letter');
+  if (host.calls) { host.forceRebuild = true; host.commit(); host.forceRebuild = false; }
+  else host.loadDocument(host.document());      // real Host: a rebuild emits 'document' with rebuilt: true
   var rowsRebuilt = mountEl.find(function (n) { return n.attrs['data-track']; });
   ok(rowsRebuilt.length === 13 && rowsRebuilt[0] !== rows[0], 'rebuilt:true commit rebuilds the view');
   rows = rowsRebuilt;

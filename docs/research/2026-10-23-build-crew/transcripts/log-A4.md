@@ -51,3 +51,13 @@ OK: 43 checks passed
 ```
 
 The check mounts the view, asserts 13 rows, 4 group headers, 9 ruler blocks with `16fr 8fr 16fr 32fr 32fr 24fr 8fr 48fr 16fr` columns, 9 cells per row, PATTERN first in the device row, RETURNS/MASTER chips, selects kick, bass, lead (roll), pad (progression strip) and an unknown name, double-click on a face head opens a window (and not outside the head), ruler click jumps, Loop toggles, M calls `host.mute`, group collapse, a step toggle calls `commit` and forks kick A (in place refresh keeps the same row nodes), a `rebuilt: true` event rebuilds, 100 `update()` calls with a moving playhead leave the node count unchanged, and `dispose()` removes the view and unsubscribes.
+
+## Wave 1 follow-up: check red against real Host and real windows.js
+
+Coordinator report: `FAIL: step edit forked kick A for the intro ...` and an earlier "Windows.open called on head double-click" failure. No editor code changed; both were check problems.
+
+- **Fork assertion:** the earlier ruler click does `host.transport.jump('mainA')`, which really moves the real Host, so the step edit (which edits the section the transport is in, as designed) forked mainA's kick variant. `tools/system-editor-check.js` now reads `host.transport.pos().section` before the edit and asserts the fork, and the section cell, for that section.
+- **Windows assertion was silently skipped, then exposed:** it was guarded by `!used.faces`, so with real faces it never ran. I added a spy around `Windows.open` / `Windows.onSelect` (real or fake; the real call goes through) and asserted `Windows.open(deviceId, host)` is called with a string id and the same host on a double-click on the face head, that a double-click outside the head does nothing, and that the real call does not throw and puts a window into `#windows`. Two gaps in the fake DOM were the real cause of the failures: no `createElementNS` (the real Faces/Widgets then threw, and the editor correctly fell back to its own title bar, which has no `.hv-head`) and no `#windows`/`body` for the real `Windows.open` (`layer = getElementById('windows') || document.body`; app.js provides `#windows` in the page). Both were added to the check's fake document.
+- The editor calls the Windows API as written in CONTRACT.md (`Windows.open(deviceId, host)`, `Windows.onSelect('track:<name>')`); nothing for A6 to change.
+- The in-place-refresh and rebuild assertions now also run against the real Host (a step commit is incremental; `host.loadDocument(host.document())` gives the `rebuilt: true` rebuild).
+- Run directly (not through a pipe): `node tools/system-editor-check.js` printed `using: host=real Host.create(), widgets=real, faces=real, windows=real` and `OK: 40 checks passed`, exit code 0.

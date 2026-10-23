@@ -35,3 +35,7 @@ A8's list of things not done (S2 exponential IR envelope and IR buffer-swap clic
 A3 reports 24 face definitions, not the brief's 23 (13 instruments + 10 processor types + channel). The brief's count was mine and wrong; 24 is right. A3's hero numbers are its reading of the engine, not measurements; noted for A11.
 
 Committed A1, A3 and A8's files as verified. A6 (app.js) and A9 (score.py) are still writing; their current files pass syntax checks only and go in as a separate WIP snapshot.
+
+## 2026-10-23 23:23:56 UTC — A4 check green against the real modules
+
+`node tools/system-editor-check.js` run directly: prints `using: host=real Host.create(), widgets=real, faces=real, windows=real` then `OK: 40 checks passed`, exit 0. A4 changed only its check: it now reads the transport's section before the step edit and asserts the fork for that section; its fake DOM gained `createElementNS` and the `#windows`/`body` nodes the real Windows.open needs; the Windows assertion, previously skipped whenever real faces loaded, now runs with a spy on `Windows.open(deviceId, host)`. No editor code changed, nothing for A6. Earlier commit message that cited 43 checks for this file stays corrected: the count is now 40 and green. Committed.
