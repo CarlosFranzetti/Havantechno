@@ -51,3 +51,13 @@ A11 (Opus) started on head 6ab1499 while A9 (render and score loop) and A10 (bro
 ## 2026-10-23 23:34:15 UTC — wave-1 gate green
 
 `node tools/browser-check.js` run here with output to a file and the exit code read from $?: exit 0, `RESULT: PASS (26 checks)`, including "device window opens on double-click: .hv-head, Windows.open called 1x, #windows children 0 -> 1". A10 changed only its check (and app/README.md's status row): the title selector is `.hv-head` in the active view, the step toggle runs before the device window because the opened panel covered the step grid, and the host is read from `window.HavantechnoApp.host`. Wave 1 is complete for A1 to A8 and A10; A9's render and score loop is the last hand-back outstanding, and it does not gate the app. Committed.
+
+## 2026-10-23 23:35:49 UTC — A9 verified; wave 1 complete
+
+Ran here, exit codes read directly: `node --check tools/render.js` 0; `py_compile tools/score.py` 0; `python3 tools/score.py --selftest` 0 ("OK: all selftest checks passed"); `node tools/render.js --page app --sections intro --bars 2` 0 (2 bars in 0.32 s, no page errors, wrote tools/out/app-intro-0-2.wav); `python3 tools/score.py tools/out/app-intro-0-2-v2.wav --json` 0. tools/out/ was already git-ignored. A9's reference comparisons (loudness within 0.05 LU of O1's table on all 7 sections, true peak within 0.01 dB, kick glide 253/51/25 ms against O1's 264/51/24) are A9's numbers from its log, not reproduced here: the reference file is not in the repo.
+
+A9's wall time per rendered bar: intro 0.22 to 0.27 s, mainA 1.05 to 1.08 s, so a 200-bar song is 3 to 4 minutes offline. That explains A6's export timeout and is now a measured wave-2 item, not a mystery; A11 is finding where the mainA time goes.
+
+A9 findings routed to wave 2: for A7, the V2 sub duck is 14 to 15 dB too deep at 100 to 150 ms though it matches the reference at 0 to 60 ms; the baseline intro is about 14 dB hot in the mids (R −9.8 against the reference −23.9), owner to be decided after A11 (synth level versus EQ). A9's unresolved measurement questions (band levels 1 to 2 dB above O1's method in every section, stab-step correlation not reproduced, kick glide fit unreliable on renders, build tempo read at 63 BPM) stay in log-A9.md as open.
+
+Wave 1 is complete: A1 to A10 handed back, every check green and run here (selfcheck 263, synths 36, processors 54, widgets 134, faces 982, system-editor 40, step-view 53, browser-check 26, score selftest). Next: compile DISCUSSION.md from the wave-1 logs, A11's findings, then wave-2 owner fixes and the sampler.
