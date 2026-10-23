@@ -9,6 +9,8 @@
  * File format (version 1): {app: 'havantechno', format: 1, savedAt: ISO time, song: <SongDoc v1>}.
  * parse() also accepts a bare SongDoc (v: 1). `shell` defaults to window.HavantechnoShell (Electron only);
  * the shell hooks are called only when present: saveFile, openFile, appDataPath, writeAppData, readAppData.
+ * Audio files (sampler) are referenced in doc.audio, never embedded: Project.open({shell, host}) loads the song into the
+ * Host and waits while it reloads them (HavantechnoShell.readFile for paths, fetch for URLs); unreadable ones are missing.
  */
 (function () {
   'use strict';
@@ -110,20 +112,32 @@
       input.click();
     });
   }
+  function dirName(p) { p = String(p || ''); var i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')); return i > 0 ? p.slice(0, i) : null; }
+  // o.host: also load the song into that Host and wait for its audio files (sampler): sources the shell can read
+  // (Electron, paths relative to the project's folder too) or URLs are reloaded, the rest are listed as missing
+  // (host.audio() entries with missing: true; their tracks play silent). Resolves the document either way.
   function open(o) {
     o = o || {};
-    var sh = shellOf(o), p;
+    var sh = shellOf(o), p, filePath = null;
     if (fn(sh, 'openFile')) {
       p = asPromise(sh.openFile({ filters: [{ name: 'Havantechno project', extensions: ['json'] }] })).then(function (r) {
         if (r == null || r === false || (r && r.canceled)) return null;
         if (typeof r === 'string') return r;
-        if (typeof r.text === 'string') return r.text;
+        if (typeof r.text === 'string') { filePath = r.path || null; return r.text; }
         throw new Error('Project: the shell returned no file contents');
       });
     } else {
       try { p = webPick(); } catch (e) { return Promise.reject(e); }
     }
-    return p.then(function (text) { return text == null ? null : parse(text); });
+    return p.then(function (text) {
+      if (text == null) return null;
+      var doc = parse(text);
+      var host = o.host;
+      if (!host || typeof host.loadDocument !== 'function') return doc;
+      host.loadDocument(doc, { shell: sh, base: dirName(filePath) });
+      var ready = typeof host.audioReady === 'function' ? host.audioReady() : Promise.resolve(null);
+      return ready.then(function () { return host.document(); }, function () { return host.document(); });
+    });
   }
 
   // ------------------------------------------------------------ autosave

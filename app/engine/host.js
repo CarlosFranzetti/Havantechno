@@ -12,7 +12,11 @@
  * Device ids: track:<name> (instrument), track:<name>:<unit> (insert), track:<name>:sc, track:<name>:channel,
  * send:<name>, master:<unit>. meter('master') reads the final output.
  * Events: 'step' {step, bar, section, name, time}, 'section' {section, name}, 'play', 'stop',
- *         'document' {reason: 'start'|'load'|'commit', rebuilt}, 'param' {path, value, source: 'ui'|'arrangement'}.
+ *         'document' {reason: 'start'|'load'|'commit', rebuilt}, 'param' {path, value, source: 'ui'|'arrangement'},
+ *         'audio' {id, status: 'loaded'|'missing'|'unloaded'}.
+ * Audio (sampler, CONTRACT "Sampler"): host.loadAudio(File|Blob|URL|ArrayBuffer, {id, name, src}) -> Promise<bufferId>,
+ *   host.audio(), host.buffer(id), host.unloadAudio(id), host.reloadAudio({shell, base}), host.audioReady(),
+ *   host.addSampler(source, {name, family, pattern}) -> Promise<trackName>. doc.audio holds references, never bytes.
  * Nothing throws without an AudioContext.
  */
 (function () {
@@ -23,7 +27,7 @@
 
   var FAMILY = {
     kick: 'drums', clap: 'drums', hat_closed: 'drums', hat_open: 'drums', shaker: 'drums', perc: 'drums',
-    sub: 'bass', bass: 'bass', stab: 'keys', lead: 'keys', pad: 'keys', riser: 'fx', impact: 'fx',
+    sub: 'bass', bass: 'bass', stab: 'keys', lead: 'keys', pad: 'keys', riser: 'fx', impact: 'fx', sampler: 'drums',
     compressor: 'dynamics', limiter: 'dynamics', sidechain: 'dynamics', delay: 'time', reverb: 'time', chorus: 'time',
     filter: 'tone', eq3: 'tone', saturator: 'tone', widener: 'utility', channel: 'utility'
   };
@@ -34,7 +38,12 @@
   function isArr(a) { return Object.prototype.toString.call(a) === '[object Array]'; }
   function clone(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+  var FAMILIES = { drums: 1, bass: 1, keys: 1, fx: 1, dynamics: 1, time: 1, tone: 1, utility: 1 };
   function family(type) { return FAMILY[type] || 'utility'; }
+  function isSamplerDef(t) { return !!t && (t.type === 'sampler' || t.inst === 'sampler'); }
+  function isBuf(x) { return Object.prototype.toString.call(x) === '[object ArrayBuffer]'; }
+  function isView(x) { return typeof ArrayBuffer !== 'undefined' && typeof ArrayBuffer.isView === 'function' && ArrayBuffer.isView(x); }
+  var URLISH = /^(https?:|blob:|data:)/i;
   function warn(msg) { try { if (typeof console !== 'undefined' && console.warn) console.warn('[Host] ' + msg); } catch (e) {} }
 
   // the document minus what commit() can apply in place (variants, sections, progression, name, key)
@@ -131,6 +140,7 @@
     var ctx = null, live = false, startPromise = null;
     var seq = null, rawSet = null, ed = null, builtKey = null, devCache = null, devById = {};
     var listeners = {}, forwarders = {}, meters = {}, sendNow = {};
+    var buffers = {}, decCtx = null, audioPromise = null, gen = 0, lastAudioOpts = opts;
 
     // ---------------------------------------------------------- events
     function emit(type, e) {
@@ -172,6 +182,27 @@
     }
 
     // ---------------------------------------------------------- building
+    function getBuffer(id) { var e = buffers[id]; return e ? e.buffer : null; }
+    // Song.build with every sampler track's instrument made here, so it gets the Host's buffer resolver
+    function buildSong(s, doc) {
+      var def = doc, i, k;
+      for (i = 0; i < doc.tracks.length; i++) if (isSamplerDef(doc.tracks[i])) break;
+      if (i < doc.tracks.length) {
+        def = {};
+        for (k in doc) if (has(doc, k)) def[k] = doc[k];
+        def.tracks = doc.tracks.map(function (t) {
+          if (!isSamplerDef(t)) return t;
+          var t2 = {}, o = {}, q;
+          for (q in t) if (has(t, q)) t2[q] = t[q];
+          if (t.params) for (q in t.params) if (has(t.params, q)) o[q] = t.params[q];
+          o.getBuffer = getBuffer;
+          t2.inst = root.Synths.create(s.ctx, 'sampler', o);
+          return t2;
+        });
+      }
+      Song.build(s, def);
+      applyMaster(s, doc);
+    }
     function capture(s) {
       var st = { step: s._step, playing: !!s.playing, loop: s.loopSection, held: {}, mute: {}, solo: {}, seed: s.seed }, k;
       for (k in s.held) if (has(s.held, k)) st.held[k] = true;
@@ -205,8 +236,7 @@
       sendNow = {};
       var s = Sequencer.create(live ? ctx : null, { bpm: doc.bpm, swing: doc.swing, seed: st ? st.seed : (opts.seed || 1) });
       rawSet = wrap(s);
-      Song.build(s, doc);
-      applyMaster(s, doc);
+      buildSong(s, doc);
       seq = s;
       if (st && keepTransport !== null) restore(s, st, keepTransport);
       attach(s);
@@ -236,11 +266,17 @@
     }
     host.document = function () { return ed.doc; };
     host.editor = function () { return ed; };
-    host.loadDocument = function (d) {
+    // o: {shell, base} for reloading the document's audio (base: the folder of the project file, for relative paths)
+    host.loadDocument = function (d, o) {
       setDoc(d);                                    // throws on a bad document, before anything is torn down
+      gen++;
+      keepBuffers();
       if (seq) { try { seq.stop(); } catch (e) {} }
       rebuild(null);                                // fresh: stopped, bar 0, nothing held, no mute or solo
       emit('document', { reason: 'load', rebuilt: true });
+      lastAudioOpts = o || opts;
+      if (missingIds().length) host.reloadAudio(lastAudioOpts);
+      else audioPromise = null;
       return ed.doc;
     };
     host.commit = function () {
@@ -264,6 +300,7 @@
           live = true;
           rebuild(true);
           emit('document', { reason: 'start', rebuilt: true });
+          if (missingIds().length) host.reloadAudio(lastAudioOpts);
           var r = (ctx.state !== 'running' && ctx.resume) ? ctx.resume() : null;
           if (r && r.then) r.then(function () { resolve(true); }, function () { resolve(true); });
           else resolve(true);
@@ -398,9 +435,181 @@
     host.mute = function (track, b) { var r = seq.mute(track, b); if (r !== undefined) emit('param', { path: track + '.mute', value: r, source: 'ui' }); return r; };
     host.solo = function (track, b) { var r = seq.solo(track, b); if (r !== undefined) emit('param', { path: track + '.solo', value: r, source: 'ui' }); return r; };
 
+
+    // ---------------------------------------------------------- audio files (sampler)
+    function audioMap() { return ed.doc.audio || {}; }
+    function missingIds() { var a = audioMap(), out = []; for (var id in a) if (has(a, id) && !buffers[id]) out.push(id); return out; }
+    function usedBy(id) {
+      var out = [], t = ed.doc.tracks;
+      for (var i = 0; i < t.length; i++) if (isSamplerDef(t[i]) && t[i].params && t[i].params.buffer === id) out.push(t[i].name);
+      return out;
+    }
+    // after a load: keep decoded buffers the new document names with the same file, drop the rest
+    function keepBuffers() {
+      var a = audioMap(), id, keep = {};
+      for (id in buffers) if (has(buffers, id) && has(a, id) && a[id].name === buffers[id].name && (a[id].src || '') === (buffers[id].src || '')) keep[id] = buffers[id];
+      buffers = keep;
+    }
+    function decoder() {
+      if (live && ctx) return ctx;
+      if (opts.context) return opts.context;
+      if (decCtx) return decCtx;
+      var OAC = root.OfflineAudioContext || root.webkitOfflineAudioContext;
+      if (OAC) { try { decCtx = new OAC(2, 1, 44100); } catch (e) { decCtx = null; } }
+      return decCtx;
+    }
+    function baseName(s) { s = String(s || ''); s = s.split(/[?#]/)[0]; var n = s.split(/[\\/]/).pop(); try { n = decodeURIComponent(n); } catch (e) {} return n || 'audio'; }
+    function sourceInfo(src, o) {
+      var name = null, path = null, sh = (o && o.shell) || root.HavantechnoShell || null;
+      if (typeof src === 'string') { name = baseName(src); path = src; }
+      else if (src && !isBuf(src) && !isView(src) && src.bytes != null) { name = src.name || baseName(src.path); path = src.path || null; }
+      else if (src && !isBuf(src) && !isView(src) && typeof src === 'object') {
+        name = src.name || null;
+        try { path = (sh && typeof sh.pathForFile === 'function' && sh.pathForFile(src)) || src.path || null; } catch (e) { path = src.path || null; }
+      }
+      name = String((o && o.name) || name || 'audio');
+      return { name: name, src: String((o && o.src) || path || name) };
+    }
+    function readBytes(src) {
+      if (isBuf(src)) return Promise.resolve(src.slice(0));                     // decodeAudioData detaches its input
+      if (isView(src)) return Promise.resolve(src.buffer.slice(src.byteOffset, src.byteOffset + src.byteLength));
+      if (src && typeof src === 'object' && src.bytes != null) return readBytes(src.bytes);
+      if (src && typeof src.arrayBuffer === 'function') return Promise.resolve(src.arrayBuffer());
+      if (src && typeof root.FileReader === 'function' && typeof root.Blob === 'function' && src instanceof root.Blob) {
+        return new Promise(function (resolve, reject) {
+          var r = new root.FileReader();
+          r.onload = function () { resolve(r.result); };
+          r.onerror = function () { reject(r.error || new Error('Host.loadAudio: could not read the file')); };
+          r.readAsArrayBuffer(src);
+        });
+      }
+      if (typeof src === 'string') {
+        if (typeof root.fetch !== 'function') return Promise.reject(new Error('Host.loadAudio: no fetch to load ' + src));
+        return Promise.resolve(root.fetch(src)).then(function (r) {
+          if (!r || (r.ok === false)) throw new Error('Host.loadAudio: could not load ' + src + (r ? ' (' + r.status + ')' : ''));
+          return r.arrayBuffer();
+        });
+      }
+      return Promise.reject(new Error('Host.loadAudio: unsupported source'));
+    }
+    function decode(dec, ab) {
+      return new Promise(function (resolve, reject) {
+        var done = false;
+        function ok(b) { if (done) return; done = true; if (b) resolve(b); else reject(new Error('Host.loadAudio: the decoder returned nothing')); }
+        function bad(e) { if (done) return; done = true; reject(new Error('Host.loadAudio: could not decode the audio' + (e && e.message ? ' (' + e.message + ')' : ''))); }
+        try { var p = dec.decodeAudioData(ab, ok, bad); if (p && typeof p.then === 'function') p.then(ok, bad); } catch (e) { bad(e); }
+      });
+    }
+    function slug(name) {
+      var b = String(name || 'audio').replace(/\.[A-Za-z0-9]{1,5}$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+      return b || 'audio';
+    }
+    function newId(name) {
+      var a = audioMap(), b = slug(name), id = b, n = 2;
+      while (has(a, id) || has(buffers, id)) id = b + '_' + (n++);
+      return id;
+    }
+    // a missing entry with the same file name: re-adding the file on the web relinks it
+    function relinkId(name) { var a = audioMap(); for (var id in a) if (has(a, id) && !buffers[id] && a[id].name === name) return id; return null; }
+    var ID_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+    function refreshSamplers(id) {
+      for (var n in seq.tracks) if (has(seq.tracks, n)) {
+        var inst = seq.tracks[n].inst;
+        if (inst && inst.type === 'sampler' && inst.params && inst.params.buffer === id) { try { inst.set('buffer', id); } catch (e) {} }
+      }
+    }
+    function store(buf, info, o, g) {
+      var id = (o.id && ID_RE.test(String(o.id))) ? String(o.id) : (relinkId(info.name) || newId(info.name));
+      if (g !== gen) return id;                                // the document changed while this was decoding
+      var dur = typeof buf.duration === 'number' ? buf.duration : buf.length / buf.sampleRate;
+      buffers[id] = { buffer: buf, name: info.name, src: info.src };
+      var doc = ed.doc;
+      doc.audio = doc.audio || {};
+      doc.audio[id] = { name: info.name, src: info.src, duration: dur, sampleRate: buf.sampleRate, channels: buf.numberOfChannels };
+      refreshSamplers(id);
+      emit('audio', { id: id, status: 'loaded' });
+      return id;
+    }
+    host.loadAudio = function (source, o) {
+      o = o || {};
+      var g = gen;
+      return new Promise(function (resolve) {
+        var dec = decoder();
+        if (!dec) throw new Error('Host.loadAudio: no AudioContext to decode with');
+        var info = sourceInfo(source, o);
+        resolve(readBytes(source).then(function (ab) { return decode(dec, ab); }).then(function (buf) { return store(buf, info, o, g); }));
+      });
+    };
+    host.buffer = function (id) { return getBuffer(id); };
+    host.audio = function () {
+      var a = audioMap(), out = [], id;
+      for (id in a) if (has(a, id)) {
+        var e = a[id];
+        out.push({ id: id, name: e.name, src: e.src, duration: e.duration, sampleRate: e.sampleRate, channels: e.channels, loaded: !!buffers[id], missing: !buffers[id], usedBy: usedBy(id) });
+      }
+      for (id in buffers) if (has(buffers, id) && !has(a, id)) {
+        var b = buffers[id], bf = b.buffer;
+        out.push({ id: id, name: b.name, src: b.src, duration: bf.duration, sampleRate: bf.sampleRate, channels: bf.numberOfChannels, loaded: true, missing: false, usedBy: usedBy(id) });
+      }
+      return out;
+    };
+    // drop a decoded buffer; the document keeps the reference while a track still uses it (then it lists as missing)
+    host.unloadAudio = function (id) {
+      var a = audioMap();
+      if (!has(buffers, id) && !has(a, id)) return false;
+      delete buffers[id];
+      if (!usedBy(id).length && ed.doc.audio) delete ed.doc.audio[id];
+      refreshSamplers(id);
+      emit('audio', { id: id, status: 'unloaded' });
+      return true;
+    };
+    // load every audio entry of the document that has no buffer: URLs through fetch, file paths through
+    // HavantechnoShell.readFile(path, {base}) (Electron). Anything else is missing: the track stays silent. Never rejects.
+    host.reloadAudio = function (o) {
+      o = o || lastAudioOpts || {};
+      var a = audioMap(), ids = missingIds(), sh = o.shell || root.HavantechnoShell || null, res = { loaded: [], missing: [] }, g = gen;
+      var page = root.location && /^https?:$/.test(root.location.protocol || '');
+      var jobs = ids.map(function (id) {
+        var e = a[id], src = e.src || '', p, lo = { id: id, name: e.name, src: src };
+        if (URLISH.test(src) || (page && !sh && src.indexOf('/') >= 0)) p = host.loadAudio(src, lo);
+        else if (sh && typeof sh.readFile === 'function' && src) {
+          p = Promise.resolve(sh.readFile(src, o.base ? { base: o.base } : {})).then(function (bytes) {
+            if (!bytes) throw new Error('unreadable');
+            return host.loadAudio(bytes, lo);
+          });
+        } else p = Promise.reject(new Error('no readable source'));
+        return p.then(function () { res.loaded.push(id); }, function () {
+          res.missing.push(id);
+          if (g === gen) emit('audio', { id: id, status: 'missing' });
+        });
+      });
+      audioPromise = Promise.all(jobs).then(function () { return res; });
+      return audioPromise;
+    };
+    host.audioReady = function () { return audioPromise || Promise.resolve({ loaded: [], missing: missingIds() }); };
+    // load a file and add a sampler track that plays it (pattern default: one hit at the start of each bar). Commits.
+    host.addSampler = function (source, o) {
+      o = o || {};
+      return host.loadAudio(source, o.id ? { id: o.id, name: o.fileName, src: o.src } : { name: o.fileName, src: o.src }).then(function (id) {
+        var base = String(o.name || id).replace(/[^A-Za-z0-9_-]+/g, '_') || 'sample', name = base, n = 2;
+        while (ed.track(name) || name === 'send' || name === 'master') name = base + '_' + (n++);
+        var t = { name: name, type: 'sampler', inst: 'sampler', gain: o.gain == null ? 0.8 : o.gain, params: { buffer: id }, variants: { A: o.pattern || 'x...............' } };
+        if (o.family && has(FAMILIES, o.family)) t.family = o.family;
+        if (!ed.addTrack) throw new Error('Host.addSampler: the editor has no addTrack');
+        ed.addTrack(t);
+        host.commit();
+        return name;
+      });
+    };
+
     // ---------------------------------------------------------- devices
-    function device(id, type, kind, track, name, spec, prefix, ref) {
-      return { id: id, type: type, kind: kind, track: track, name: name, family: family(type), spec: spec, pathPrefix: prefix, ref: ref };
+    function device(id, type, kind, track, name, spec, prefix, ref, fam) {
+      return { id: id, type: type, kind: kind, track: track, name: name, family: fam || family(type), spec: spec, pathPrefix: prefix, ref: ref };
+    }
+    // a track's family: the document's `family` when it names one, else the instrument's (samplers default to drums)
+    function trackFamily(tr) {
+      if (tr.def && has(FAMILIES, tr.def.family)) return tr.def.family;
+      return isSamplerDef(tr.def) ? 'drums' : family(tr.inst.type);
     }
     function channelSpec(tr) {
       var out = {}, k, sp = tr.channel.spec;
@@ -415,7 +624,7 @@
       var list = [], i, j, name, tr, p;
       for (i = 0; i < seq.order.length; i++) {
         name = seq.order[i]; tr = seq.tracks[name];
-        list.push(device('track:' + name, tr.inst.type, 'instrument', name, name, tr.inst.spec, name, tr.inst));
+        list.push(device('track:' + name, tr.inst.type, 'instrument', name, name, tr.inst.spec, name, tr.inst, trackFamily(tr)));
         for (j = 0; j < tr.chain.procs.length; j++) {
           p = tr.chain.procs[j];
           if (tr.chain.byName[p.name] !== p) continue;      // a duplicate unit name has no path of its own
@@ -515,7 +724,7 @@
       for (var i = 0; i < seq.order.length; i++) {
         var tr = seq.tracks[seq.order[i]], sends = {};
         for (var j = 0; j < seq.sendOrder.length; j++) sends[seq.sendOrder[j]] = host.getParam(tr.name + '.send.' + seq.sendOrder[j]);
-        out.push({ name: tr.name, type: tr.inst.type, kind: tr.kind, family: family(tr.inst.type), muted: !!tr.muted, solo: !!tr.solo,
+        out.push({ name: tr.name, type: tr.inst.type, kind: tr.kind, family: trackFamily(tr), muted: !!tr.muted, solo: !!tr.solo, sampler: isSamplerDef(tr.def),
                    gate: tr.gate, sends: sends, inserts: tr.chain.procs.map(function (p) { return p.name; }), device: 'track:' + tr.name });
       }
       return out;
@@ -544,8 +753,7 @@
       if (from !== from || to !== to) return Promise.reject(new Error('Host.render: unknown section'));
       var doc = clone(ed.doc), st = capture(seq);
       return Sequencer.render(function (s) {
-        Song.build(s, doc);
-        applyMaster(s, doc);
+        buildSong(s, doc);
         var k;
         for (k in st.mute) if (has(st.mute, k) && s.tracks[k]) s.mute(k, true);
         for (k in st.solo) if (has(st.solo, k) && s.tracks[k]) s.solo(k, true);
@@ -557,6 +765,7 @@
     // ---------------------------------------------------------- go
     setDoc(opts.doc || null);
     rebuild(null);
+    if (missingIds().length) host.reloadAudio(opts);
     return host;
   }
 

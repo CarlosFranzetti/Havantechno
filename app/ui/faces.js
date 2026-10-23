@@ -14,12 +14,15 @@
  *   hero: function (ctx2d, w, h, device, host) {},  live: true to redraw every update() (meters), else only on change
  *   sections: [{title, params: ['cutoff', {p:'wave', widget:'select', label:'wave', options:[...]}], widget:'knob'|'slider'}],
  *   strip: [param names for the strip density], width: {strip, face, window}, height: {strip, face, window},
- *   heroH: {strip, face, window}, labels: {param: 'text'}, options: {param: [choices]}
+ *   heroH: {strip, face, window}, labels: {param: 'text'}, options: {param: [choices] | function (device, host) -> [choices]},
+ *   heroPointer: function (phase 'down'|'move'|'up', {x, y, w, h}, device, host, api) -> state|null  (drag handles on the hero;
+ *                api.write(param, v) holds the path once per gesture and writes it)
  * }
  * Every control writes host.setParam(device.pathPrefix + '.' + param, v) and calls host.hold(path) when a drag starts.
  * Hold is released only by the host's "re-enable arranged", not here. Spec params that no section names go to a "more"
  * drawer, so no parameter is ever unreachable. A section may give `match: '^send\\.'` (a regexp source) instead of
  * `params`, to take every spec param whose name matches (used by the channel strip for its per-send levels).
+ * A numeric 0..1 flag (sampler loop, reverse) takes widget:'toggle' and writes 1 or 0.
  * Window density: no head of its own (the window owns the title bar); hero first, then the same sections and "more" drawer
  * as the face density. resize(w, h) there takes the whole body below the title bar: the hero gets the width and ~42% of the height.
  * Markup uses theme.css (A2) classes: .face[data-density] > .face-head (.face-glyph .face-title .face-sub) + .face-body
@@ -44,7 +47,7 @@
   var FAMILY = {
     kick: 'drums', clap: 'drums', hat_closed: 'drums', hat_open: 'drums', shaker: 'drums', perc: 'drums', sub: 'bass', bass: 'bass',
     stab: 'keys', lead: 'keys', pad: 'keys', riser: 'fx', impact: 'fx', compressor: 'dynamics', limiter: 'dynamics', sidechain: 'dynamics',
-    delay: 'time', reverb: 'time', chorus: 'time', filter: 'tone', eq3: 'tone', saturator: 'tone', widener: 'utility', channel: 'utility'
+    delay: 'time', reverb: 'time', chorus: 'time', filter: 'tone', eq3: 'tone', saturator: 'tone', widener: 'utility', channel: 'utility', sampler: 'drums'
   };
   var DEFAULT_W = { strip: 176, face: 380, window: 560 };
   var HERO_H = { strip: 40, face: 76, window: 170 };
@@ -188,31 +191,39 @@
     return p.indexOf('.') >= 0 ? p.slice(p.lastIndexOf('.') + 1) : p;
   }
   function optionsFor(R, p, item) {
-    if (item.options) return item.options;
-    if (R.layout.options && R.layout.options[p]) return R.layout.options[p];
-    return OPTIONS[p] || null;
+    var o = item.options || (R.layout.options && R.layout.options[p]) || OPTIONS[p] || null;
+    if (typeof o === 'function') o = safe(function () { return o(R.device, R.host); }, null);
+    return o;
   }
+  function isFlag(entry) { return kindOf(entry) === 'num' && entry.min === 0 && entry.max === 1; }
   function widgetFor(kind, item, section, dflt) {
     if (kind === 'bool') return 'toggle';
     if (kind === 'str') return 'select';
     var w = item.widget || (section && section.widget) || dflt || 'knob';
+    if (w === 'toggle' && item.flag) return 'flag';
     return (w === 'knob' || w === 'slider') ? w : 'knob';
   }
 
   function makeControl(R, p, item, section, dflt) {
     var entry = R.device.spec && R.device.spec[p], kind = kindOf(entry);
     if (!kind) return null;
-    var host = R.host, path = R.device.pathPrefix + '.' + p, wname = widgetFor(kind, item, section, dflt);
+    var host = R.host, path = R.device.pathPrefix + '.' + p;
+    if (kind === 'num' && (item.widget || (section && section.widget)) === 'toggle' && isFlag(entry)) item = { p: item.p, widget: 'toggle', flag: true, label: item.label };
+    var wname = widgetFor(kind, item, section, dflt);
     var cur = safe(function () { return host.getParam(path); }, undefined);
     if (cur === undefined || cur === null) cur = entry.value;
-    var c = { p: p, path: path, kind: kind, widget: wname, last: cur, state: null, rampKey: '', w: null };
+    var c = { p: p, path: path, kind: kind, widget: wname, last: cur, state: null, rampKey: '', w: null, optsSig: null, optsFn: null };
     function hold() { R.held[path] = true; if (typeof host.hold === 'function') safe(function () { host.hold(path); }); }
     function write(v) { c.last = v; if (typeof host.setParam === 'function') safe(function () { host.setParam(path, v); }); }
     var label = labelFor(R, p, item), size = R.density;
     if (wname === 'toggle') {
       c.w = widget('toggle')({ label: label, value: !!cur, size: size, onInput: function (v) { hold(); write(!!v); } });
+    } else if (wname === 'flag') {
+      c.w = widget('toggle')({ label: label, value: cur >= 0.5, size: size, onInput: function (v) { hold(); write(v ? 1 : 0); } });
     } else if (wname === 'select') {
       var opts = optionsFor(R, p, item) || [String(cur)];
+      var dyn = item.options || (R.layout.options && R.layout.options[p]);
+      if (typeof dyn === 'function') { c.optsFn = function () { return optionsFor(R, p, item); }; c.optsSig = JSON.stringify(opts); }
       c.w = widget('select')({ label: label, options: opts.slice(), value: cur, size: size, onInput: function (v) { hold(); write(v); } });
     } else {
       var o = { label: label, min: entry.min, max: entry.max, value: cur, unit: entry.unit || '', log: isLog(entry), size: size, factory: entry.value,
@@ -250,7 +261,7 @@
   }
   function buildHero(R, w, hh) {
     var curve = widget('curve')({ width: w, height: hh, draw: function (c, cw, ch, colors) { drawHero(R, c, cw, ch, colors); } });
-    R.hero = curve;
+    R.hero = curve; R.heroW = w; R.heroH = hh;
     return curve;
   }
   function drawHero(R, c, w, hh, colors) {
@@ -327,6 +338,34 @@
     return out;
   }
 
+  // drag handles on the hero (layout.heroPointer): one gesture = down, moves, up; the path is held once, writes go to the host
+  function bindPointer(R, wrap) {
+    var state = null, held = false;
+    function api() {
+      return { write: function (param, v) {
+        var path = R.device.pathPrefix + '.' + param;
+        if (!held) { held = true; R.held[path] = true; if (typeof R.host.hold === 'function') safe(function () { R.host.hold(path); }); }
+        else R.held[path] = true;
+        if (typeof R.host.setParam === 'function') safe(function () { R.host.setParam(path, v); });
+        if (R.hero && R.hero.redraw) R.hero.redraw();
+      } };
+    }
+    function where(ev) {
+      var el = R.hero && R.hero.el, r = (el && el.getBoundingClientRect) ? el.getBoundingClientRect() : { left: 0, top: 0 };
+      return { x: (ev.clientX || 0) - r.left, y: (ev.clientY || 0) - r.top, w: R.heroW, h: R.heroH };
+    }
+    function call(phase, ev, st) { return safe(function () { return R.layout.heroPointer(phase, where(ev), R.device, R.host, api(), st); }, null); }
+    wrap.style.cursor = 'ew-resize'; wrap.style.touchAction = 'none';
+    wrap.addEventListener('pointerdown', function (ev) {
+      if (ev.button) return;
+      state = call('down', ev); held = false;
+      if (state) { if (ev.preventDefault) ev.preventDefault(); if (wrap.setPointerCapture && ev.pointerId != null) safe(function () { wrap.setPointerCapture(ev.pointerId); }); }
+    });
+    wrap.addEventListener('pointermove', function (ev) { if (state) call('move', ev, state); });
+    function end(ev) { if (state) { call('up', ev, state); state = null; } }
+    wrap.addEventListener('pointerup', end); wrap.addEventListener('pointercancel', end);
+  }
+
   function renderBody(R, generic) {
     var L = R.layout, d = R.density, el = h('div');
     tag(R, el, 'face hv-face hv-' + d + (generic ? ' hv-generic' : ''));
@@ -348,6 +387,7 @@
       R.heroWrap = wrap;
       add(wrap, buildHero(R, hs.w, hs.h).el);
       add(body, wrap);
+      if (L.heroPointer) bindPointer(R, wrap);
     }
     var i, ctls;
     if (generic) {
@@ -393,7 +433,11 @@
       setAttr(el, bypassAttr, bypassed ? 'true' : 'false'); setAttr(el, 'data-mute', muted ? 'true' : 'false');
       for (i = 0; i < R.controls.length; i++) {
         var c = R.controls[i], v = safe(function () { return h0.getParam(c.path); }, undefined);
-        if (v !== undefined && v !== null && v !== c.last) { c.last = v; if (c.w && c.w.set) c.w.set(v); }
+        if (c.optsFn) {
+          var ol = c.optsFn(), sg = JSON.stringify(ol);
+          if (ol && sg !== c.optsSig) { c.optsSig = sg; if (c.w && c.w.setOptions) safe(function () { c.w.setOptions(ol); if (c.w.set) c.w.set(c.last); }); }
+        }
+        if (v !== undefined && v !== null && v !== c.last) { c.last = v; if (c.w && c.w.set) c.w.set(c.widget === 'flag' ? v >= 0.5 : v); }
         var m = markerFor(R, cs, c.path);
         if (m.state !== c.state) { c.state = m.state; if (c.w && c.w.setState) c.w.setState(m.state); }
         var rk = m.ramp ? m.ramp.from + '>' + m.ramp.to : '';
@@ -451,12 +495,13 @@
         placed[it.p] = true;
         var kind = kindOf(e), w = it.widget || s.widget;
         if (!kind) out.push(name + ': spec entry has no min/max and is neither a string nor a boolean');
-        if (kind === 'num' && (w === 'toggle' || w === 'select')) out.push(name + ': ' + w + ' used for a numeric param');
+        if (kind === 'num' && (w === 'toggle' ? !(e.min === 0 && e.max === 1) : w === 'select')) out.push(name + ': ' + w + ' used for a numeric param' + (w === 'toggle' ? ' (a toggle needs a 0..1 flag)' : ''));
         if (kind === 'bool' && (w === 'knob' || w === 'slider' || w === 'select')) out.push(name + ': ' + w + ' used for a boolean (auto-mapped to a toggle)');
         if (kind === 'str' && (w === 'knob' || w === 'slider' || w === 'toggle')) out.push(name + ': ' + w + ' used for a string (auto-mapped to a select)');
         if (kind === 'str' && !(it.options || (L.options && L.options[it.p]) || OPTIONS[it.p])) out.push(name + ': string param has no option list (add layout.options.' + it.p + ')');
         if (kind === 'str') {
           var opts = it.options || (L.options && L.options[it.p]) || OPTIONS[it.p] || [];
+          if (typeof opts === 'function') opts = [e.value];        // a dynamic list is built at render time; nothing to compare
           var vals = opts.map(function (o) { return (o && typeof o === 'object') ? o.value : o; });
           if (vals.length && vals.indexOf(e.value) < 0) out.push(name + ': default "' + e.value + '" is not in the option list');
         }
@@ -478,6 +523,8 @@
     if (P && P.types) { var tp = P.types(); for (i = 0; i < tp.length; i++) if (!specs[tp[i]]) specs[tp[i]] = P.spec(tp[i]); }
     for (t in defs) {
       if (!Object.prototype.hasOwnProperty.call(defs, t)) continue;
+      if (!specs[t] && S && S.spec) specs[t] = S.spec(t);
+      if (!specs[t] && P && P.spec) specs[t] = P.spec(t);
       if (!specs[t]) { notes.push(t + ': layout defined but no device of this type to check against'); continue; }
       checkLayout(t, defs[t], specs[t], out, notes);
     }
