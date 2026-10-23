@@ -27,7 +27,7 @@ From Gear Crew round 1, each a candidate task once the owner confirms:
 
 ## Decisions taken (2026-10-23, later)
 
-Electron shell; AGPL-3.0-or-later licence; version 1 edits and saves songs (saved under a name, editable in the DAW); audio files allowed at runtime. See `prd.md` 6b and `docs/plans/2026-10-23-desktop-build-plan.md` for the milestones that follow from them.
+Electron shell; AGPL-3.0-or-later licence; version 1 edits and saves songs (saved under a name, editable in the DAW); audio files allowed at runtime, and sample-based elements of a source track (vocals first) stay samples in sampler tracks (PRD D8). See `prd.md` 6b and `docs/plans/2026-10-23-desktop-build-plan.md` for the milestones that follow from them.
 
 ## Direction change (2026-10-23, later): desktop DAW, floating device windows, Step View
 

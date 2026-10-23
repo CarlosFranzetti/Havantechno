@@ -60,9 +60,13 @@ Rough size: System Editor 7 to 10 days; Step View UI 5 to 8; floating windows on
 
 In O2's order: 0 scoring loop (export section WAVs, run O1's measurements on render and reference, seed the reverb IR); 1 kick envelope (`setTargetAtTime` approach with `tau`, hold-then-decay amplitude, click 0); 2 sub as a ducked drone (C#1 with B0 once in eight) in the duck list; 3 sidechain extension (curve, retrigger, offset); 4 bass filter envelope and drive placement, then slope and keytrack; 5 delay filters in the feedback loop; 6 Freeverb with RT60; 7 band-limited widener and chorus `base`/`invert`; 8 hat choke and clap tail; 9 parametric EQ and the offline match script. Steps 10 to 13 (AudioWorklet: meter device, keyed glue compressor, true-peak limiter) follow once the worklet infrastructure exists. Step 14, bundle import from the offline Python front end, follows milestone 3's file access.
 
+## Milestone 5b: the sampler (owner's clarification, 2026-10-23)
+
+A `sampler` instrument in `app/engine/synths.js`: plays a user-provided AudioBuffer or a slice of one (start, end, pitch in semitones, gain, attack, release, loop, choke group), triggered like any synth so steps, locks and probability apply. `Host` gains `loadAudio(file|url) -> bufferId` and the song document gains an `audio` map of named buffers (stored as file references, not bytes). A stem becomes a sampler track by slicing it at section and step boundaries (`SongDoc.sliceToTrack`). Vocal samples are the first use. Sizes: sampler device small to medium; slicing and Host audio loading medium.
+
 ## Milestone 6: the remix pipeline
 
-The offline Python front end (Demucs, epoch folding for this track's low end, Basic Pitch, a drum transcriber, librosa) writes the bundle (stem WAVs, `.mid`, `analysis.json`); the app imports it into the song document; stem group headers fill with source audio; A/B with level match; the Compare tab; the load/modify/create rule with thresholds calibrated on scored renders.
+The pipeline decides per element whether it is **synth** (load, modify or create) or **sample** (keep the separated audio in a sampler track). The offline Python front end (Demucs, epoch folding for this track's low end, Basic Pitch, a drum transcriber, librosa) writes the bundle (stem WAVs, `.mid`, `analysis.json`); the app imports it into the song document; stem group headers fill with source audio; A/B with level match; the Compare tab; the load/modify/create rule with thresholds calibrated on scored renders.
 
 ## Open items carried from the research
 
