@@ -1,10 +1,14 @@
 # Havantechno
 
-Havantechno is becoming a browser remixing DAW: take a source song, separate it into stems, turn the stems into MIDI
-and parameters, and recreate the song with synths and processors that live in the page. Today it holds the first
-step: a Web Audio studio that recreates one Guidance-style electro track (126 BPM, key B) one element at a time,
-with one synth per element, a 16-step sequencer, a 200-bar arrangement, a processor rack and WAV export. Everything
-is built in the browser. There are no audio files.
+Havantechno is becoming a remixing DAW for Mac and PC: take a source song, separate it into stems, turn the stems
+into MIDI and parameters, and recreate the song with synths and processors that live in the app, or with hosted
+plugins. Today the repo holds the first step: a Web Audio studio that recreates one Guidance-style electro track
+(126 BPM) one element at a time, with one synth per element, a 16-step sequencer, a 200-bar arrangement, a
+processor rack and WAV export. It runs in a browser with no audio files.
+
+The next version has three faces, all researched and mocked up, none built yet: the **System Editor** (the voted
+layout: a section ruler, compact track rows, and the selected track's device chain), the **Step View** (the same
+shape, with every step of every track editable), and **floating windows per device**, each with its own look.
 
 The studio as first built is archived unchanged in `olde Havantechno dub studio/`. The next version is being designed
 through the research in `docs/research/` (see **Roundtable** below).
@@ -54,14 +58,15 @@ Roundtable is how design questions are researched here: a team of agents on seve
 writes every finding to a transcript, reads each other's work, argues in writing and votes. Everything is in
 `docs/research/`, with a README that explains the process and lists the groups:
 
-| Group | Question | Status |
+| Group | Question | Result |
 |-------|----------|--------|
-| Gear Crew | What plugins, instruments, effects and analysis tools could recreate a source track in the browser? | Round 1 done (12 reports), round 2 in progress |
-| Faceplate | How should the DAW be laid out and how does each device get its own look? Ableton Live and Logic Pro as references. | Round 1 done (12 reports), discussion round in progress |
+| Gear Crew | What gear could recreate a source track, and what runs where? | `docs/research/2026-10-23-plugin-gear/REPORT.md`. The reference was re-measured and parts of the original spec overturned; a gear list by licence; a 15-step build order; an Electron-first desktop recommendation. |
+| Faceplate | How should the DAW be laid out, and how does each device get its own look? Ableton Live and Logic Pro as references. | `docs/research/2026-10-23-faceplate-layout/REPORT.md`. Strip Bench won the vote and became the System Editor; a round-5 follow-up covers floating windows, the Step View and the desktop shell. Mockups: https://claude.ai/artifact/Wy3gZLnLoShp6uzxrNVfP7 (private until shared). |
 
-Each group ends with a referenced `REPORT.md`; Faceplate also produces `DISCUSSION.md` and `VOTE.md`, and layout
-mockups. The transcripts state their own verification limits: page fetches often fail from the research sandbox,
-so many facts rest on search excerpts and are marked that way.
+Each group's folder holds its brief, every agent's transcript per round, and the report; Faceplate also has
+`DISCUSSION.md` and `VOTE.md`. The transcripts state their own verification limits: page fetches often failed from
+the research sandbox, so many product facts rest on search excerpts and are marked that way. The numbers about the
+reference track come from numpy measurements with the method stated per row.
 
 ## Repo layout
 
