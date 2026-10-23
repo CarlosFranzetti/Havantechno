@@ -46,7 +46,7 @@ The owner set a longer-term direction for the studio. None of it is built; it is
 | D2 | The reference track lives in the studio as a modifiable track: every element as a separate stem with its own MIDI and parameters, all tweakable. | Not built |
 | D3 | A remix pipeline: source song → stems → MIDI and parameter data → loaded into the studio → the song recreated with the existing synths and processors, with a modified one, or with a new one when nothing fits. | Not built |
 | D4 | A researched gear list of plugins, instruments, effects and analysis tools that could achieve D3, with what can run in a browser. | In progress: Gear Crew round 1 done, round 2 running, see `docs/research/2026-10-23-plugin-gear/` |
-| D5 | A researched DAW layout, with Ableton Live and Logic Pro as references, chosen by group discussion and vote, with mockups. | In progress: Faceplate round 1 done, discussion running, see `docs/research/2026-10-23-faceplate-layout/` |
+| D5 | A researched DAW layout, with Ableton Live and Logic Pro as references, chosen by group discussion and vote, with mockups. | Researched: Strip Bench chosen (8 of 12 first places). Report, discussion, vote and mockups in `docs/research/2026-10-23-faceplate-layout/`. Not built. |
 
 ## 5. Acceptance criteria
 

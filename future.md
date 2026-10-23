@@ -25,6 +25,16 @@ From Gear Crew round 1, each a candidate task once the owner confirms:
 - Live tweaks are overwritten by section ramps within one step; a `held` set is needed in the engine (F-S5).
 - The master meter reads 256 samples every 60 ms, about 10% of the signal (F-O2).
 
+## Layout, from the Faceplate vote (2026-10-23)
+
+The layout to build is **Strip Bench** as amended (`docs/research/2026-10-23-faceplate-layout/REPORT.md`, mockups on the canvas linked there). Order of work, from the tech lead's estimates (rough, labelled):
+
+1. Shared base, 12 to 19 days: device list, face registry with a generic fallback face that reproduces today's sliders (plus select and toggle widgets for `wave`, `mode`, `division`, `pingpong`), one drawing loop, the `held` set, hand-written knob, slider, meter and curve widgets. Build in a new folder; the archived studio stays frozen.
+2. Strip Bench on top, 7 to 10 days: control bar, overview and proportional section ruler, 13 compact rows under four stem group headers (collapsed until stems exist), one device row for the selected track (PATTERN → synth → inserts → channel) with RETURNS and MASTER pinned.
+3. Later: the stem group headers fill with source stems, the A/B switch and a Compare tab come alive (Stem Bench).
+
+Owner decisions before step 1: does version 1 edit the song or only play it; repo licence; stems in the first build or only the slot.
+
 ## Direction (set 2026-10-23)
 
 - **Per-device looks (PRD D1).** Give each synth and processor its own panel design. The research report in `docs/research/2026-10-23-plugin-gear/` surveys how other DAWs do this.
