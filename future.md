@@ -10,6 +10,21 @@ Nothing in this file is committed. Items under **Open items** are known gaps. It
 4. **Attribution on commit `546a2c6`.** It names a model in the co-author line, which the repo rules say not to do. Correcting it means rewriting a pushed branch, so it needs your go-ahead.
 5. **Automatic context dumps.** The memory dumps are written by hand when asked. A scheduled or hook-driven dump has not been set up.
 
+## Findings from research that point at work (2026-10-23)
+
+From Gear Crew round 1, each a candidate task once the owner confirms:
+
+- The spec measured rhythm and pitch, not timbre; most synth settings in `song.js` are guesses (O1). Measure clap reverb decay, stab delay time, the kick's first 20 ms, per-band L/R correlation, LUFS and true peak of the reference.
+- The measured "sub" may be the kick's own tail, and the kick tune (44 Hz) is a tritone off B (O1). Re-check the low end as one event.
+- The mid bass is the likely cause of the 300 Hz to 1 kHz excess (O1, S3); fix with an offline EQ-match fitted to `eq3` bands, after finding the source per stem.
+- Extend the trigger-driven sidechain (curve, lookahead, low-band mode) and replace the master glue `DynamicsCompressorNode` with an AudioWorklet compressor (S1).
+- Rebuild the reverb on the Freeverb topology; move the delay filters inside the feedback loop (S2).
+- The open hat's 1.5 kHz ring is probably filtered out by its 3.5 kHz highpass (O1).
+- `song.js` sets `sub: 0` on the bass, so the bass square layer is silent (H2).
+- The studio UI skips every non-numeric spec entry, so `wave`, `mode`, `division` and `pingpong` have no controls (F-S2).
+- Live tweaks are overwritten by section ramps within one step; a `held` set is needed in the engine (F-S5).
+- The master meter reads 256 samples every 60 ms, about 10% of the signal (F-O2).
+
 ## Direction (set 2026-10-23)
 
 - **Per-device looks (PRD D1).** Give each synth and processor its own panel design. The research report in `docs/research/2026-10-23-plugin-gear/` surveys how other DAWs do this.

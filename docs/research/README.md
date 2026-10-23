@@ -6,12 +6,16 @@ Standing rules, repeated in every brief: cite only URLs actually seen, mark ever
 
 ## Groups
 
-| Group | Date | Question | Folder |
-|-------|------|----------|--------|
-| Gear Crew | 2026-10-23 | What plugins, instruments, effects and analysis tools could recreate a source track inside Havantechno, and what runs in a browser? | `2026-10-23-plugin-gear/` |
-| Faceplate | 2026-10-23 | How should the Havantechno DAW be laid out, and how does each device get its own look? Ableton Live and Logic Pro as references. | `2026-10-23-faceplate-layout/` |
+| Group | Date | Question | Folder | Status |
+|-------|------|----------|--------|--------|
+| Gear Crew | 2026-10-23 | What plugins, instruments, effects and analysis tools could recreate a source track inside Havantechno, and what runs in a browser? | `2026-10-23-plugin-gear/` | Round 1 done (12). Round 2: O1 and O2 critiques in progress. Rounds 3 and 4 and REPORT.md to come. |
+| Faceplate | 2026-10-23 | How should the Havantechno DAW be laid out, and how does each device get its own look? Ableton Live and Logic Pro as references. | `2026-10-23-faceplate-layout/` | Round 1 done (12). Round 2 discussion in progress. Vote, REPORT.md and mockups to come. |
 
 Each group folder holds `BRIEF.md`, `transcripts/` (one file per agent per round), and `REPORT.md` by the coordinator. Faceplate also has `DISCUSSION.md` and `VOTE.md`, the separate transcript of the group's debate and ballot.
+
+## Rosters
+
+Both groups: five Haiku agents on narrow topics, five Sonnet agents on broader or technical topics, two Opus agents (one on the reasoning, one on the platform or build), coordinated by the Fable session. Ids: H1 to H5, S1 to S5, O1, O2 (Gear Crew) and F-H1 to F-H5, F-S1 to F-S5, F-O1, F-O2 (Faceplate). Each brief lists who covers what.
 
 ## Known limits of the sandbox
 

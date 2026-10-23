@@ -9,6 +9,13 @@ The repo has no package.json, no build step and no linter. The studio is plain b
 - Serve the folder over HTTP: `python3 -m http.server 8000`. The studio is at `http://localhost:8000/olde%20Havantechno%20dub%20studio/`.
 - Studio smoke test: `node "olde Havantechno dub studio/selfcheck.js"`. It prints `OK: N checks passed` and exits 0 on success. It is the only automated test, and it has no flag to run one section, so to isolate a check you edit the script.
 
+## Repo shape
+
+- `olde Havantechno dub studio/` is the archived first studio. Treat it as frozen: fix bugs there only if asked. New DAW work goes in new folders.
+- `docs/research/` holds Roundtable research (see its README): briefs, per-agent transcripts, discussion, votes and reports. Transcripts are records; do not edit them. Paths inside them that say `studio/` mean the archived folder.
+- `context history.md` gets a timestamped dump every 7 to 8 user updates, then the context is compacted. `memory.md` and `context.md` are earlier dumps.
+- `prd.md` section 4b holds the remix-DAW direction (D1 to D4). Read it before designing new UI or audio features.
+
 ## Architecture
 
 The studio is a separate page that recreates a Guidance-style electro track with Web Audio. Its design notes, including the analysis of the reference track and the tuning decisions, are in `docs/superpowers/specs/2026-10-21-guidance-studio-design.md`.

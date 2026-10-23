@@ -1,8 +1,13 @@
-# Havantechno studio
+# Havantechno
 
-A Web Audio studio that recreates a Guidance-style electro track (126 BPM, key B) one element at a time. It has one
-synth per element, a 16-step sequencer with a 200-bar arrangement, a processor rack, and WAV export. Everything is
-built in the browser. There are no audio files.
+Havantechno is becoming a browser remixing DAW: take a source song, separate it into stems, turn the stems into MIDI
+and parameters, and recreate the song with synths and processors that live in the page. Today it holds the first
+step: a Web Audio studio that recreates one Guidance-style electro track (126 BPM, key B) one element at a time,
+with one synth per element, a 16-step sequencer, a 200-bar arrangement, a processor rack and WAV export. Everything
+is built in the browser. There are no audio files.
+
+The studio as first built is archived unchanged in `olde Havantechno dub studio/`. The next version is being designed
+through the research in `docs/research/` (see **Roundtable** below).
 
 ![The studio playing a section](docs/screenshots/studio-playing.png)
 
@@ -43,14 +48,37 @@ break (24), breakEnd (8), mainB (48) and outro (16). Click a section to jump to 
 The sound design decisions, the analysis of the reference track and the tuning notes are in
 [`docs/superpowers/specs/2026-10-21-guidance-studio-design.md`](docs/superpowers/specs/2026-10-21-guidance-studio-design.md).
 
+## Roundtable: the research behind the next version
+
+Roundtable is how design questions are researched here: a team of agents on several models researches in parallel,
+writes every finding to a transcript, reads each other's work, argues in writing and votes. Everything is in
+`docs/research/`, with a README that explains the process and lists the groups:
+
+| Group | Question | Status |
+|-------|----------|--------|
+| Gear Crew | What plugins, instruments, effects and analysis tools could recreate a source track in the browser? | Round 1 done (12 reports), round 2 in progress |
+| Faceplate | How should the DAW be laid out and how does each device get its own look? Ableton Live and Logic Pro as references. | Round 1 done (12 reports), discussion round in progress |
+
+Each group ends with a referenced `REPORT.md`; Faceplate also produces `DISCUSSION.md` and `VOTE.md`, and layout
+mockups. The transcripts state their own verification limits: page fetches often fail from the research sandbox,
+so many facts rest on search excerpts and are marked that way.
+
 ## Repo layout
 
 ```
-"olde Havantechno dub studio/"   the studio, archived as it was on 2026-10-23
-docs/                design notes, the spec and screenshots
-prd.md               product requirements
-future.md            open items and ideas
-memory.md            timestamped summaries of the working state
-context.md           timestamped context dump from the earlier session
-CLAUDE.md            guidance for coding agents working in this repo
+olde Havantechno dub studio/   the studio, archived as it was on 2026-10-23
+docs/screenshots/              screenshots used in this README
+docs/superpowers/specs/        the studio design spec and the analysis of the reference track
+docs/research/                 Roundtable research: briefs, transcripts, discussion, votes, reports
+prd.md                         product requirements, with the remix-DAW direction in section 4b
+future.md                      open items and ideas
+context history.md             timestamped context dumps, written every 7 to 8 updates
+memory.md, context.md          earlier timestamped dumps
+CLAUDE.md                      guidance for coding agents working in this repo
 ```
+
+## Working practices
+
+- Context dumps go to `context history.md` with a UTC stamp every 7 to 8 updates; the window is then compacted.
+- Commits carry a generic Claude co-author line and the session trailer, never a model name.
+- No history rewrites or force-pushes without the owner's say-so.

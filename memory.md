@@ -39,4 +39,12 @@ Note on what a dump is: this file is a written summary of the working state, mad
 - This repo now holds only the studio. The other project's files were removed from it, and its references were scrubbed from the studio's source headers, spec, README, CLAUDE.md, PRD, future notes and the dumps above.
 - The studio's README, CLAUDE.md, PRD and future notes were rewritten to cover only the studio.
 
+## Dump 3 at 2026-10-23 16:44:28 UTC
+
+- The studio was moved to `olde Havantechno dub studio/` and is frozen there. A local symlink `studio/` (not in git) stays until the Faceplate agents finish.
+- Roundtable research is running in `docs/research/`: Gear Crew (gear and pipeline) has 12 round-1 reports and is in round 2; Faceplate (layout and device looks) has 12 round-1 reports and is in its discussion round, with a vote to follow.
+- `context history.md` now carries the periodic dumps (every 7 to 8 updates); this file is kept for the record.
+- Owner decisions still open: repo licence, offline vs in-browser analysis, audio files, hosting headers, whether to use the account's saved design system for mockups (default: no).
+- A stray cloud session was created by a research agent's mistake; it was told it has no task and may archive itself.
+
 <!-- next dump goes here -->

@@ -2,7 +2,7 @@
 
 Dumps of the working context, each with a UTC date and time stamp. A new dump is written every 7 to 8 user updates, then the context window is compacted. New dumps are appended under the marker at the bottom; older dumps stay as they are.
 
-Cadence tracker: last dump at 2026-10-23 16:37:59 UTC. Updates since: 0. Next dump due at update 7.
+Cadence tracker: last dump at 2026-10-23 16:37:59 UTC. Updates since: 2. Next dump due at update 7.
 
 Earlier dumps from before this file existed: `context.md` (2026-10-21) and `memory.md` (2026-10-21 and 2026-10-23).
 

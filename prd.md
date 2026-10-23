@@ -45,7 +45,8 @@ The owner set a longer-term direction for the studio. None of it is built; it is
 | D1 | Each device (instrument or processor) has its own panel and look, the way a DAW shows a different view per device, instead of identical slider lists. | Not built |
 | D2 | The reference track lives in the studio as a modifiable track: every element as a separate stem with its own MIDI and parameters, all tweakable. | Not built |
 | D3 | A remix pipeline: source song → stems → MIDI and parameter data → loaded into the studio → the song recreated with the existing synths and processors, with a modified one, or with a new one when nothing fits. | Not built |
-| D4 | A researched gear list of plugins, instruments, effects and analysis tools that could achieve D3, with what can run in a browser. | In progress, see `docs/research/2026-10-23-plugin-gear/` |
+| D4 | A researched gear list of plugins, instruments, effects and analysis tools that could achieve D3, with what can run in a browser. | In progress: Gear Crew round 1 done, round 2 running, see `docs/research/2026-10-23-plugin-gear/` |
+| D5 | A researched DAW layout, with Ableton Live and Logic Pro as references, chosen by group discussion and vote, with mockups. | In progress: Faceplate round 1 done, discussion running, see `docs/research/2026-10-23-faceplate-layout/` |
 
 ## 5. Acceptance criteria
 
@@ -59,5 +60,14 @@ The owner set a longer-term direction for the studio. None of it is built; it is
 - Any server-side component.
 
 ## 7. Open questions
+
+Raised by the research and waiting on the owner:
+
+- **Licence.** The repo has no LICENSE file. Several candidate engines are GPL or AGPL (webOBXD, junox, Dexed, Mz101, Dragonfly Reverb, openDAW). Without a decision, only MIT/BSD/Apache code and reimplementation from published algorithms are safe.
+- **Offline or in-browser analysis.** Stem separation and transcription tools mostly run in Python. May the pipeline run offline and export a bundle (stems, MIDI, tempo/key/sections JSON) that the page imports?
+- **Audio files.** The studio has none by design. A stems workflow needs them, at least for the source.
+- **Hosting headers.** Browser-side separation and SharedArrayBuffer need COOP/COEP headers, which `python3 -m http.server` does not send.
+
+Earlier:
 
 - The studio's 300 Hz to 1 kHz band is several dB hotter than the reference in every section. This was measured, not listened to. Is the balance wanted as it is?
