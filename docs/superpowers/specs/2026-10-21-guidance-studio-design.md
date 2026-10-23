@@ -107,3 +107,7 @@ break 24, breakEnd 8, mainB 48, outro 16. Patterns per element as measured above
   transport advances with zero page errors, renders bars offline to a WAV and the
   rendered audio is analysed with the same scripts used on the reference (tempo, sub
   pitch, hat placement).
+
+## Addendum, 2026-10-23: the analysis table above is superseded
+
+The Gear Crew research re-measured the reference track with numpy. Several rows above do not survive: the kick glides from about 184 Hz at 10 ms to 52 Hz at 150 ms as an exponential approach (tau about 24 ms), its click is about 45 dB below the body; the "plucked B1 sub" was the kick's own tail, and the real sub is a free-running drone near 34.5 Hz (C#1) that is ducked on every kick; the hats carry no 1.5 kHz ring; the section clock times are 2 to 3 s early. The corrected table, with methods and confidence per row, is in `docs/research/2026-10-23-plugin-gear/transcripts/round4-O1.md`, section 1, and the report is `docs/research/2026-10-23-plugin-gear/REPORT.md`. The studio in `olde Havantechno dub studio/` was built from the table above and is kept as it was.
