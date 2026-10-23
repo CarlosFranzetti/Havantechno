@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The repo has no package.json, no build step and no linter. The studio is plain browser JS that loads as globals.
 
 - Serve the folder over HTTP: `python3 -m http.server 8000`. The studio is at `http://localhost:8000/olde%20Havantechno%20dub%20studio/`.
-- Studio smoke test: `node "olde Havantechno dub studio/selfcheck.js"`. It prints `OK: N checks passed` and exits 0 on success. It is the only automated test, and it has no flag to run one section, so to isolate a check you edit the script.
+- Archived studio smoke test: `node "olde Havantechno dub studio/selfcheck.js"` (161 checks). New engine: `node app/engine/selfcheck.js` (193 checks, including schedule equivalence with the archived engine). Both print `OK: N checks passed` and exit 0 on success; neither has a flag to run one section, so to isolate a check you edit the script.
 
 ## Repo shape
 
@@ -20,7 +20,9 @@ The repo has no package.json, no build step and no linter. The studio is plain b
 
 ## Architecture
 
-The studio is a separate page that recreates a Guidance-style electro track with Web Audio. Its design notes, including the analysis of the reference track and the tuning decisions, are in `docs/superpowers/specs/2026-10-21-guidance-studio-design.md`.
+`app/engine/` is the live engine (see `app/README.md`): the archived files plus `songdoc.js`, loaded before `sequencer.js`. Tracks hold `variants` of `{bars, cells}`; `Song.build(seq, doc)` takes a `SongDoc` document or the legacy data. Parameter locks ride on the event (`ev.locks`) and are applied to `inst.params` for that trigger only; `level` is not lockable.
+
+The archived studio is a separate page that recreates a Guidance-style electro track with Web Audio. Its design notes, including the analysis of the reference track and the tuning decisions, are in `docs/superpowers/specs/2026-10-21-guidance-studio-design.md`.
 
 - Load order: `core.js` → `synths.js` → `processors.js` → `sequencer.js` → `song.js` → `studio.js`. The globals are `Kit`, `Synths`, `Processors`, `Sequencer`, `Song` and `Studio`. `studio.js` is page logic only.
 - `Song.build(seq, def)` (in `song.js`) defines the tracks and the 200-bar arrangement on a `Sequencer`.

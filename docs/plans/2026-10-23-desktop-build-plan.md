@@ -12,6 +12,8 @@ Date: 2026-10-23. Derived from the Roundtable reports (`docs/research/2026-10-23
 
 ## Milestone 1: the song document and the step record (engine data)
 
+**Status (2026-10-23): engine part done in `app/engine/` (songdoc.js, sequencer.js, song.js; 193 self-checks, schedule-equivalent to the archived engine). Saving to a file under a name waits for the Electron shell (milestone 3); `SongDoc.save` already produces the JSON.**
+
 Goal: the song becomes editable and saveable data, with every step addressable, and the engine still sounds the same.
 
 1. `app/engine/` starts as a copy of the archived engine's five files (core, synths, processors, sequencer, song), kept byte-identical at first so the baseline is exact.
