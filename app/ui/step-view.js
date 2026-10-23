@@ -715,7 +715,7 @@
       } else lhs.appendChild(el_('span', 'sv-dim', 'fx'));
       row.appendChild(lhs);
       // middle: the one-bar grid
-      var cells = el_('div', 'sv-cells'), list = [], i;
+      var cells = el_('div', 'sv-cells step-grid'), list = [], i;
       var ghost = !!(g && g.variant.bars < longest().bars && st.bar >= g.variant.bars);
       var hits = fx ? fxHits(name) : null;
       for (i = 0; i < STEPS; i++) {
