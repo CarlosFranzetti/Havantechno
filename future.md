@@ -10,6 +10,13 @@ Nothing in this file is committed. Items under **Open items** are known gaps. It
 4. **Attribution on commit `546a2c6`.** It names a model in the co-author line, which the repo rules say not to do. Correcting it means rewriting a pushed branch, so it needs your go-ahead.
 5. **Automatic context dumps.** The memory dumps are written by hand when asked. A scheduled or hook-driven dump has not been set up.
 
+## Direction (set 2026-10-23)
+
+- **Per-device looks (PRD D1).** Give each synth and processor its own panel design. The research report in `docs/research/2026-10-23-plugin-gear/` surveys how other DAWs do this.
+- **The source track as stems (PRD D2).** Load the reference track's elements as separate, editable tracks with their own MIDI.
+- **Remix pipeline (PRD D3).** Source song → stems → MIDI → recreation. Depends on the stem-separation and transcription findings in the research report.
+- **Gear list (PRD D4).** Decide which plugins or open-source engines to adopt, port or reimplement, from the research report's recommendations.
+
 ## Ideas
 
 - Save and load a song as JSON, so an edited arrangement survives a reload.

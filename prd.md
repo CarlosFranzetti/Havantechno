@@ -36,6 +36,17 @@ The Havantechno studio is a Web Audio page that recreates a Guidance-style elect
 | S11 | `node studio/selfcheck.js` runs without a browser and passes its checks. | Built (161 checks pass) |
 | S12 | The lead melody and the chord progression are transcribed from the reference track. | **Not built.** The current material is an inspired version |
 
+## 4b. Direction set on 2026-10-23 (not built)
+
+The owner set a longer-term direction for the studio. None of it is built; it is recorded here so the requirements and the research in `docs/research/` point the same way.
+
+| ID | Requirement | Status |
+|----|-------------|--------|
+| D1 | Each device (instrument or processor) has its own panel and look, the way a DAW shows a different view per device, instead of identical slider lists. | Not built |
+| D2 | The reference track lives in the studio as a modifiable track: every element as a separate stem with its own MIDI and parameters, all tweakable. | Not built |
+| D3 | A remix pipeline: source song → stems → MIDI and parameter data → loaded into the studio → the song recreated with the existing synths and processors, with a modified one, or with a new one when nothing fits. | Not built |
+| D4 | A researched gear list of plugins, instruments, effects and analysis tools that could achieve D3, with what can run in a browser. | In progress, see `docs/research/2026-10-23-plugin-gear/` |
+
 ## 5. Acceptance criteria
 
 - `node studio/selfcheck.js` exits 0 and prints `OK: N checks passed`.
