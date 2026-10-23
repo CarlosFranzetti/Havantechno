@@ -338,13 +338,14 @@ async function run() {
     if (winsBefore === -1) {
       fail('#windows element', 'missing (owner A6, app.js or windows.js)');
     }
+    // Look in the active view first; if the title is not there, Tab to the other view.
+    // Step 7 returns to the Step View, so the double-click target is not hidden before it is used.
     let title = await firstVisible(page, SEL.deviceTitle);
-    if (!title && (await inStepView())) {
-      // try the System Editor, where device titles open windows, then return to the Step View
+    if (!title) {
       await page.keyboard.press('Tab');
       await page.waitForTimeout(400);
       title = await firstVisible(page, SEL.deviceTitle);
-      await goStepView();
+      note(title ? 'device title found in the other view (' + title.sel + ')' : 'no device title in either view');
     }
     if (!title) {
       fail('device title', 'not found; tried ' + SEL.deviceTitle.join(', ') + ' (owners A4, A5, A6)');
