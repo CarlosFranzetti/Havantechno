@@ -12,9 +12,10 @@
 //   --sections  comma-separated section names from the page's own arrangement (default: all).
 //   --bars      a:b renders bars a..b-1 relative to each selected section's start (absolute song bars
 //               when no --sections is given). A single integer N means 0:N.
-//   --song      baseline (default: Song.GUIDANCE on the archived page, Song.document() in the app) or v2
-//               (Song.GUIDANCE_V2 on the archived page if it exists, Song.documentV2() in the app). V2 renders
-//               get a -v2 file suffix.
+//   --song      baseline (default: Song.GUIDANCE on the archived page, Song.document() in the app), v2
+//               (Song.GUIDANCE_V2 on the archived page if it exists, Song.documentV2() in the app) or v3
+//               (Song.documentV3() in the app only; the Ear Crew's GUIDANCE_V3). Non-baseline renders get a
+//               -v2 / -v3 file suffix.
 //   --tail      seconds of ringing tail rendered after the last bar (default 2.5, the archived default).
 //   --seed      seed for Math.random in the page (default 1). The archived engine draws its noise and
 //               jitter from Math.random (core.js, synths.js), so each job re-seeds it: the same bars with
@@ -78,7 +79,7 @@ function parseArgs(argv) {
     else fail('unknown argument ' + a);
   }
   if (!(o.sr > 0)) fail('bad --sr');
-  if (o.song !== 'baseline' && o.song !== 'v2') fail('--song must be baseline or v2');
+  if (['baseline', 'v2', 'v3'].indexOf(o.song) < 0) fail('--song must be baseline, v2 or v3');
   if (o.solo && o.page !== 'app') fail('--solo needs --page app (Host.solo)');
   return o;
 }
@@ -119,6 +120,9 @@ function pageLayout(song) {
     if (song === 'v2') {
       if (!window.Song || typeof window.Song.documentV2 !== 'function') throw new Error('Song.documentV2 is missing');
       window.__host = window.Host.create({ doc: window.Song.documentV2() });
+    } else if (song === 'v3') {
+      if (!window.Song || typeof window.Song.documentV3 !== 'function') throw new Error('Song.documentV3 is not on this page (A7 has not landed GUIDANCE_V3 yet)');
+      window.__host = window.Host.create({ doc: window.Song.documentV3() });
     } else {
       window.__host = window.Host.create();
     }
@@ -130,6 +134,7 @@ function pageLayout(song) {
   } else if (window.Sequencer && window.Song) {
     kind = 'studio';
     if (song === 'v2' && !window.Song.GUIDANCE_V2) throw new Error('Song.GUIDANCE_V2 is not on this page');
+    if (song === 'v3') throw new Error('--song v3 needs the app page (Song.documentV3 is not on the archived page)');
     var dry = window.Sequencer.create(null, {});
     window.Song.build(dry, song === 'v2' ? window.Song.GUIDANCE_V2 : undefined);
     sections = dry.sections.map(function (s) { return { name: s.name, start: s.start, bars: s.bars }; });
@@ -140,6 +145,31 @@ function pageLayout(song) {
     throw new Error('neither Host nor Sequencer+Song is on this page');
   }
   return { kind: kind, sections: sections, totalBars: totalBars, bpm: bpm, swing: swing };
+}
+
+// Latency of the page's own chain: a one-bar solo render of the sub (or the kick if the song has no sub),
+// master on. Returns the first sample above 1e-4 (channel 0) and the track used. The scheduled grid is
+// sample 2205 (bar 0 at 0.05 s); the difference is the chain latency (E1: 722 samples, 16.4 ms, from the
+// glue compressor and the limiter; measured in A9's scratch test, see tools/README.md).
+async function pageLatency() {
+  var name, buf;
+  if (window.__host) {
+    var names = (window.__host.tracks() || []).map(function (t) { return t.name; });
+    name = names.indexOf('sub') >= 0 ? 'sub' : (names.indexOf('kick') >= 0 ? 'kick' : null);
+    if (!name) return null;
+    window.__host.solo(name, true);
+    try { buf = await window.__host.render({ from: 0, to: 1, sampleRate: 44100, tail: 0.05 }); }
+    finally { window.__host.solo(name, false); }
+  } else {
+    var dry = window.Sequencer.create(null, {});
+    window.Song.build(dry);
+    name = dry.tracks.sub ? 'sub' : (dry.tracks.kick ? 'kick' : null);
+    if (!name) return null;
+    buf = await window.Sequencer.render(function (s) { window.Song.build(s); s.solo(name, true); }, { from: 0, to: 1, sampleRate: 44100, tail: 0.05 });
+  }
+  var x = buf.getChannelData(0), first = -1;
+  for (var i = 0; i < x.length; i++) if (Math.abs(x[i]) > 1e-4) { first = i; break; }
+  return { track: name, first: first };
 }
 
 // Renders bars [from, to) through the page's own offline renderer; keeps the WAV bytes in the page.
@@ -226,18 +256,23 @@ async function main() {
     await page.goto(pageUrl, { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction(function () { return !!(window.Sequencer || window.Host); }, null, { timeout: 30000 });
     var layout = await page.evaluate(pageLayout, opts.song);
+    var SCHEDULED_GRID = Math.round(SCHEDULE_T0 * opts.sr);
+    var lat = await page.evaluate(pageLatency);
+    var latency = lat && lat.first >= 0 ? lat.first - SCHEDULED_GRID : 0;
+    if (!lat || lat.first < 0) console.log('latency: not measured (no sub or kick track); assuming 0 samples');
+    else console.log('latency: ' + latency + ' samples (' + (latency / opts.sr * 1000).toFixed(2) + ' ms), measured on a solo ' + lat.track + ' render');
     console.log('page: ' + pageUrl + ' (' + layout.kind + ', loaded in ' + ((performance.now() - tLoad) / 1000).toFixed(2) + ' s)');
     console.log('song: ' + layout.totalBars + ' bars at ' + layout.bpm + ' bpm, swing ' + layout.swing +
       ', sections: ' + layout.sections.map(function (s) { return s.name + ' ' + s.start + '+' + s.bars; }).join(', '));
 
     var jobs = selectJobs(layout, opts);
-    var gridStart = Math.round(SCHEDULE_T0 * opts.sr);
+    var gridStart = SCHEDULED_GRID + latency;   // the grid as it appears in the WAV
     for (var j = 0; j < jobs.length; j++) {
       var job = jobs[j];
       job.sr = opts.sr; job.tail = opts.tail; job.seed = opts.seed; job.song = opts.song;
       // archived-page renders keep plain names; other pages get a prefix so the two never overwrite each other
       if (opts.page !== 'studio') job.name = (opts.page === 'app' ? 'app' : 'page') + '-' + job.name;
-      if (opts.song === 'v2') job.name += '-v2';
+      if (opts.song !== 'baseline') job.name += '-' + opts.song;
       job.solo = opts.solo;
       if (opts.solo) job.name += '-solo-' + opts.solo.join('-');
       var r = await page.evaluate(pageRender, job);
@@ -253,8 +288,12 @@ async function main() {
         from: job.from, to: job.to, bars: job.to - job.from,
         sampleRate: r.sampleRate, channels: r.channels, lengthSamples: r.length,
         bpm: layout.bpm, swing: layout.swing, tailSeconds: opts.tail,
-        // sample index of bar `from` (step 0) inside the WAV: the archived engine starts at t0 = 0.05 s
+        // gridStartSample is where bar `from` (step 0) sits in the WAV: the scheduled start (0.05 s, sample 2205)
+        // plus the chain latency. scheduledGridSample and latencySamples are kept for transparency.
         gridStartSample: gridStart,
+        scheduledGridSample: SCHEDULED_GRID,
+        latencySamples: latency,
+        latencyMeasuredOn: lat ? lat.track : null,
         barSeconds: barSec,
         wav: path.relative(REPO, wavPath)
       };
