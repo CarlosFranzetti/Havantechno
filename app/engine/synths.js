@@ -187,7 +187,7 @@
             tau: { min: 0, max: 0.1, value: 0, unit: 's' }, hold: { min: 0, max: 0.3, value: 0, unit: 's' },
             attack: { min: 0.0005, max: 0.2, value: 0.0015, unit: 's' }, swell: { min: 0, max: 12, value: 0, unit: 'dB' },
             harmonic: { min: 0, max: 1, value: 0 }, length: { min: 0, max: 1, value: 0, unit: 's' },
-            clickDecay: { min: 0.0005, max: 0.05, value: 0.012, unit: 's' },
+            clickDecay: { min: 0.0005, max: 0.05, value: 0.012, unit: 's' }, clickLp: { min: 0, max: 20000, value: 0, unit: 'Hz' },
             click: { min: 0, max: 1, value: 0.4 }, drive: { min: 0, max: 1, value: 0.35 }, level: { min: 0, max: 1.5, value: 1 } },
     build: function (inst) {
       var ctx = inst.ctx, P = inst.params;
@@ -217,7 +217,9 @@
           if (n) {
             var hp = v.filter('highpass', 1800, 0.7), ng = v.gain(0);
             envDecay(ng.gain, t, g * P.click * 0.5, 0.0005, P.clickDecay);
-            series([n, hp, ng, inst.pre]);
+            // clickLp > 0: the click's noise is also lowpassed (the record's click is -40 dB by 2.5 kHz and -64 by 10 kHz)
+            if (P.clickLp > 0) series([n, hp, v.filter('lowpass', P.clickLp, 0.7), ng, inst.pre]);
+            else series([n, hp, ng, inst.pre]);
           }
           var kn = v.osc('triangle', 520, t, t + 0.04), kg = v.gain(0);
           expo(kn.frequency, 90, t + 0.018);

@@ -185,3 +185,58 @@ The reference path is the BRIEF's (`scratchpad/ref/reference.mp3`), not the path
 - The breakEnd window: score the 104 to 136 render (`--bars 104:136`), not a breakEnd-only render; the bed is a fx that begins at bar 108.
 - The bed gain is 0.044 and the hat gain 1.48; the burst is narrow (1.6 kHz, Q 1.2) with gain 0.058.
 - The reference path I used is the BRIEF's.
+
+---
+
+## Round 5: A9 section 8 (iteration 3), coordinator 2026-10-24
+
+Read `log-A9.md` section 8 (the iteration-2 delta table, the burst, bass and stab findings, the intro's 16 kHz). Scoring: `tools/score.py --ref <BRIEF reference> --v3` on fresh 16-bar (intro, build, break) and 8-bar (intro2) section renders with `--song v3`. Exit codes read directly: every render 0 with `page errors: none`; every score 0.
+
+### What changed (song.js unless noted)
+
+1. **Burst (intro2 2.5 to 4 kHz, the basis is band RMS, the ruling).** Gain 0.058 to 0.5 (both burst tracks). Each burst track's chain is now `decorrelate` then a lowpass at 5 kHz (the 16 kHz excess this created, see 5). Levels: the intro's bursts at 0.4 (bars 3 to 15, E3: one level), intro2 at 0.6 for bar 19 and ramped 0.6 to 1.5 over bar 23 (E3: bar 23 8 to 12 dB louder). Result: intro2 2.5 kHz -1.2 dB, 4 kHz -2.0 dB (within 3 dB; was -14.1 and -15.5 at the start of the round). This was the ruling's target.
+2. **Bass, break 30 to 50 Hz.** A highpass at 95 Hz (`filter` `hp`, 12 dB/oct) before the eq3 in the bass chain. A trial at 80 Hz is not kept. Break 40 Hz +14.0 to +3.5 dB; 50 Hz +11.9 to +7.1 (relative to the window total, the 29-band basis). Not fully at the requested -39 dBFS level: the rest of the 50 Hz is the kick's own tail and the reference's low end is not measured as a level target here. Noted for A9.
+3. **Stab, build.** Widener `monoBelow` 250 (E5). The build's cutoff ramp capped at 1000 Hz (450 to 1000 expo over bars 4 to 16; was 450 to 2400). Build `stab.level` 0.7 (-3 dB, restored to 1 at mainA). Build results: 1 kHz +10.3 to +5.9; 2 kHz +6.9 to +3.5; 2.5 kHz +2.8 to +1.6; LUFS +0.56 to -0.58. The lows in the build are not measured here.
+4. **hat_open** gain 1.48 to 1.33 (-1 dB). **Not re-scored** this round (mainA was not in the coordinator's list); A9 measures.
+5. **Intro and intro2 level (1.3 LU).** `kick.level` and `sub.level` at 1.16 (+1.3 dB) together, both back to 1 at the build. The ratio is unchanged and the E1 duck depth is unchanged. Results: intro LUFS -1.32 to -0.03; intro2 -1.33 to -0.03.
+6. **Intro 16 kHz (+5.4 dB): the cause.** Solo measurement of the intro: the kick alone carries the whole 12 to 16 kHz of the intro mix (-74.5 dBFS^2, the mix -74.4). The kick's noise click is a white-noise burst with only a 1.8 kHz highpass, so it is bright to 22 kHz. synths.js: new kick parameter `clickLp` (lowpass on the click noise; default 0 = none, which keeps today's calls: the archive equivalence test passes). V3 kick `clickLp` 12000 (3000 and 6000 were tried: they cut 16 kHz by 16 to 20 dB, too far). Results: intro 16 kHz +5.4 to -4.2; 12.5 kHz to -1.8; intro2 16 kHz -7.4 (its burst is not the 16 kHz source). Not explained: the intro's 8 kHz at +4.4 (the hat's tone opening at bar 16 to 24 and the click's 8 to 12 kHz remain; not solo-measured here).
+
+### Scores (render minus reference, `--v3`, after the final setting)
+
+| window | measure | before round 5 | after |
+|---|---|---|---|
+| intro (0-15) | LUFS | -1.32 | -0.03 |
+| intro (0-15) | 16 kHz band | +5.4 | -4.2 |
+| intro (0-15) | 2.5 kHz / 4 kHz | -9.0 / -8.6 (round 4 basis) | -2.2 / +1.6 |
+| intro2 (16-23) | LUFS | -1.33 | -0.03 |
+| intro2 (16-23) | 2.5 / 4 kHz (burst) | -14.1 / -15.5 | -1.2 / -2.0 |
+| intro2 (16-23) | 16 kHz | +1.1 | -7.4 |
+| build (24-39) | LUFS | +0.56 | -0.58 |
+| build (24-39) | 1 kHz / 2 kHz | +10.3 / +6.9 | +5.9 / +3.5 |
+| break (104-119) | LUFS | +1.27 | +0.24 |
+| break (104-119) | 40 / 50 Hz | +14.0 / +11.9 | +3.5 / +7.1 |
+| break (104-119) | 16 kHz | +9.5 | +8.7 |
+
+The 16 kHz values for intro2 and break move with the click change too; the break's 16 kHz is set by the hats and bed (it is A9's residual), not by the kick.
+
+### Verification (exit codes read directly)
+
+```
+$ node --check app/engine/song.js            -> exit 0
+$ node --check app/engine/synths.js          -> exit 0
+$ node tools/synths-check.js                 -> OK: 109 checks passed   exit 0
+$ node app/engine/selfcheck.js               -> OK: 340 checks passed   exit 0
+$ node tools/render.js --page app --sections intro --bars 16 --song v3    -> exit 0, page errors: none
+$ node tools/render.js --page app --sections intro2 --bars 8 --song v3    -> exit 0, page errors: none
+$ node tools/render.js --page app --sections build --bars 16 --song v3    -> exit 0, page errors: none
+$ node tools/render.js --page app --sections break --bars 16 --song v3    -> exit 0, page errors: none
+$ python3 tools/score.py <each of the four> --ref <BRIEF reference> --v3  -> exit 0 each
+```
+
+### Not verified
+
+- The intro's 8 kHz (+4.4) and the break's 16 kHz (+8.7) have no cause measured here.
+- The hat_open -1 dB is not re-scored (mainA not in this round's list).
+- The bass highpass at 95 Hz is a first setting: the break's 50 Hz is at +7 against the reference in the 29-band basis.
+- The synths.js change is one parameter (`clickLp`), with a default that keeps the existing calls.
+- No commits.
