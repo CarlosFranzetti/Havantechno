@@ -386,3 +386,89 @@ For A7 (`song.js` / GUIDANCE_V3), estimates, not rendered unless stated:
 - Estimates (not measured): the cause of the master's 160-200 Hz loss (limiter on the kick onset); the widener width of 1.6-2.0; the idea that the break's HF shoulder is a different hat voicing or the encoder rather than a filter; the +9 to +11 dB hat boost after the master is relaxed (extrapolated from the raw-minus-reference 6.3-10 kHz figures).
 - Measurement limits: MP3 at 192 kbps (side channel above about 10 kHz, band-limit above 19.5 kHz); one window length (Welch 16384) for all bands, so 25-40 Hz bands rest on 1-5 bins; "total" in the 1/3-octave tables is the full-band total, so a change in one dominant band moves all the others (that is why the decomposition tables matter); the K-weighted loudness here is ungated (the coordinator's gated section values agree to 0.1 LU); the solo-track contributions are not additive because each solo passes through the master.
 - Not done: round 2 (cross-read of the other transcripts); web search (none used); no repo file other than this transcript was written or changed. Scratch scripts and renders (`e5/` in the scratchpad) are outside the repo: `common.py`, `bands.py`, `loud.py`, `loud2.py`, `peaks.py`, `hf.py`, `hf2.py`, `hits.py`, `lpfit.py`, `clip.py`, `solo.py`, `eqfit.py`, `eqfit3.py`, `eqrefine.py`, `eqapply.py`, `decomp.py`, `render_e5.js` (patched copy of `tools/render.js` with `--set`, `--bypass`, `--tag`).
+
+## Round 2: agreements and disputes
+
+Read: E1-low-end.md, E2-mids.md, E3-drums-top.md, E4-arrangement-samples.md and the dispute list in log-coordinator.md. Two further measurements made for D6 and D8 (scratch scripts in the scratchpad `e5/`; `render_e5.js` is the patched copy with `--set`/`--bypass`/`--solo`). Rulings taken from my report (coordinator): source fix plus master repair; V3 master starts at limiter `threshold` -1.5, `ceiling` 0, `clipOn` true, `clip` -0.55, glue and saturator bypassed, track gains about x0.58.
+
+### Agreements
+
+- E1 (flat -6.1 dBFS top for 140 ms baseline, 230 ms V2; reference kick body peak -1.2 dBFS, -20 dB at 162 ms): agrees with my ceiling finding. Mine adds that the sample-peak ceiling of the record is -0.55 dBFS (kick peaks pinned at -0.57 to -0.54, std 0.01 dB in the intro), so with `ceiling` 0 and `clip` -0.55 the kick's -1.2 dBFS body peak survives and the mix peaks (kick plus hat plus chord coincidences) are what the clipper trims.
+- E1, E4 and E5 agree that the master highpass ramps (180 Hz in the build, 500 Hz in breakEnd) and the lowpass ramps (bar 120, outro) have no counterpart. Mine: no master filter moves anywhere in the record; `master.hp.cutoff` stays 24 and `master.lp.cutoff` 20000 for the whole of V3.
+- E3 and E5: the off-beat hat is the only HF source in the build and mainA; its level is automation (E3: -53 to -29 dB re the main hat over bars 0-23, -14 at bar 24, -0.4 at bar 39). My band measure gives the same curve (8-12 kHz -38 dB re plateau at bar 16, -27.5 at bar 23, -14.2 at bar 24, flat from bar 40). E3 and E5 also agree there is no lowpass at bar 120 (hats stop, a noise bed stays), and E4 agrees (12.8 kHz is 3 dB higher after 120).
+- E2 and E5: stab/chord stereo is wide (narrowband S/M -1 to -4.6 dB against my mix-level -2.4 dB at 300 Hz-1 kHz); the bass is mono at the bottom (155 Hz S/M -16 dB). Consistent.
+- E3 and E5 on the 1.4-1.6 kHz band: not a master effect (E3: kick click; E4: stationary lines). My band tables have it at -25.5 to -29 dB (1.25-1.6 kHz) in mainA and the app +6.6 to +9.8 over it; the largest part of that is the stab/bass stack plus the master's +3.3 to +4.9 dB lift (section 3e), not a click.
+
+### D6: the 160-200 Hz hole (one number each)
+
+Measured on mainA, 16 bars, band shares re each file's own total (section 3e table) and on a kick solo and a bass solo rendered raw (master dynamics bypassed, +12 dB makeup undone) and as shipped:
+
+- Whole mix, mean of the 160 and 200 Hz bands: hole 11.3 dB; SOURCE 4.6 dB (raw minus reference: -1.8 at 160, -7.3 at 200); MASTER 6.8 dB (shipped minus raw: -8.4 at 160, -5.1 at 200). So about 60 % master, 40 % source. By band: 160 Hz is 82 % master; 200 Hz is 59 % source.
+- Kick solo (the only source of this region in the reference's mainA, per E2 there is no bass before bar 88 and E1 puts a 195-245 Hz irregular onset and a 150-300 Hz body peak of -3.9 dBFS in the kick's first 6-7 ms): re its own 40+50+63 Hz power, the app's raw kick has 160 Hz at -8.5 dB and 200 Hz at -14.2 dB; shipped -20.3 and -21.8. The reference mix has -7.3 and -7.6 dB. So for the kick: the limiter and glue take out 11.8 dB at 160 Hz and 7.6 dB at 200 Hz (measured), and the kick's own synthesis is short by 1.2 dB at 160 Hz and 6.6 dB at 200 Hz.
+- Bass solo (mainA, as shipped baseline): at 160 Hz -0.5 dB re its low band, 200 Hz -4.7 shipped (raw +6.6 and -0.1): the bass loses 7 dB at 160 Hz to the master too; it is irrelevant to the reference's mainA (no bass) but matters from bar 88, where the record's G#1 bass has its 3rd and 4th harmonics at 155 and 207 Hz (E2).
+- Verdict: E1 owns 6.6 dB at 200 Hz (kick onset/glide: punch and tau, the attack swell E1 proposes); A8 owns 11.8 dB at 160 Hz (ceiling and threshold). After the V3 master (threshold -1.5, no glue/saturator) the balance equals the raw one (section 3e, v2 test), so the 160 Hz part disappears by itself and only the 200 Hz kick shortfall (about 6-7 dB) remains for E1. I do not need the 12 dB peaking EQ at 189 Hz from section 4 once both are done.
+
+### D8: the dark element fading in through intro2
+
+New measurement: the spectrum of the hit frames (first 4096 samples, Hann, 1/3-octave sums) on the hat steps (3rd, 7th, 11th, 15th 16th, 0-indexed 2, 6, 10, 14) and, as a control, on steps 1, 5, 9, 13, dB:
+
+| window | step set | 2.5 kHz | 4 kHz | 6.3 kHz | 8 kHz | 10 kHz | 12.5 kHz | 16 kHz |
+|---|---|---|---|---|---|---|---|---|
+| bars 16-19 | hat steps | 20.6 | 18.4 | 3.2 | -1.1 | -3.3 | -1.8 | -8.8 |
+| bars 16-19 | control | 9.5 | 2.6 | -9.3 | -12.9 | -15.2 | -13.1 | -21.5 |
+| bars 20-23 | hat steps | 22.3 | 23.8 | 10.7 | 6.8 | 3.6 | 0.8 | -7.5 |
+| bars 24-27 | hat steps | 24.0 | 27.5 | 23.3 | 22.7 | 21.6 | 17.4 | 9.6 |
+| mainA | hat steps | 29.1 | 33.2 | 34.0 | 34.5 | 34.0 | 29.4 | 21.5 |
+
+- The dark element IS the off-beat hat (E3's hat 1) on its own grid (steps 2, 6, 10, 14; the control steps stay 10-20 dB lower and flat), not a separate sound. Its spectrum is strongly low-passed or tone-limited at the start and opens as it fades in: 4 kHz to 10 kHz drop is 21.7 dB in bars 16-19, 20.2 dB in bars 20-23, 5.9 dB in bars 24-27 and 0.0 dB in mainA (flat). Between bars 24 and 40 the shape no longer changes (section 3b: all of 8, 10, 12.5, 16 kHz rise 11.8-12.4 dB), i.e. a pure gain ramp.
+- So the fade-in has two stages: bars 16-23, a combined gain rise and a brightness (cutoff or `tone`) opening; bar 24, a step of +4 dB at 4 kHz and +15 to +18 dB at 8-12.5 kHz (the step is mostly brightness: the lowpass finishes opening); bars 24-39, gain only. My earlier statement that bars 16-23 were "a lowpassed element fading in" is refined: it is the same hat, with a filter opening. E3's "one off-beat hat that fades in" and E2's silence about it (no tonal line shows up there) agree; there is nothing to add as a track.
+- For V3 (A7): one `hat_open` track, `play` hat pattern from bar 8 (E4: creeping up from bar 8), gain ramp as in the table below, plus an opening brightness ramp bars 16-24 on the hat's `tone` parameter (E3's proposed `tone` 2000 floor, 7000 today) or on a lowpass in its chain (`{ type: 'filter', name: 'lp', mode: 'lowpass', cutoff: ..., q: 0.7 }`): `cutoff` 3500 at bar 16 expo to 11000 at bar 24, then fixed. Estimate; a 2-pole filter gives -12 dB/oct, the measured 4-10 kHz drop of 21.7 dB corresponds to a cutoff near 3.5 to 4 kHz at bar 16 and about 6 kHz at bar 22 (rough calculation, to be scored).
+
+### Disputes remaining that touch my numbers
+
+1. Clap in the break: E3 says present at -14 dB re main (backbeat 4, 12); E4 says there is no clap in the break and breakEnd (2.5-6 kHz equal on steps 4 and 12 within 1 dB). My level table below uses E3's -14 dB and a note; the coordinator should rule. A band-level check from my side cannot decide it.
+2. Stab width: E2 proposes `width` 1.4 with `spread` 0.8; my mix-level S/M figures (300 Hz-1 kHz -2.4 dB against the app's -8.5; stab solo -4 to -8 dB at 315 Hz-2.5 kHz) point to a +3 to +6 dB side boost over today's width 1.1, i.e. width 1.6-2.0 on its own. If E2's spread 0.8 widens the voices as claimed, 1.4 may be enough; the V3 render decides (target S/M 300 Hz-1 kHz -2.4 dB, 1-4 kHz -6.8 dB, mainA).
+3. E3's gains (hat 0.15, clap 0.22) were computed against a kick solo that the limiter had flattened to -6.4 dBFS (E3's note); with the V3 master the kick solo peak is -1.2 dBFS, so the absolute gains scale by about +5 dB before the x0.58 global factor. Use the dB-re-kick targets below, not E3's gain numbers.
+
+## V3 level table (deliverable for A7, A8 and A9)
+
+Convention. 0 dB = the kick's body peak = -1.2 dBFS in the reference (E1). Every row is "the track's own hit, measured solo at the master input (master dynamics bypassed, track `gain` set, nothing else playing), sample peak over the first 120 ms of the hit, in dB re the kick's solo peak measured the same way". The solo measurement is the one used throughout this transcript (`render_e5.js --solo <track> --bypass master:glue,master:sat,master:limiter`; the +12 dB makeup trick is not needed if the global x0.58 is already in place). Absolute target = -1.2 dBFS + the row value. "Source" names who measured it; "est." means not rendered. Bars are reference bars (the app's boundaries per E4's section 6: the app's `intro`+`intro2` = bars 0-23, `build` 24-39, `mainA` 40-71, `mainA2` split at 88 into 72-87 and 88-103, `break` 104-119, `breakLate` 120-127, `breakEnd` 128-135, `mainB` 136-183, `outro` 184-199).
+
+| track | 0-23 | 24-39 | 40-87 | 88-103 | 104-119 | 120-127 | 128-135 | 136-183 | 184-199 | source and how measured |
+|---|---|---|---|---|---|---|---|---|---|---|
+| kick | +0.5 | 0 falling to -4.5 (shelf `kick.lc.low` -2 to -7) | 0 | 0 | -4.4 (`kick.lc.low` -9) | -4.4 | -4.4, gap at bar 135 beat 4 | 0 | 0 | E1 (peak -1.2 dBFS, intro +0.5 over main; break -4.4 dB peak per E4); body peak -1.2 dBFS, -20 dB at 162 ms |
+| sub drone (C#1 34.475 Hz, pulsing 1.2027 Hz) | -20 (plateau, rms between kicks -21.3 dBFS) | -20 | -20 | -20 falling to -35 over bars 91-103 | off (-41 dBFS leakage only) | off | off to -20 by bar 134 (ramp 130-134) | -20 | -20 | E1 L2; the V2 drone is 18 dB too hot |
+| bass (G#1 pluck, bars 88-199) | off | off | off | -14.7 rising to -2.7 over bars 88-104 (+12 dB fade-in at harmonics 5-10) | -2.7 | -2.7 | -2.7 | -2.7 | -2.7 rising to about -6/-8 in the last 16 bars (E2: -3 to -5 dB) | E2: hit peak 2.5-2.9 dB under the kick peak, rms 7 dB under the kick in 100 Hz-1 kHz |
+| stab / chord hits (G#m11 voicing) | -35 (faint tones, optional; narrowband -45 to -55 dBFS) | -3.8 from bar 26 (filter opens bars 28-39) | -3.8 on bars 3-4 of each 4-bar group, -10 on bars 1-2 (step 7 -14.2 dB band rms vs -21.4 in bars 1-2) | same | same | same | same | same | same | E2: chord hit peak -4.5 dBFS against kick -0.7 dBFS (total peak over 120 ms); 250-1000 Hz rms 5-65 ms after the hit is 14.2 dB under the kick's 20-250 Hz rms |
+| pad / sustained chord bed | off | off | from bar 76: set so C#5 (554 Hz, +-25 ct) = -36 dBFS rms narrowband | same, to 179 | same | same | same | same to bar 179, fading to -49 at bar 200 | -41.7 to -49 dBFS (C#5) | E2 per-bar rms of the C#5 line; relative to the kick this is -35 dB (narrowband) and is scored by that band, not by hit peak |
+| hat_open (the one off-beat hat; steps 2, 6, 10, 14) | bar 8 onward; 8-12 kHz band re the bar-40 plateau: bar 16 -38, bar 20 -32, bar 23 -27.5 (brightness opening, see D8) | bar 24 -14.2; bar 39 -0.3 (gain ramp, shape fixed) | 0 (hat peak -18.3 dB re kick; hat 2 ms band power vs kick 30-150 Hz peak) | 0 falling to -6 over bars 90-103 | -7 (gated, 45 ms) | off | -20 rising to -6 over bars 128-135 | 0 | off (-60 to -67) | E3 and my per-bar 8-12 kHz band (hf2) |
+| hat_closed | off | off | off | off | break hits only: share the break hat's -7 (E3: steps 2, 6, 10, 14, soft 11) | off | off | off | off | E3 deletes the closed hat from the main sections |
+| clap (steps 4, 12) | off | off | -17 (1.5-6 kHz peak re kick low-band peak) | -17 | -14 re main = -31 (E3; E4 says none: ruling needed) | off | off | -17 | -17 (E3: stays at -20 dB re band in the outro, step 4/12) | E3 clap level; E4 no clap in 0-39, 104-135 |
+| shaker (ghost second event, steps 3, 7, 11, 15) | off | off | -31 (-13 dB re the hat) | -31 falling with the hat | break soft hits at steps 0, 5, 8, 13 at the break hat level (-7 re main hat) | off | off | -31 | off | E3 P1 |
+| noise hit ("burst", step 12 of bars 4n+3; 0.3 s hold) | -30 (1-2.5 kHz sustained -31 dBFS abs vs kick low-band peak -0.6) at bars 3, 7, 11, 15, 19, 23 | at the unmasked bars (E3 list: not 27-47) | at 51, 55, 59, 63, 67, 71 | 75-99 masked; 103 | 103, 119 | off | off | 147, 151, 155, 159, 179, 183 | 187, 191, 195, 199 | E3 (stereo: maximally wide, S/M -0.6 dB) |
+| break noise bed ("riser", bars 108-135) | off | off | off | off | rises from bar 108 (5-8 kHz -66 at 105 to -47 at 119 in E3's 20th-percentile units) | plateau (my per-bar band power, 4-8 / 8-12 / 12-16 kHz = -45 / -45 / -48 dBFS squared, mid) | continues, then the hats return | off | off | E3 P5 and my hf2 |
+| perc, lead, riser, impact | off | off | off | off | off | off | off | off | off | E3, E2, E4: no counterparts (lead absent in the record) |
+
+Notes to the table: (1) rows give the level at the start of the ramp and at its end where a ramp is named; the intermediate bars are linear in dB (the reference ramps are linear in dB: 1.5 dB per bar in 16-23, 0.75 per bar in 24-39 for the hat, 0.4-0.7 per bar fade in 89-103). (2) The sum of the rows is not forced to a loudness: the global x0.58 puts the sources at roughly the right overall level, and the per-section loudness is scored with the targets below; any remaining difference is taken on all tracks by the same dB (a master-input trim is not available, so scale every track's `gain`). (3) The reverse is also a check: with all rows right the raw mix must give mainA crest of about 11 dB and peak near -0.55 after the clipper.
+
+### Master unit settings for V3 (A8)
+
+| unit | parameter (range) | V3 value | note |
+|---|---|---|---|
+| `eq` | `low` 1.5 @ `lowFreq` 90; `mid` -1 @ `midFreq` 400, `midQ` 0.8; `high` 1 @ `highFreq` 8000 | unchanged | moves bands by 1 dB at most; re-fit only after the first V3 render (section 4's six-band list is the check) |
+| `hp` | `cutoff` (20-20000) | 24, constant (no ramps) | E1, E4: remove the 24 to 180 and 24 to 500 ramps |
+| `lp` | `cutoff` (20-20000) | 20000, constant (no outro ramp, no 6000 at bar 120) | E4, section 3c |
+| `glue` | bypass | on (bypassed) | threshold -14, ratio 2.5 kept in the document for later; automatic makeup of Web Audio's compressor (+1.4 dB) is gone with the bypass |
+| `sat` | bypass | on (bypassed) | v1 test: costs 1.5 dB of crest |
+| `limiter` | `threshold` (-30..0) / `release` (0.01-1) / `ceiling` (-12..0) / `clipOn` / `clip` (-12..0) | -1.5 / 0.08 / 0 / true / -0.55 | measured v2: peak -1.0, rms -10.55, crest 9.6, -9.5 LUFS with gains x0.58; the raw balance stays within 0.1 dB; the clipper at -0.55 reproduces the record's ceiling (kick peaks -0.57 to -0.54) |
+| render `tail` | seconds | 6.5 (E4: reverb tail after bar 200) | with a long reverb decay on the last hit |
+
+Send levels (starting values; ranges of `send` 0-1.5): reverb: clap 0.25 (unchanged), hat_open 0.12 (E3, for the hat's width; today 0.06), burst 0.35 (E3), pad 0.4 (unchanged), stab 0.1 and delay 0.15 (unchanged), bass 0; sub, kick 0. Reverb `decay` raised so that RT60 is about 6 s on the last hit (E4: 6.5 s at 313 Hz, 4.6 s at 1-2.5 kHz). Widths (S/M targets, mid/side, mainA): hat 6-16 kHz -13.7 dB, clap 1.5-6 kHz -9.8 dB, burst -0.6 dB, stab 300 Hz-1 kHz -2.4 dB and 1-4 kHz -6.8 dB, everything below 125 Hz mono (S/M below -40 dB).
+
+### What A9 scores against (all from this transcript)
+
+1. Section loudness (ungated K-weighted LUFS, section 1b, tolerance 1 LU, aim 0.3): intro -10.56, intro2 -10.53, build -11.7 to -12.4, mainA -10.24, mainA2 -10.3 (to -10.6 at bar 100), break -12.4 to -12.9, breakEnd -12.2, mainB -9.92, outro -10.43.
+2. The 29-band tables per section: the reference column of section 1 is the target (band shares re section total, tolerance 2 dB, per the brief). The six-band EQ list of section 4 is the post-hoc check: its fitted gains should come out under 3 dB when V3 is right.
+3. Peak and crest (1c): sample peak -0.2 to -0.5 dBFS, true peak up to +0.0, crest 10.7-11.1 (main sections), 12.7-13.8 (build, break, breakEnd).
+4. HF timeline (3b, `hf2.py` per-bar 4-8 / 8-12 / 12-16 kHz): 8-12 kHz -80 dBFS squared bars 0-15, -72.5 at 16 rising to -62 at 23, -49 at 24, -34.7 from 40, -39.6 at 103, break -40.1, 120-127 -45, back to -34.7 at 136, -49.6 from 184.
+5. Stereo S/M per coarse band (section 2 table) and the kick-peak ceiling statistics (3d: per-beat peaks std below 0.1 dB, 0.1 to 0.2 % of samples within 0.1 dB of the maximum in the intro).
