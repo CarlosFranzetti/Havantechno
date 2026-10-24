@@ -110,5 +110,5 @@ CLAUDE.md                      guidance for coding agents working in this repo
 ## Working practices
 
 - Context dumps go to `context history.md` with a UTC stamp every 7 to 8 updates; the window is then compacted.
-- Commits carry a generic Claude co-author line and the session trailer, never a model name.
+- Commits go to `main` (since 2026-10-24; the earlier branch `claude/song-synths-sequencer-processors-e79zyb` holds the same history up to `6224ca0`). They carry a generic Claude co-author line and the session trailer, never a model name.
 - No history rewrites or force-pushes without the owner's say-so.
