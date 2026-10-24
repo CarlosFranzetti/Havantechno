@@ -446,6 +446,7 @@ console.log('9. Ear Crew V3: kick attack, swell, length, harmonic, clickDecay; s
   run.trigger(1 + 3.8, { midi: 25, vel: 0.8, dur: 1.9 });
   ok(oscs.length === n1 && ctx.srcs.length === s1 && run._live.length === 1, 'run 1: later triggers reuse the one running voice (oscillators ' + oscs.length + ', voices ' + run._live.length + ')');
   ok(run._live[0].srcs[0].stopAt == null, 'the running voice has no stop time (it runs until panic)');
+  ok(run._run.og.connections.indexOf(run.pre) >= 0, 'the running voice reaches the instrument output (its envelope is connected to inst.pre)');
   run.trigger(1 + 5.7, { midi: 35, vel: 0.8, dur: 1.9 });
   var carrier = oscs[0];
   ok(hasCall(carrier.frequency, 'exponentialRampToValueAtTime', sb.Kit.mtof(35), 1 + 5.7 + 0.03), 'a new note glides to B1 over glide (0.03 s) without a new voice');

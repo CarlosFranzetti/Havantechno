@@ -179,7 +179,10 @@
   // the V3 stab: bars 1 and 2 of each four-bar group hold 12 steps, bars 3 and 4 hold 6 (E2; one gate per track is not enough)
   function stabVariant() {
     var v = grid(['x..........x....', '.x.........x....', '....x..x........', '....x..x........'], HIT);
-    for (var i = 0; i < v.cells.length; i++) if (v.cells[i]) v.cells[i].len = (i < 32) ? 12 : 6;
+    for (var i = 0; i < v.cells.length; i++) if (v.cells[i]) {
+      v.cells[i].len = (i < 32) ? 12 : 6;
+      if (i < 32) v.cells[i].vel = 0.207;   // bars 1 and 2 against bars 3 and 4 (E5 -10 against -3.8), measured three times
+    }
     return v;
   }
   // the bass's two-bar variant D (E2 final, LOG 01:10): bar 1 steps 1, 6, 11, 14 soft; bar 2 steps 1, 8, 14 soft and
@@ -203,47 +206,47 @@
         chain: [{ type: 'eq3', name: 'lc', low: 0, lowFreq: 90 }],
         duck: ['sub', 'bass', 'stab', 'pad'],
         patterns: { A: 'x...x...x...x...', G: 'x...x...x.......' } },
-      { name: 'sub', inst: 'sub', note: 'C#1', gain: 0.07, gate: 16,
+      { name: 'sub', inst: 'sub', note: 'C#1', gain: 0.088, gate: 16,
         params: { mode: 'drone', run: 1, attack: 0.005, release: 0.03, harmonic: 0.1, beat: 1.2027, beatLevel: -2.6, beat3: 3.608, beat3Level: -5.8 },
         sidechain: { depth: 0.78, attack: 0.01, hold: 0.08, release: 0.12, curve: 'db' },
         patterns: { A: 'x...............' } },
-      { name: 'bass', inst: 'bass', note: 'G#1', gain: 0.9, gate: 0.9,
+      { name: 'bass', inst: 'bass', note: 'G#1', gain: 0.305, gate: 0.9,
         params: { wave: 'sawtooth', detune: 4, sub: 0, cutoff: 450, env: 2600, res: 2.5, attack: 0.008, decay: 0.07, release: 0.03, drive: 0.5, glide: 0 },
         chain: [{ type: 'eq3', name: 'eq', low: 2, lowFreq: 200, mid: 0, midFreq: 250, midQ: 1.2, high: -4, highFreq: 1500 }],
         sidechain: { depth: 0.5, release: 0.2 },
         variants: { D: bassVariant() } },
-      { name: 'stab', inst: 'stab', chords: true, octave: 3, gain: 0.09, gate: 0.55,
+      { name: 'stab', inst: 'stab', chords: true, octave: 3, gain: 0.41, gate: 0.55,
         params: { cutoff: 450, env: 700, res: 1.5, attack: 0.008, decay: 0.07, release: 0.08, detune: 4, spread: 0.8, hp: 150 },
         chain: [{ type: 'widener', name: 'width', width: 1.4 }],
         sends: { delay: 0.15, reverb: 0.1 }, sidechain: { depth: 0.9, release: 0.12 },
         variants: { S: stabVariant() } },
-      { name: 'pad', inst: 'pad', chords: true, octave: 3, gain: 0.25, gate: 16,
+      { name: 'pad', inst: 'pad', chords: true, octave: 3, gain: 0.68, gate: 16,
         params: { attack: 0.3, release: 1.2, cutoff: 2500, detune: 4 },
         sends: { reverb: 0.4 }, sidechain: { depth: 0 },
         patterns: { A: 'x...............' } },
-      { name: 'clap', inst: 'clap', gain: 0.22,
+      { name: 'clap', inst: 'clap', gain: 0.296,
         params: { tone: 1500, q: 0.4, decay: 0.12, tail: 0.3, tailDecay: 0.25, flams: 3, flam: 0.011, first: 1 },
         sends: { reverb: 0.25 }, patterns: { A: '....x.......x...' } },
-      { name: 'hat_open', inst: 'hat_open', gain: 0.15, pan: 0.08,
+      { name: 'hat_open', inst: 'hat_open', gain: 0.154, pan: 0.08,
         params: { decay: 0.26, tone: 2000, ring: 1500, metal: 0.15, metalHp: 4000 },
         chain: [{ type: 'filter', name: 'lp', mode: 'lowpass', cutoff: 11000, q: 0.7 }],
         sends: { reverb: 0.12 }, patterns: { A: '..x...x...x...x.' } },
-      { name: 'shaker', inst: 'shaker', gain: 0.12, pan: 0.3,
+      { name: 'shaker', inst: 'shaker', gain: 0.042, pan: 0.3,
         params: { tone: 6500, q: 0.35, attack: 0.028, decay: 0.07 },
         patterns: { G: '...x...x...x...x' } },
-      { name: 'shaker_on', inst: 'shaker', gain: 0.05,
+      { name: 'shaker_on', inst: 'shaker', gain: 0.083,
         params: { tone: 6000, q: 0.25, attack: 0.035, decay: 0.06, hold: 0.03 },
         variants: { X: onBeatVariant() } },
-      { name: 'tick', inst: 'shaker', gain: 0.08,
+      { name: 'tick', inst: 'shaker', gain: 0.053,
         params: { tone: 3500, q: 0.3, attack: 0.002, decay: 0.10, hold: 0 },
         patterns: { T: 'x...x...x...x...' } },
-      { name: 'burst', inst: 'shaker', gain: 0.1, pan: -1,
-        params: { tone: 1400, q: 0.35, attack: 0.004, hold: 0.30, decay: 0.30 },
+      { name: 'burst', inst: 'shaker', gain: 0.035, pan: -1,
+        params: { tone: 1400, q: 0.35, attack: 0.004, hold: 0.30, decay: 0.30 }, chain: [{ type: 'decorrelate', name: 'dec' }],
         sends: { reverb: 0.35 }, patterns: { P: ['................', '................', '................', '............x...'] } },
-      { name: 'burst_r', inst: 'shaker', gain: 0.1, pan: 1,
-        params: { tone: 1400, q: 0.35, attack: 0.004, hold: 0.30, decay: 0.30 },
+      { name: 'burst_r', inst: 'shaker', gain: 0.035, pan: 1,
+        params: { tone: 1400, q: 0.35, attack: 0.004, hold: 0.30, decay: 0.30 }, chain: [{ type: 'decorrelate', name: 'dec' }],
         sends: { reverb: 0.35 }, patterns: { P: ['................', '................', '................', '............x...'] } },
-      { name: 'bed', inst: 'riser', gain: 0.3,
+      { name: 'bed', inst: 'riser', gain: 0.9,
         params: { tone: 0, from: 5000, to: 16000, q: 0.3, floor: 0.04, hold: 15 * BAR },   // the rise is the fx (16 bars); the plateau runs to bar 139
         patterns: {} }
     ],

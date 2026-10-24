@@ -263,7 +263,7 @@
         var R = inst._run;
         if (!R || R.v.done) {
           var v = voice(ctx, inst), og = v.gain(0), o = v.osc('sine', f, t, null);
-          o.connect(og);
+          o.connect(og); og.connect(inst.pre);
           R = inst._run = { v: v, og: og, f: f, nodes: [] };
           R.nodes.push({ node: o, mult: 1, off: 0 });
           if (P.harmonic > 0) {
