@@ -346,18 +346,37 @@
     }
   };
 
+  // limiter: a compressor (ratio 20, 1 ms attack; it has no true-peak control, so it overshoots on fast transients),
+  // then `ceiling` as an output trim (dB, the level stage as before), then a safety clipper.
+  // The clipper is off by default (no curve, no oversampling: exact pass-through). With clipOn it hard-clips at `clip` dBFS
+  // (4x oversampled), which is the real ceiling. Keep the compressor threshold below clip - ceiling so the clipper rarely acts.
+  function clipCurve(level) {
+    var n = 4096, out = new Float32Array(n), i, x;
+    for (i = 0; i < n; i++) {
+      x = i * 2 / (n - 1) - 1;
+      out[i] = x > level ? level : (x < -level ? -level : x);
+    }
+    return out;
+  }
   BUILD.limiter = {
-    spec: { threshold: { min: -30, max: 0, value: -3, unit: 'dB' }, release: { min: 0.01, max: 1, value: 0.08, unit: 's' }, ceiling: { min: -12, max: 0, value: -0.5, unit: 'dB' } },
+    spec: { threshold: { min: -30, max: 0, value: -3, unit: 'dB' }, release: { min: 0.01, max: 1, value: 0.08, unit: 's' }, ceiling: { min: -12, max: 0, value: -0.5, unit: 'dB' },
+            clipOn: { value: false }, clip: { min: -12, max: 0, value: -0.5, unit: 'dBFS' } },
     build: function (p) {
       var ctx = p.ctx, P = p.params, c = p.track(ctx.createDynamicsCompressor()), out = p.track(ctx.createGain());
+      var sh = p.track(ctx.createWaveShaper());
       val(c.threshold, P.threshold); val(c.ratio, 20); val(c.attack, 0.001); val(c.release, P.release); val(c.knee, 1);
       val(out.gain, K.dbToGain(P.ceiling));
-      p.input.connect(c); c.connect(out); out.connect(p._wet);
+      p.input.connect(c); c.connect(out); out.connect(sh); sh.connect(p._wet);
       p.node = c;
+      function setClip() {
+        try { sh.curve = P.clipOn ? clipCurve(K.dbToGain(P.clip)) : null; sh.oversample = P.clipOn ? '4x' : 'none'; } catch (e) {}
+      }
+      setClip();
       p.onParam = function (n, v, o) {
         if (n === 'threshold') auto(ctx, c.threshold, v, o);
         else if (n === 'release') auto(ctx, c.release, v, o);
         else if (n === 'ceiling') auto(ctx, out.gain, K.dbToGain(v), o);
+        else if (n === 'clipOn' || n === 'clip') setClip();
       };
     }
   };
@@ -549,7 +568,7 @@
       { type: 'filter', name: 'lp', cutoff: 20000, q: 0.7 },
       { type: 'compressor', name: 'glue', threshold: -14, ratio: 2.5, attack: 0.02, release: 0.25, knee: 8, makeup: 0.5 },
       { type: 'saturator', name: 'sat', drive: 0.12, mix: 0.5, tone: 16000 },
-      { type: 'limiter', name: 'limiter', threshold: -2, release: 0.08, ceiling: -0.6 }
+      { type: 'limiter', name: 'limiter', threshold: -6, release: 0.08, ceiling: -3.3, clipOn: true, clip: -0.5 }
     ]);
     if (opts) for (var k in opts) if (opts.hasOwnProperty(k)) ch.set(k, opts[k]);
     return ch;
