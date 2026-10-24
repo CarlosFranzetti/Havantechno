@@ -198,7 +198,9 @@ render print n/a. Printed: the loudness and peak rows (ungated and gated LUFS, s
 crest = sample peak minus rms, PLR = true peak minus gated LUFS); the 29 third-octave bands; mid/side per coarse
 band (S/M dB and rho); the per-bar 4 to 8, 8 to 12 and 12 to 16 kHz levels averaged over each window's bars; kick
 glide f0, fT, tau; the sub duck at 0, 20, 60, 100 and 200 ms; then the twelve largest |render - reference| deltas.
-Every cell is render minus reference.
+Every cell is render minus reference. A render that covers only part of a window (a 16-bar render of a 16-bar section, say) also gets a column for its
+own bars, named `renderA-B`, so it is scored on the bars it actually contains. Cells for windows a render does not cover
+read n/a.
 - **29 third-octave bands** (spec 5.2b): ISO centres 25 Hz to 16 kHz, edges fc / 2^(1/6) to fc x 2^(1/6), summed PSD
   of L and R (mid+side power), Welch Hann nperseg 16384 with 50 % overlap, dB re the window's total power (all bins).
   **Verified:** the reference's own values agree with E5's column to 0.05 dB (max) in every window; the table
@@ -222,17 +224,27 @@ includes the render's latency now), with the hit's peak within 8 dB of the loude
   +30 ms around the grid.
 - `rise` (E3-style): the first sample at 50 % of the local peak. Fragile for narrow bands (500 to 535 Hz collapses
   to the search edge), so it is not the default.
-The absolute offsets carry the method's convention (a plucked note reads early on even steps by about 6 ms), so the
-check uses **rel**: each step minus the median of even control steps 2, 4, 8, 10, 12, 16 (the step-6 nudge is
-excluded). Steps 1, 6, 11 and 14 are checked on rel against the reference measured the same way, at 4 ms.
+Steps are **0-based** (E1-E3 numbering: step 0 is the downbeat, so the odd steps 1, 3, ... carry the swing). The
+absolute offsets carry the method's own convention, so the check uses **rel**: each step minus the median of the
+0-based even control steps 0, 2, 4, 8, 10, 12, 14 (the step-6 nudge is excluded). Steps 1, 6, 11 and 14 are checked
+on rel against the reference measured the same way, at 4 ms. Hats (steps 2, 6, 10, 14 with `--onset-band 6000-16000`)
+have no usable control inside the set, so read the absolute delta.
 - **Verified:** on a synthetic note train with odd steps 10 ms late, slope gives odd minus even 8.9 ms (rise 9.9 ms):
   the method reads about 1 ms under for this case. Selftest checks it (7.5 to 12.5 ms).
 - **Reference limit:** on the mix the bass onsets are not resolved (0 to 16 hits per step, sd several ms; the
   even controls read +10 ms from the stabs and hats). The mix numbers are therefore weak; the solo render is the
   reliable side. E numbers are printed as context, in their own conventions (E3 even hats at -6.5 ms, odd bass
   +21 to +24 ms on its stab, E2 bass step 11 +9.9, step 1 +16.3, step 14 -4.2).
-- **Observed:** a baseline solo bass render (mainB, swing 0.06, which predicts 2.4 ms) reads odd steps about 11 ms
-  late against the even controls. Not explained by the swing alone; open.
+- **Observed, V3 (Ear Crew, swing 0.40; bass solo of mainB against the reference mix, 0-based):** step 1 rel +14.3 ms
+  (reference +14.1, delta +0.2, PASS); step 6 rel +8.4 (reference +10.2, delta -1.8, PASS); step 11 rel +14.2
+  (reference +10.5, delta +3.7, PASS); step 14 rel +8.2 (reference -2.8, delta +11.0, FAIL: the render's step-14 hits
+  are soft and their onsets scatter, sd 7 ms). The engine's odd-step delay at swing 0.40 is 15.7 ms.
+- **Observed, V3 hats (open-hat solo of mainA, 6-16 kHz, absolute):** steps 2, 6, 10, 14 read -0.9 to -1.0 ms
+  (sd 0.1) in the render and -6.8 to -7.2 ms in the reference mix, so the render's hats are about 6 ms late (FAIL at
+  4 ms). The reference value agrees with E3's -6.5 ms re the grid line.
+- **Observed, baseline (swing 0.06; bass solo of mainB, 0-based):** odd steps 3 and 7 read about -11 ms against the
+  even controls. The swing predicts +2.4 ms, so this is not explained by swing; open, possibly the bass's velocity
+  or attack on those steps (the slope rule is level-sensitive).
 
 ## Reference numbers used in this file
 

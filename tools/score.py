@@ -304,16 +304,19 @@ def loudness(seg):
     p = (y ** 2).sum(axis=1)
     blk, hop = 19200, 4800
     if len(p) < blk:
-        return {'lufs_integrated': float('nan'), 'blocks_used': 0}
+        return {'lufs_integrated': float('nan'), 'blocks_used': 0, 'lufs_ungated': float('nan')}
     cs = np.concatenate([[0.0], np.cumsum(p)])
     starts = np.arange(0, len(p) - blk + 1, hop)
     z = (cs[starts + blk] - cs[starts]) / blk
     lj = -0.691 + 10 * np.log10(np.maximum(z, 1e-300))
     above_abs = lj > -70.0
+    if not above_abs.any():                       # silence: no block above the absolute gate
+        return {'lufs_integrated': float('-inf'), 'blocks_used': 0, 'lufs_ungated': float('-inf')}
     gamma_r = -0.691 + 10 * math.log10(z[above_abs].mean()) - 10.0
     keep = above_abs & (lj > gamma_r)
+    zm = float(z.mean())
     return {'lufs_integrated': float(-0.691 + 10 * math.log10(z[keep].mean())), 'blocks_used': int(keep.sum()),
-            'lufs_ungated': float(-0.691 + 10 * math.log10(z.mean()))}
+            'lufs_ungated': float(-0.691 + 10 * math.log10(zm)) if zm > 0 else float('-inf')}
 
 
 def sample_peak_db(seg):
@@ -762,7 +765,10 @@ def v3_report(args, render_tr, ref_tr, side):
     cover a window show n/a for it. The E5 reference column is printed beside the reference's own
     29-band values as a check of the method."""
     res = {}
-    for name, a, b in WINDOWS9 + MS_EXTRA_WINDOWS:
+    wins = list(WINDOWS9 + MS_EXTRA_WINDOWS)
+    if side is not None and not any((a, b) == (side['from'], side['to']) for _, a, b in wins):
+        wins.append(('render%d-%d' % (side['from'], side['to'] - 1), side['from'], side['to']))   # a sub-window render
+    for name, a, b in wins:
         cov = render_tr is not None and _cover(side, a, b)
         r_ref_lo, r_ref_hi = sample_range(ref_tr, (a, b), args.tail)
         ref = window_measures(ref_tr, r_ref_lo, r_ref_hi, want_glide=(name in E5_REF29))
@@ -772,11 +778,12 @@ def v3_report(args, render_tr, ref_tr, side):
             rend = window_measures(render_tr, r_lo, r_hi, want_glide=(name in E5_REF29))
         res[name] = {'ref': ref, 'render': rend, 'covered': cov}
         sys.stderr.write('  measured %s (bars %d-%d)\\n' % (name, a, b - 1))
+    res['_order'] = [n for n, _, _ in wins]
     return res
 
 
 def print_v3(res, has_render):
-    names = [w[0] for w in WINDOWS9]
+    names = [n for n in res.get('_order', [w[0] for w in WINDOWS9]) if n in res]
     def cell(v):
         return '      n/a' if v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))) else '%9.2f' % v
     hdr = '%-30s' % 'measure' + ''.join('%9s' % n[:8] for n in names)
@@ -864,7 +871,7 @@ def print_v3(res, has_render):
 def top_deltas(res, k=12):
     """The k largest |render - reference| deltas in the scored table, with their labels."""
     rows = []
-    for n in [w[0] for w in WINDOWS9]:
+    for n in [x for x in res.get('_order', [w[0] for w in WINDOWS9]) if x in res]:
         r = res[n]
         if r['render'] is None:
             continue
@@ -889,7 +896,7 @@ ONSET_REF_TABLE = {
 }
 
 
-ONSET_CONTROL_1IDX = (2, 4, 8, 10, 12, 16)   # even steps other than 6 (the bass nudge): the control for "relative"
+ONSET_CONTROL = (0, 2, 4, 8, 10, 12, 14)   # 0-based even steps other than 6 (the bass nudge): the control for "rel"
 
 
 def onsets_report(args, tr, ref_tr, band, method='slope'):
@@ -910,19 +917,19 @@ def onsets_report(args, tr, ref_tr, band, method='slope'):
         return (len(v), float(np.median(v)) if v else float('nan'), float(np.std(v)) if v else float('nan'))
 
     def controls(table):
-        meds = [float(np.median([h[0] for h in table[st - 1]])) for st in ONSET_CONTROL_1IDX if table.get(st - 1)]
+        meds = [float(np.median([h[0] for h in table[st]])) for st in ONSET_CONTROL if table.get(st)]
         return float(np.median(meds)) if meds else float('nan')
 
     rctl = controls(rend)
     fctl = controls(ref) if ref is not None else float('nan')
     print('window bars %s..%s, band %g-%g Hz, method %s, search -10..+30 ms, hits within 8 dB of the loudest' % (
         win[0] if win else 0, (win[1] - 1) if win else '-', band[0], band[1], method))
-    print('control (even steps %s): render %+.2f ms, reference %+.2f ms' % (
-        ','.join(str(x) for x in ONSET_CONTROL_1IDX), rctl, fctl))
+    print('control (0-based even steps %s): render %+.2f ms, reference %+.2f ms' % (
+        ','.join(str(x) for x in ONSET_CONTROL), rctl, fctl))
     print('%5s | %4s %8s %7s %8s | %4s %8s %7s %8s | %9s %9s  %s' % (
-        'step', 'n', 'abs', 'sd', 'rel', 'n', 'abs', 'sd', 'rel', 'delta rel', 'delta abs', 'PASS/FAIL 4 ms (rel)'))
+        'step0', 'n', 'abs', 'sd', 'rel', 'n', 'abs', 'sd', 'rel', 'delta rel', 'delta abs', 'PASS/FAIL 4 ms (rel)'))
     print('%5s | %-31s | %-31s |' % ('', 'render', 'reference (mix)'))
-    for st in range(STEPS):
+    for st in range(STEPS):   # 0-based, as E1-E3 number them (step 0 = downbeat)
         rn, ra, rsd = stats(rend.get(st, []))
         fn, fa, fsd = stats(ref.get(st, [])) if ref is not None else (0, float('nan'), float('nan'))
         rrel = ra - rctl if rn else float('nan')
@@ -930,11 +937,11 @@ def onsets_report(args, tr, ref_tr, band, method='slope'):
         dr = rrel - frel if (rn and fn) else float('nan')
         da = ra - fa if (rn and fn) else float('nan')
         check = ''
-        if (st + 1) in (1, 6, 11, 14) and not math.isnan(dr):
+        if st in (1, 6, 11, 14) and not math.isnan(dr):
             check = 'PASS' if abs(dr) <= 4.0 else 'FAIL'
         print('%5d | %4d %+8.2f %7.2f %+8.2f | %4d %+8.2f %7.2f %+8.2f | %+9.2f %+9.2f  %s' % (
-            st + 1, rn, ra, rsd, rrel, fn, fa, fsd, frel, dr, da, check))
-    print('reference n is the hit count in the mix (small n = unreliable). E numbers (absolute, their conventions): ' +
+            st, rn, ra, rsd, rrel, fn, fa, fsd, frel, dr, da, check))
+    print('steps are 0-based (E1-E3 numbering). Reference n is the hit count in the mix (small n = unreliable). E numbers (absolute, their conventions): ' +
           '; '.join('%d: %s' % (k, v) for k, v in ONSET_REF_TABLE.items()))
 
 
