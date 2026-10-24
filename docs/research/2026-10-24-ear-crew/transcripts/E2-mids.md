@@ -95,3 +95,99 @@ Count: 4 present sounds (E2-1 to E2-4) plus 1 faint tone pair; the lead is absen
 4. Coordinator: a `CHORDS` entry (`m11f`, [0,3,7,10,14,17]) is a core.js change; who owns it? Without it the nearest existing chord is `G#m9`.
 5. Coordinator: the whole record is about 3 cents flat (chord tones) and the bass 13 cents flat of A440: ignore (inaudible as a fixed offset), unless a tuning param is wanted.
 6. No web search was made (0 of 6): everything above is from measurements.
+
+## Round 2: agreements and disputes
+
+Read: E1-low-end.md, E3-drums-top.md, E4-arrangement-samples.md, E5-mix.md, the dispute list in log-coordinator.md. New scripts in the scratchpad `e2/`: r2a.py to r2e.py (same conventions as round 1: mono, T0 0.568 s, bar 1.9047619 s).
+
+**Agreements.** (a) E1: the 59.2 Hz line is the kick body; E5 agrees the record is mono below 125 Hz. (b) E4 and E3: the chord layer enters at bar 24 and the bar-3-and-4 accents (E4: bars 26-27, 30-31, 34-35, 38-39) are the same grid as my step-7 hits in bars 3 and 4 of each 4-bar group from bar 40 (the groups are aligned on bar 24 and bar 40 alike). (c) E4 and E5: no mid bass in the intro or mainA; I cannot see any either. (d) E4: mid bass fade-in over bars 88-103 matches my level track. (e) E5: the record's 160 and 200 Hz S/M figures (-23, -19 dB) fit a source that is nearly mono there (kick body, below). (f) E3: the 4-bar "sweep" and phrase-end burst is generated noise at step 12 of bars 4n+3, which is also what I called a "one-bar event at bar 23" (every tone lifts at once in that bar); I retract it as a separate item.
+
+**D1 (E1, E2): the pulse comb, 59.2 Hz, and the drone. I concede to E1 on all three of those and keep one inference.**
+- 59.2 Hz is the kick body. The 2.1 Hz comb is the spectrum of a kick repeated at 126 BPM (lines at k x 2.1 Hz, strong where the body has energy, 52 to 60 Hz); I should not have called a comb line "not a pitch" and a bass under it in the same sentence.
+- Drone. My 33.6, 98.2 and 162 Hz came from 180 ms windows (bin 5.5 Hz), which cannot resolve E1's 1.2027 Hz lines. Computed from E1's own eleven-line table (carrier 34.475, 33.272 at -2.5 dB, 32.069 at -9, 30.866 at -5.4, 36.881 at -6.2, ... ): power centroid 34.41 Hz, so at 5.5 Hz resolution the hump peaks near 33.6 to 34.5: consistent. The 3rd and 5th harmonics of those lines span 89-125 Hz (centroid 103.2) and 148-208 Hz (centroid 172.0); my 98.2 and 162 Hz fall inside those spreads. The "32.7 Hz fundamental with odd harmonics" is withdrawn: it is E1's 34.475 Hz drone with its multi-line comb and E1's 3rd harmonic (-14.6 dB). What decides it: window length. Lines 1.2 Hz apart need at least 1.9 s per window; E1 demodulated at 34.475 Hz and folded on 7 sixteenths, which resolves it; my gap windows could not.
+- Kept: the mid bass f0 51.5 Hz is inferred from the integer ratios 3:4:5:6:7:8:9:10 of 155, 207, 258, 310, 360, 411, 462, 511 Hz at steps 1, 6, 11, 14 (110 ms windows, 24 and 32 bars averaged, each within 1 percent), not seen directly: at 51.5 Hz the kick body (52 to 55 Hz, E1) is 15 dB or more louder. The 2nd harmonic (103 Hz) shows at step 11. So the pitch class is certain (every ratio fits G#1 +-13 ct), the octave is not (the same set fits f0 = 25.8 Hz with labels 6:8:...:20, which would sit inside the drone's region, so I rule it out only by plausibility). For the engine: `note: 'G#1'` stands.
+
+**D2 (E3, E4, E2): the stationary lines above 1.4 kHz.** Peaks in bars 120-127 (hats gone), Welch 2^17 (0.34 Hz), prominence 12 dB: 1029.9, 1109.6, 1171.2, 1238.8, 1289.3, 1386.5, 1546.7, 1609.3, 1660.1, 1859.9, 2071.2, 2217.9, 2497.2, 3318.8 Hz. They are two families:
+1. Chord-bed harmonics (exact multiples of the cluster's notes, within 0 to 6 ct): 1109.6 = 3 x F#4 (= 2 x C#5), 1238.8 = 2 x D#5, 1660.1 = 4 x G#4, 1859.9 = 4 x A#4, 2217.9 = 4 x C#5, 2497.2 = 6 x G#4, 3318.8 = 8 x G#4. These are E4's 2.2, 2.5 and 3.3 kHz (and 1.2-1.7 kHz); they exist at the noise floor in the intro (bars 0 to 12: -58 to -74 dB), grow slowly to -57 by bars 24-30 (2.5 and 3.3 kHz rise 12 to 17 dB between bars 8 and 24, which the intro2 noise bed fades in over, so I do not claim them as tonal before bar 24), step up at bar 38 (1239 Hz -56 to -39 over bars 30-38, 1660 Hz -57 to -48: the build filter sweep) and sit at -44 to -54 through mainA, rise again at bars 88 to 104 (1109, 1239, 1660 Hz to -38 to -43), and fall at 152 (bars 152-199 -50 to -55). So: tonal from bar 24 on, and clear from bar 38.
+2. Lines that follow the hat, not the chord: 1546.7 Hz (-48 dB in bars 38-88 and 136-170, -57 to -58 in bars 104 and 120, -53 to -54 at 184 and 196), 2071.2 Hz (-51, -57, -50, -53 over the same bars), partly 1859.9 and 1609.3 Hz. They come and go with the off-beat hat (E3: broadband 1.2-12 kHz): fixed metallic partials of the hat sample. The earlier strongest 1524.8 Hz line of the mainA/mainB mean spectrum is in that family (absent in the break list). A few more lines (1029.9, 1289.3 and 1386.5 Hz) are integer multiples of the bass (20, 25, 27 x 51.5) and exist from bar 88.
+So E4's lines are both: chord harmonics (E2) and hat partials (E3); the 1.4-1.6 kHz rhythmic band at steps 2, 6, 10, 14 (+8 dB over on-beats, flat to 16 kHz) is the hat, and E3's kick click owns the on-beat 1-2.5 kHz part. For the recreation: no new element is needed for the chord-bed lines (a saw chord with cutoff 2500 gives them); the hat's fixed partials are E3's `ring` and `metal` params.
+
+**D5 (E1, E2, E3): swing. Measured, 14 to 20 ms; global swing 0.4 to 0.5.** Method (`r2b.py`, `r2e.py`): band-pass 350-1000 Hz (bass) or 250-700 Hz (chord), 2 ms power, maximum-slope time within -25 to +60 ms of the grid, hits with at least 8 or 10 dB rise in 20 ms, grid from the kick (T0 0.568 s). Bass, bars 104-199: step 11 (odd) +9.9 ms (sd 2.8, n 34); step 1 (odd) +16.3 ms (sd 7.1, n 8); step 14 (even) -4.2 ms (sd 6.0, n 12); step 6 (even, mostly absent) +7.5 (n 6, unreliable); the kicks at steps 4, 8, 12 in the same band -6.1, -1.7, -6.6 ms. Bass odd-minus-even: +14 ms (step 11 against step 14), +20 ms (step 1). Chord in mainA bars 3-4: step 7 (odd) +15.5 ms (sd 2.4, n 9) against steps 4, 8, 0 (even) +0.2, +0.3, +0.8 ms (sd 2 to 3): odd minus even +15 ms. So the two instruments agree at 14 to 20 ms (mean 16). The attack-time confound cancels, because the even and odd steps are measured with the same filter and the same instrument. E3 found 20-30 ms, E1 10-20: all fit 10 to 30 ms; the bass and chord, the tightest data (sd 2.4 to 2.8 ms), say 15 ms. Engine: delay = swing x 119 ms x 0.33, so 15 ms is swing 0.38, 20 ms 0.51. Proposal: `swing: 0.45` (est., covers 17.7 ms) in GUIDANCE_V3, and the loop scores the odd-step onset on the bass at steps 1 and 11 (target +14 to +20 ms re the even steps).
+
+**D6 (E1, E2, E5): 160-200 Hz.** Measured (`r2c.py`, band-pass 150-210 Hz, 60 ms RMS after each step start): section RMS is -20.7 (intro, no bass), -20.9 (mainA), -21.6 (break), -20.6 dBFS (mainB): the same with or without the bass. The kick step carries it: -12.1 / -12.2 / -13.1 / -12.3 dBFS at step 0, against -24 to -30 dBFS at the bass steps (mainB steps 1, 11: -24.6, -25.8; step 6: -26.3) and at the empty steps. So the record's 160-200 Hz is kick body and its harmonics (12 to 18 dB above the bass hits there), smooth and non-tonal (no peak above 3 dB prominence, E5). The bass's 3rd and 4th harmonics (155 and 207 Hz) sit in this band but 12 dB under the kick; the chord has only A#3 232 and G#3 208 Hz weakly (G#3 is a bottom note of `m11f` octave 3). Conclusion: the hole is E1's kick body; the bass does not need to fill it, and G#1 at 155/207 Hz will add about 1 dB at most.
+
+**D7 (E2, E3, E4): the outro's hit at steps 4 and 12 is the clap, at the same level as in mainB.** Band energy (dB, 90 ms Hann after the step start, `r2c.py`; 100-250 / 250-700 / 700-1.5k / 1.5-6k / 6-16k Hz): outro step 4 56.0 / 40.6 / 36.1 / 37.8 / 30.7; outro step 12 56.0 / 38.6 / 36.0 / 38.0 / 30.8; mainB step 4 55.9 / 41.6 / 37.3 / 37.9 / 30.9; mainB step 12 56.0 / 39.8 / 36.5 / 38.0 / 31.1. The 1.5-6 kHz energy is the same to 0.1 dB, and the other bands to 1 to 2 dB. A chord stab looks different (mainA step 7: 47.8 in 250-700 Hz and 31.4 in 1.5-6 kHz) and a kick-only step is 25 dB lower in 700 Hz-1.5 kHz. So: the clap (broadband), full level, E3's choice (outro A at full level) stands; the "-20 dB" is a level re the hat, not a drop in the clap.
+
+**D8 (E2, E3, E5): the dark element through intro2 is not mine.** Narrowband per-bar RMS of my elements across bars 16 to 22 is flat within 1.3 dB: D#4 -44.5 to -45.6, C#5 -54.5 to -55.6, D#5 -56 to -59.8, D#6 -56 to -58 (bars 19 and 23 lift only with the phrase-end hit). The chord bed enters at bar 24 and the chord sweep at bar 28, so the intro2 rise (E5: 4-8 kHz +10.6 dB, 8-12 kHz +10.3, 12-16 kHz +3 over 8 bars, 300 Hz-1 kHz flat) is a dark noise element: E3's soft-attack off-beat hat (E3: its hat fades in from bar 0), lowpassed.
+
+**D9 (E2, E4): arrangement points, agreed bar numbers.**
+| Point | E2 round 1 | E4 map | Agreed |
+|---|---|---|---|
+| mid bass | first rises 84-87, full 88+ | fade in 88-103 | enters bar 88 (the 84-87 rises are 5 to 10 dB, near the noise: ignore), +12 dB over 88-103, to bar 199 |
+| chord layer | bed jump bar 23, steady 26-30 | chord layer from 24, accents 26-27, 30-31, 34-35, 38-39 | stab from bar 24 (554 and 622 Hz up 9 dB at 24-25; D#4 and A#4 from 26) |
+| chord sweep | D#6 -57 to -37 over bars 28-39 | stab filter opens bar by bar 26-39 | 24 to 39 ramp, drop at 40 |
+| step in mainA | D#5 +10 to +14 dB at bar 56 (622 Hz: -43.4 at 48, -37.4 at 52, -29.7 at 56, -33.4 at 57) | second HF layer from 56 | bar 56: chord hits now also in bar 1 of the group |
+| sustained bed | about 76 to 179 | not mapped | from bar 76 (C#5 flat within 2 dB from 76, swings 5-11 dB before), to 179 (C#5 falls 6 to 10 dB over 180-199) |
+| bar 23 event | one-bar event | phrase-end hit at 23 | the phrase-end noise hit (E3/E4), not mine |
+| lead lines 1.1-1.7 kHz | 88-139 and 156-171 | not mapped | these are bass-harmonic bursts and chord harmonics: no lead (see D2) |
+| outro | chord/bass level -3 to -5 dB over 184-199 | step at 184: 1.6-3.2 kHz -4.7 dB | step at 184 (not a ramp), constant after: chord harmonics at 2.2 to 3.3 kHz drop 2 to 5 dB at 184 (2218: -50 to -53, 3319: -51 to -56), consistent with E4 |
+
+## Final V3 table (my three tracks)
+
+Confidence: H = measured and repeated, M = measured once or one method, L = estimate or taken from the synth model, not rendered.
+
+**Bass** (`GUIDANCE_V3` track `bass`)
+| Parameter | Value | Confidence |
+|---|---|---|
+| note | `'G#1'` | H pitch class (G#), M octave |
+| pattern D (2 bars; `o` = 0.5, `X` = 1.0) | `['.o....o....o..o.', '.o......o..X..o.']` | M (steps H, velocities M) |
+| play | `D` from bar 88 to 199 (mainA2 split at 88); none before | H |
+| `bass.level` ramp | 0.25 -> 1.0 expo over bars 88-104; outro 1.0 -> 0.7 | M, L |
+| gate (steps) | 0.9 | M |
+| wave | `sawtooth` | L |
+| detune (ct) | 4 | L |
+| sub | 0 | M |
+| cutoff (Hz) | 450 | L |
+| env (Hz) | 2600 | L |
+| res | 2.5 | L |
+| attack (s) | 0.008 | M |
+| decay (s) | 0.07 | M |
+| release (s) | 0.03 | L |
+| drive | 0.5 | L |
+| glide | 0 | M |
+| eq3 high | -4 dB at 1500 Hz (was -8) | L |
+| widener / stereo | none (mono at the bottom) | H |
+| sidechain | keep depth 0.5, release 0.2 | L |
+| global `swing` | 0.45 | M |
+
+**Stab** (track `stab`)
+| Parameter | Value | Confidence |
+|---|---|---|
+| chords / progression | `['G#m11f']` for every section (A7 adds `m11f` = [0,3,7,10,14,17]; fallback `G#m9`) | H set, M voicing |
+| octave | 3 (G#3 B3 D#4 F#4 A#4 C#5) | M |
+| pattern A (4 bars) | `['x..........x....', '.x.........x....', '....x..x........', '....x..x........']` | M step 7, L others |
+| play | from bar 24 (build, mainA, mainA2, break, mainB, outro) | H |
+| gate (steps) | 6 in bars 3-4 of the group; 12 in bars 1-2 | M, L |
+| cutoff / env | 450 / 700 (build ramp 450 -> 2400, mainA 700) | L |
+| res | 1.5 | L |
+| attack / decay / release (s) | 0.008 / 0.07 / 0.08 | M, M, L |
+| detune (ct) | 4 | M |
+| spread / widener width | 0.8 / 1.4 | M |
+| hp (Hz) | 150 | L |
+| gain | 0.09 (from 0.4) | L, retune on the 300-1k band (mainA -27.1, mainB -23.1 dBFS) |
+| sidechain | depth 0.9, release 0.12 | L |
+
+**Pad** (track `pad`)
+| Parameter | Value | Confidence |
+|---|---|---|
+| chords / octave | `G#m11f`, 3 | M |
+| pattern A | `x...............` (one voice per bar, gate 16) | M |
+| play | bars 76 to 179 (mainA2 split at 76; stop at 180) | M |
+| attack / release (s) | 0.3 / 1.2 | L |
+| cutoff (Hz) | 2500 | L |
+| detune (ct) | 4 | L |
+| sidechain depth | 0 (flat within 1.5 dB at 554 Hz in break and mainB) | M |
+| reverb send | 0.4 | L |
+| level | C#5 about -36 dBFS narrowband | M |
+
+`lead`: removed (ruling). Swing is global: `swing` 0.45.

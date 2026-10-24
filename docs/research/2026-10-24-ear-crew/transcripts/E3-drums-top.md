@@ -178,3 +178,103 @@ Web (3 pages seen in one search): a forum thread on emulating the TR-909/808 cla
 
 ## Agreements and disputes
 (round 2 not started; to be appended after the cross-read of E1, E2, E4, E5.)
+
+## Round 2: agreements and disputes
+
+Read: E1, E2, E4, E5 transcripts and the dispute list in log-coordinator.md. New measurements in this round (scripts `r2a.py`, `r2b.py`, `r2c.py`, `r2d.py` in the scratchpad `e3/`; full reference decoded once, T0 = 0.568 s, bar k = T0 + k * 1.9047619 s, grid minus 6.5 ms for onsets as in round 1). Every NCC is the best zero-phase normalised correlation over +-20 samples.
+
+### D2: the 1.4-1.6 kHz band (E3 kick click, E4 stationary lines, E2 chord harmonics). All three hold, in different places.
+- Intro bars 1-15 (burst bars 3, 7, 11, 15 excluded), 1400-1600 Hz band, 4 ms envelope, peak in [-2, +30] ms: kick steps 0, 4, 8, 12: -41.1, -41.2, -40.9, -41.2 dB; hat steps 2, 6, 10, 14: -49.9, -52.0, -49.9, -47.9; steps 1, 5, 9, 13 (peak up to +100 ms): -53.6 to -61.1. Time-domain band rms: the first 12 ms after a kick -44.1 dB, the floor at +30 to +90 ms after steps 1, 5, 9, 13 -68.1 dB. The rhythm of the band (the "5.8 dB std per 16th", here 4.9 dB over the 16-step profile) is the kick click on beats plus the faint off-beat hat: E3's reading holds for the modulation.
+- The stationary lines are the floor, not the rhythm: a median-over-frames spectrum (32768-point STFT, intro) has its strongest 1.4-1.6 kHz line at 1460 Hz (5.2 dB above the median bin) and a second at 1557 Hz; floor rms -68 dB, i.e. 24 dB below the click's first 12 ms. E4 holds that they are constant through the track; they matter where nothing else plays (bars 120-127, D4).
+- E2's chord harmonics do not explain 1460 or 1557 Hz: they are not on the series of the chord set (D#6 1245, C#6 1109, G#6 1661 Hz hold for E2; 1460 is 23 cents under F#6 = 1480, 1557 is 12 cents under G6 = 1568, and G is absent from the chord set). So: the click owns the rhythm, the non-chord stationary lines (1460, 1557, and E4's 1.92/2.2/2.5/3.3 kHz) own the floor at -68 dB, the chord bed owns the lines at 1109, 1245, 1661 Hz. Agreement: E4 and E2 are right about the lines, E3 about the modulation. The dispute is a difference of question, not of data.
+
+### D3: the on-beat layer that builds from bar 24 to 40: name it. A kick top (an on-beat tick), not an on-beat hat.
+Data (full file; steps 0 and 8; compare bars 30-39 with kick-only bars 4-14; tail window +5 to +105 ms):
+- Spectrum of the increment (power sums, dB abs, bands in Hz): 1000-1600 -39.6, 1600-2500 -49.1, 2500-4000 -45.5, 4000-6300 -44.8, 6300-10000 -44.7, 10000-16000 -52.6. Per Hz that is flat from 1.6 to 6 kHz (-77 to -78 dB/Hz), -2 dB per octave above 6 kHz and -10 dB above 10 kHz, with an extra +10 dB at 1-1.6 kHz (the lines of D2). The off-beat hat rises toward 6-10 kHz and does not look like this.
+- Envelope: 6-16 kHz: -53 dB at 0 ms, -41.0 at +5, -39.9 at +10, -43.1 at +20, -45.5 at +40, -51.3 at +60, -54.3 at +80, -58.2 at +100 ms (the kick alone: -64 to -94 dB). 1-2.5 kHz increment: -39 dB at +10, -41.7 at +20, then flat at -42.3 to -42.6 from +40 to +80 ms and -44.4 at +100 ms (the kick-only 1-2.5 kHz falls to -63 dB at +80 ms). So after the click it is a flat 100 ms plateau 17 to 20 dB above the kick's own tail, then it falls: E1's "about -30 dBFS, 100 ms" reading holds. Level: 15 dB under the off-beat hat at its peak in the same bars (-40 against -25 dB in 6-16 kHz).
+- It is on all four beats, not only on steps 0 and 8: the same increment sits at steps 4 and 12 (1-6 kHz sums -37.6 to -45.5 dB there against -39.0 to -45.3 at 0 and 8).
+- Repetition: step 0 against step 0 in other bars NCC 0.82 (6-16 kHz) and 0.65 (1-6 kHz); step 0 against step 8 only 0.14: it is a fixed waveform per position (a sampled or deterministic event) that differs between beats 1 and 3. The off-beat hat template (bar 45 step 2) correlates 0.09 with it, i.e. it is not the hat sample.
+- Build-up per bar (peak of the 2 ms band envelope at steps 0 and 8): 4-8 kHz is constant at -42 dB to bar 20 (the kick click), rises -38 at bar 22, -34 at bars 28-32 and stays there; 8-12 kHz -58 (bars 8-16) -> -54 (bar 24) -> -47 (bar 30) -> -38 (bar 40), +16 dB over 12 bars; 12-16 kHz -68 -> -60 (bar 24) -> -48 (bar 40), +12 dB. It brightens as it rises. The 6-16 kHz peak at the beats falls from the kick's click level to a plateau at -37 dB at bars 40-55, then steps to -29 dB at bar 56 (E4's second on-beat layer).
+- Name: "kick top / on-beat tick": a flat-spectrum noise-like tick on every beat, entering around bar 26, rising 1.2 to 1.5 dB per bar to bar 40, 100 ms long, not part of the kick sample (E1: the kick is identical in intro and mainA) and not the hat. E1's conclusion (the app's kick keeps only its 2 ms click) stands; this layer is a separate track, not a kick parameter. Recreation: a `shaker` track (see V3 table).
+
+### D4: bars 120-127: agree with E4. There are no hats; the -42 dB is a floor.
+E4's settling test, run here: 6-16 kHz waveform over 40 ms from each hit, correlated with the mean break hat of bars 117-119. Bars 112-119 hit steps (2, 6, 10, 14), positive control: median 0.98 (max 0.99): the break hat is a sample repeated to within the MP3. Bars 120-127 hit steps: median 0.09 (max 0.15). Bars 120-127 non-hit steps 1, 5, 9, 13: median 0.07 (max 0.13). The hit steps are indistinguishable from the control steps. So the hat is absent in 120-127; my round-1 "hat -42 dB, highs cut 16 dB" read the floor of stationary lines and noise (the 6-16 kHz level between hits went from -26 dB to -42 dB because the hats left, not because a lowpass came in; E4's finding that 12.8 kHz does not fall agrees with my bed table: 8-12.5 kHz stays at -46 to -47 dB). Correction to the round-1 table: bars 120-127 hat = none. Bars 128-135: the hits correlate with the mainA hat template with median 0.20, max 0.88, the same distribution as the mainB hats (bars 136-139: median 0.19, max 0.89), so the returning hat is the main hat at low level (my "break hat" template does not apply); the ramp 128-135 is a level ramp, jump 7 to 19 dB.
+
+### D5: swing. Revised down to 15 ms (range 11 to 18) by a same-instrument test; my 20-30 ms was biased.
+- Why mine was biased: the odd-step events I used (steps 1 and 11 in 1-2.5 kHz) are the bass pluck's harmonics (E2), compared with the hat at the even step 2 (instant attack); the bass has a 12 to 15 ms attack, so the derivative onset is late by about that much. The hat ghost event (odd 16th, +14 to +18 ms against -6.5 ms) has a 25-30 ms rise and is biased the same way.
+- Same-instrument test: bass 10th harmonic (500-535 Hz), 3 ms amplitude envelope, onset = first crossing of 50% of the local peak, hits within 8 dB of the loudest at that step, ms re the grid line (median, std, n): mainB bars 136-183: step 1 +11.0 (8.2, 48), step 6 +11.9 (6.7, 32), step 8 -4.6 (10.7, 25), step 11 +13.1 (4.5, 24), step 14 -5.0 (11.8, 43). Break bars 104-119: step 1 +9.4, 6 +10.9, 8 -5.9, 11 +13.2, 14 -5.0. Outro: 1 +9.5, 11 +9.0, 8 -25 (n=11, std 3), 14 -7.
+- Odd (1, 11) minus even (8, 14): mainB 11.1 - (-4.8) = 15.9 ms; break 11.3 - (-5.5) = 16.8 ms. Including step 6 as an even step gives 11.3 ms, but step 6 sits at +11 ms like the odd steps (it is E2's ghost/soft hit, possibly not on the even grid), so I exclude it and flag it. Combined: 11 to 18 ms, centre 15 ms. E1's 10 to 20 ms agrees; my 20-30 ms is withdrawn.
+- Engine value: offset = swing * 0.33 * 119.05 ms -> swing = 15 / 39.3 = 0.38 (range 0.28 to 0.46). GUIDANCE_V3 swing 0.38 (medium confidence). Apply it song-wide; the ghost shaker's slow attack (28 ms) then lands at the measured +14 to +18 ms.
+
+### D7: the outro's step 4/12 hit is the clap, at the main level. The phrase-end noise hit is separate.
+- Outro bars 184-199, 1.5-6 kHz, median over 32 hits: -22.1 dB at 0 ms, -23.7 at +2, -27.6 at +6, -25.1 at +12, -28.9 at +16, -26.4 at +24, -28.5 at +30, -29.9 at +50, -34.1 at +80, -41.1 at +120. mainA clap, same bands: -22.1, -22.9, -27.1, -24.8, -28.2, -26.3, -29.0, -30.0, -34.2, -41.9. Within 1 dB at every point, including the burst structure at 0, +12, +24 ms.
+- Spectrum (1/3 octave, 800 Hz to 12.5 kHz): outro hit -33, -33, -33, -33, -33, -34, -33, -35, -36, -38, -38, -40 dB; mainA clap -33, -32, -33, -32, -33, -33, -33, -34, -36, -37, -37, -40. Hit-to-hit NCC 0.12 (mainA clap-to-clap 0.11; a tonal stab hit (step 7, bars 45-54) has 0.73): noise, so a clap, not a stab. Kick-only steps 0 and 8: -55 dB at 0 ms.
+- The noise hit also continues in the outro: 1-2.5 kHz at steps 13-15 minus steps 5-7 is +12.9, +11.5, +12.4, +14.0 dB in bars 187, 191, 195, 199 and -0.4 to +0.5 dB in bars 186, 190, 194, 198. Both exist; the outro keeps the clap at full level and the noise hit on bars 4n+3.
+
+### D8: E5's dark element in intro2 is the off-beat hat (its spectral tilt opens as it rises). Hit-aligned.
+Peak of the 2 ms band envelope at the hit steps 2, 6, 10, 14 (full file, dB abs):
+
+| bar | 4-8 kHz | 8-12 kHz | 12-16 kHz | floor 1,5,9,13 (+30 to +90 ms) 8-12 / 12-16 |
+|---|---|---|---|---|
+| 8 | -62.1 | -74.2 | -71.9 | -88.3 / -90.1 |
+| 16 | -49.9 | -63.3 | -63.1 | -84.5 / -86.2 |
+| 22 | -39.7 | -54.5 | -60.2 | -77.0 / -84.2 |
+| 24 | -32.6 | -35.8 | -41.9 | -72.4 / -82.3 |
+| 32 | -24.5 | -27.5 | -33.5 | -59.3 / -78.2 |
+| 40 | -20.6 | -22.2 | -28.6 | -53.4 / -65.7 |
+
+Slopes over bars 16-23 at the hit steps: 4-8 kHz +1.64 dB/bar, 8-12 kHz +1.50 dB/bar, 12-16 kHz +0.50 dB/bar: E5's "8-12 kHz +1.5 dB/bar, 12-16 kHz nearly flat" exactly, and these are hit-aligned events (the floor between hits is 20 to 30 dB lower and rises 1.25 dB/bar as the tails do). So E5's dark element is my off-beat hat. It is darker early: 8-12 kHz sits 12 dB under 4-8 kHz at bar 8 and 1.6 dB under at bar 40; 12-16 kHz 6.4 dB under at bar 40. Reading: the same hat sample through a spectral tilt that opens (a lowpass whose corner rises roughly from 5-6 kHz at bar 8 to above 12 kHz by bar 40; est., the hit-to-hit NCC at those levels is not measurable). The on-beat tick (D3) rises more slowly in 4-8 kHz (+0.54 dB/bar over 16-23) and starts to brighten only after bar 24.
+
+### Agreements with others (short)
+- E1: the kick click is a 1-2 ms transient and the app's 1-2.5 kHz kick content is 14 dB too bright (E1: 20 to 23 dB too bright relative to its own body): same finding, E1's number stands. The on-beat layer is a separate track. Swing agrees at 15 ms.
+- E4: no hats in bars 120-127; the on-beat HF layers (bar 24-40 tick at -40 dB, bar 56 and bar 152 at -29 dB) are one family of tick, the second louder; the hat fade-in 8-39 (+40 dB) agrees with my 1 dB/bar then step at bar 24.
+- E2: the odd-step bass pluck gives 15 ms of swing; the lines at 1109, 1245, 1661 Hz are the chord bed's; the burst bursts 1.1-1.7 kHz in the break at steps 1, 11, 14 are the bass harmonics (my round-1 "1-2.5 kHz jump at step 9, 11" is the same).
+- E5: the dark element is the off-beat hat (D8).
+- Open: step 6 of the bass pattern sits at +11 ms (E2 to say whether it is a delayed ghost note); the 1460 and 1557 Hz lines have no source (not a chord, not the drone) - E4/E2.
+
+## Final V3 table (names are engine names; confidence H high, M medium, L low; "est." = to be tuned by scoring)
+
+| element | item | value | conf. |
+|---|---|---|---|
+| song | swing | 0.38 | M |
+| hat_open | role | the only off-beat hat | H |
+| hat_open | pattern A | '..x...x...x...x.' | H |
+| hat_open | params | decay 0.26, tone 2000, ring 1500, metal 0.15, metalHp 4000 | decay H; tone M; metal M; metalHp L |
+| hat_open | chain | { type:'filter', name:'lp', mode:'lowpass', cutoff:11000, q:0.7 } (cutoff ramp 6000 at bar 8 -> 11000 at bar 40, expo) | cutoff M; ramp L |
+| hat_open | gain | 0.15 (from 0.45; rescore) | M |
+| hat_open | level (x gain) | bars 0-23 expo 0.002 -> 0.035; bar 24 step to 0.2; bars 24-39 expo to 1.0; 40-89 1.0; 90-103 1.0 -> 0.5; 104-119 0.45 with decay 0.05; 120-127 off; 128-135 expo 0.12 -> 0.6; 136-183 1.0; 184-199 off | bars 24-103, 120-127, 184+: H; 0-23 and 128-135: M |
+| hat_closed | usage | none except the break (steps 2, 6, 10, 14 plus soft 11): '..x...x...xo..x.', decay 0.07, level 0.45 of main hat | M |
+| hat_closed | removed from | intro2, build, mainA, mainA2, mainB (ruled) | H |
+| clap | pattern A | '....x.......x...' from bar 40 (not in build) | H |
+| clap | params | tone 1500, q 0.4, decay 0.12, tail 0.3, tailDecay 0.25, flams 3, flam 0.011, first 1 (A7 addition) | tone/q/decay M; first M |
+| clap | gain | 0.22 (from 0.7) | M |
+| clap | level | break 0.2 of main (-14 dB), outro 1.0 (D7: same as mainA), mainA/A2/B 1.0 | H |
+| shaker (ghost) | pattern G | '...x...x...x...x' in mainA, mainA2, mainB (follow the hat's fades) | H |
+| shaker (ghost) | params | tone 6500, q 0.35, attack 0.028, decay 0.07 | M |
+| shaker (ghost) | gain | about 0.12 (-13 dB re hat; rescore) | L |
+| shaker (break) | pattern | 'x....x..x....x..' (steps 0, 5, 8, 13) at hat level, same params; breakEnd none (the reference keeps the break pattern) | M |
+| tick (new `shaker` track, D3) | pattern | 'x...x...x...x...' | H |
+| tick | params | tone 3500, q 0.3, attack 0.002, decay 0.10 (hold 0 or 0.05) | L |
+| tick | level | bars 26-40 expo ramp (+16 dB), plateau -15 dB re hat peak bars 40-55; E4's louder layer (-29 dB) from 56 and 152 (+8 dB) | ramp M; levels L |
+| noise hit | track | `shaker`-type with `hold` (A7): tone 1400, q 0.35, attack 0.004, hold 0.30, decay 0.30, reverb send 0.35 | M |
+| noise hit | event | step 12 of bars 4n+3 (3, 7, 11, 15, 19, 23, 51-71, 103, 119, 147-159, 179-199 measured present; 27-47, 75-99, 107-115, 123-143, 163-175 masked, est. on) | present H; masked L |
+| noise hit | stereo | two tracks pan -1 / +1 with independent noise (L/R corr 0.07) or a stereo noise option | M |
+| noise hit | level | 30 dB under the kick low-band peak (1-2.5 kHz -31 dBFS sustained) | M |
+| break bed | track | `riser` tone 0, from 5000, to 16000, q 0.3 from bar 108, 16 bars long (to bar 124), then plateau to bar 135; floor 0.04 and hold (A7) | M |
+| break bed | level | 8-12.5 kHz -72 -> -46 dB abs (+26 dB); plateau -46 dB to bar 135; mainB -52 to -54 dB | M |
+| removed | perc (break), the 4-bar risers at build 12, mainA2 28, mainB 44, the breakEnd riser, the shaker XoxoXo pattern (impact: E4's call) | | H |
+
+## Per-section patterns (V3, 16-char strings, reference bars)
+
+| section (reference bars) | hat_open | hat_closed | clap | shaker | tick | noise hit |
+|---|---|---|---|---|---|---|
+| intro 0-15 | A, level ramp from 0.002 | - | - | - | - | step 12 of bars 3, 7, 11, 15 |
+| intro2 16-23 | A, ramp, tilt opening | - | - | - | rising from bar 26 | bars 19, 23 |
+| build 24-39 | A at 0.2 -> 1.0 | - | - | - | ramp, 4 beats | bars 27, 31, 35, 39 (masked, est.) |
+| mainA 40-71 | A | - | A | G (ghost) | plateau | bars 43-71 |
+| mainA2 72-103 | A (1.0 -> 0.5 from 90) | - | A | G | plateau; E4's loud layer | bars 75-103 (est. masked) |
+| break 104-119 | gated, 0.45 | '..x...x...xo..x.' (break hat) | '....x.......x...' at 0.2 | 'x....x..x....x..' | - | bars 103, 119 |
+| breakLate 120-127 | off | - | at 0.2 | - | - | bed continues |
+| breakEnd 128-135 | ramp 0.12 -> 0.6 | - | at 0.2 | - | - | bed continues |
+| mainB 136-183 | A | - | A | G | plateau; loud layer from 152 | bars 147-183 |
+| outro 184-199 | off | - | A (full) | - | - | bars 187, 191, 195, 199 |

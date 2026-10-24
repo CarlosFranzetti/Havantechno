@@ -197,3 +197,77 @@ All edits are `sections` data; times in bars of the app's grid.
 - Agree with E2: mid bass from bar 88 (my 1.27 kHz +3 dB and the 4-16 kHz and drone changes over 88-104 line up with E2's 517 Hz level −41 to −29 dB). I cannot see the intro or mainA mid bass that the app has either: 300-1k there is kick-synchronous.
 - Dispute with E3 (bars 120 to 127): E3 reads hats still at −42 dB (highs "down 16 dB"); I read the same −42 to −43 dB as a flat floor, because the 16th profile of 6-16 kHz is flat within 1 dB across all 16 steps at 120-127 (no step peaks) and the spectrogram shows only stationary horizontal lines after bar 120. Test to settle it: hit-aligned NCC of the 6-16 kHz waveform at steps 2, 6, 10, 14 for bars 120-127 against bar 119 (hat present) and against the stationary line floor.
 - Open for E3: the app's `hat_closed` A at steps 7, 15 and the `C`, `D` patterns have no counterpart (E3 says so); my arrangement item 4 gives only entries, exits and level ramps, not patterns.
+
+## Round 2: agreements and disputes (E4, 2026-10-24)
+
+Read: E1, E2, E3, E5 transcripts and the coordinator's dispute list. New measurements (scripts `lines.py`, `r2.py` and one inline script in the scratchpad `e4/`; same grid and decode as round 1). Round 1 mistakes I withdraw are marked **withdrawn**.
+
+### D2 (E2, E3, E4): the 1.4 to 1.6 kHz band and my "stationary lines". Resolved: two different things, and my wording was too broad
+
+1. **The bright 1.4-1.6 kHz band across the intro in my full-song spectrogram is the kick click (E3, E1 right).** Intro bars 4-6, 1.40-1.60 kHz band-passed (Butterworth-4, zero-phase), 3 ms RMS, folded over the 12 beats: peak −41.2 dBFS at 1 ms after the beat, −57.2 at 20 ms, −62.5 at 60 ms, −58.4 at 100 ms. A 16 to 21 dB click, gone in 20 ms, not a line. The spectrogram only looked continuous because one image column covers about 0.23 s (several kicks). **Withdrawn**: "constant through the whole track" (section 7, last bullet, and section 0 of round 1's open points).
+2. **The narrow lines at 1663, 2225, 2497, 3315 Hz are E2's chord bed (G#6, C#7, D#7, G#7: octaves of the chord tones G#4 C#5 D#5 G#5), and they exist only from about bar 92 to bar 139 (plus the 1663 Hz line again at 156-168).** Welch 2^15 (0.67 Hz bins) per 4 bars, excess of the line peak over the median of its ±40..120 Hz neighbours: bars 0-91 at most 2 to 7 dB (noise level; 10.4 dB at 1663 Hz in bars 36-39 = the build sweep); bars 92-103: 1663 Hz 8.9, 11.1, 10.9 dB, 2497 Hz 3.9 then 9.4 at bar 100; **bars 104-123: 1663 Hz 22 to 25, 2225 Hz 13 to 18, 2497 Hz 16 to 21, 3315 Hz 13 to 23 dB**; bars 124-127 15 to 22; bars 128-139 5 to 13; bars 140-155 and 172-199 at most 3 dB. 1456 and 1485 Hz (the lines I listed first) are not separable from the noise (excess 8 dB in mainA, no trend). So the claim that they sit under every section is wrong; they are the upper partials of the bed in the break.
+3. **The bed itself, at 500-700 Hz, is steady from bar 76 (E2 right)**: per-bar 10th percentile of the 500-700 Hz energy (STFT 2048/hop 500, 168 frames per bar) is 11 to 19 dB with a 12 to 25 dB swing for bars 60-75 (hits and gaps), then 19 to 23 dB from bar 76 to about 100 (the gaps are filled); it falls to 14 to 17 dB at bars 180-183 and 9 to 14 dB from 184. So bed in at 76 (not 72), bed out at about 180 (E2: 179). I read the lift as +4 to +6 dB of floor.
+
+### D4 (E3, E4): bars 120-127. Agreed reading: hats are gone, a steady wide noise bed remains (E3's and E5's account), my "only stationary lines" is **withdrawn**
+
+Settling test, E3's own method (6-16 kHz Butterworth-4 zero-phase, 2 ms power, post = max in [onset−2, onset+20 ms] with onset = grid −6.5 ms, jump = post minus median of [onset−40, −10 ms]), at the hat steps 2, 6, 10, 14:
+
+| bars | post dB (6-16 kHz) | mean jump dB | reading |
+|---|---|---|---|
+| 112-119 | −26.2 | 22.0 (min 13.5) | hats |
+| 116-119 per bar | −26 | 18 to 20 | hats |
+| **120-127** | **−38 to −42** | **3.5 (min 1.2); all 16 steps 2.8** | **no hats**: a hit would show 18 to 33 dB |
+| 128 / 130 / 132 / 134 | −37 / −32 / −28 / −24 | 7 / 11 / 15 / 19 | hats return from bar 128 and crescendo (+13 dB over 128-134) |
+| 135 | −27 | 17 | beat 4 of 135 is silent, so the bar's mean dips |
+| 136-143 | −19 | 33 | main hat |
+
+Steadiness: 10 ms level of 6-16 kHz over bars 124-127 has median −42.2 dB, p10 −43.9, p90 −40.8, sd 1.2 dB, against sd 9.6 to 10.0 dB in bars with hats (112-115, 44-47). So E3's "hats at −42" is not a hat (the −42 is the floor, jump 3 dB); and the floor is a bed (E3's P5) rather than my lines: its 12.8 kHz band goes −63 (bar 120) to −48 dB (bar 124) and then flat (−49 to −50) to bar 129, then rises with the hats to −45 at 134; 4-8 kHz stays at −49 to −51 over 120-129. E3's bed starting at bar 108 is hidden under the hats (12.8 kHz flat at −51 over 104-119), so it is not contradicted. Agreed: **bars 120-127: hats, shaker, ghost events all off; noise bed on (E3 P5); no lowpass (1-4 kHz unchanged); hats back from 128.** Hat gain curve: E3's 0.1 to 0.5 over 128-135 is right at the start (+13 dB over 7 bars) and still 4 to 5 dB under the main hat at bar 135 (−24 against −19), so end the ramp at 0.55 on bar 135, then 1.0 at 136.
+
+### D7 (E2, E3, E4): outro steps 4 and 12. Resolved: a clap, the same clap as mainA and mainB
+
+1.5-6 kHz band-passed, 1 ms RMS, folded over the hits at steps 4 and 12 (bars 4n+3 excluded, onset −6.5 ms), dB abs: peak −19.0 (outro 184-199), −18.9 (mainB 168-183), −18.9 (mainA 44-59); at 12 ms −25.7 / −25.0 / −24.6; at 24 ms −26.0 / −25.7 / −25.5; at 50 ms −30.2 / −30.6 / −30.3; at 100 ms −38.2 / −38.0 / −38.2. Identical to within 1 dB at every point, with the same half-octave spectrum (round 1 section 4c). Not a stab (a stab's energy is 250-700 Hz, 14 dB under the kick, E2). The clap stays in the outro at full level; the phrase-end hits at 187, 191, 195, 199 are the same clap with a longer, louder reverb tail (+8 to +10 dB in the 13th to 16th steps against an ordinary bar).
+
+### D9 (E2, E4): E2's arrangement points against the map. All four agree to within the stated bars
+
+| Point | E2 | E4 | Agreed bar |
+|---|---|---|---|
+| mid bass entry | 84-87 first contrast, from 88 level rising −41 to −29 by 104 | 1.27 kHz +3 dB from 88; HF and drone changes start 88-93 | **fade-in 88 to 104**, E2's numbers (+12 dB at harmonics 5-10) |
+| chord bed | steady from about 76 (C#5 swing narrows) | 500-700 Hz floor lifts 12-19 → 19-23 dB at 76; upper partials (1.66-3.3 kHz) only from 92, full at 104, gone by 140 | **bed 76 to 179** (low-mid); its upper partials follow the break: they are why 1-2.5 kHz looks brighter at 104-139 |
+| build sweep | D#6 1245 Hz −57 to −37 dB over 28-39, drops 12 dB at 40 | 1.27 kHz band +3.4 dB at 31, +6 dB at 33-35, −4.3 dB at bar 40 | **sweep 28 to 39, reset at 40** |
+| one-bar event at 23 | every tone at once, −35 to −44 dB at 622 Hz | the bar-23 phrase-end hit: 500-700 Hz −34.6 dB against −43 at bar 3 and 7, −47 at 11 and 15, −43 at 19 (+8 to +12 dB, the largest of the six) | **bar 23 = the sixth phrase-end hit, 8 to 12 dB louder than the other five**; E2's "touches every tone" is the hit's reverb exciting the bed's tones |
+| lead-tone lines 1.1-1.7 kHz | bars 88-139 and 156-171 | 1663 Hz line excess at 92-139 (peak 104-127) and 4.7 to 7.9 dB at 156-168 | same; they are the bed's harmonics (E2: no lead) |
+
+### Other agreements and one open item
+
+- E1 on the drone fade (out 91-103, in 130-134, full from 136): my 31/40 Hz bands give 93-104 and 129-134; within two bars; I use E1's bars below since E1 owns the voice. E1's kick low cut (−9 dB shelf at 90 Hz, ramped across the build, lifted at 40, held through the break): matches my kick-body measures (50 Hz −7.6 dB at the end of the build, −7.7 dB at 104, peak −4.5 and −4.4 dB). I drop `kick.level 0.6` in favour of `kick.lowcut`.
+- E5 on the hat and noise timeline (+1.5 dB per bar in 16-23, +13 dB at 24, +0.75 dB per bar to 40, −0.4 to −0.7 dB per bar in 89-103, steps at 120 and 184): all three of my 8-12.8 kHz reads fit it; bar 120 is spectral, not loudness (my LUFS-M: no step at 120).
+- **Open, for E3**: my on-beat layer (6-16 kHz at steps 0 and 8, −8 dB re the off-beat hat) enters at bar 56 and bar 152 (per-bar scores: step-0/8 jump −0.7 dB at bars 45-55, +9 dB from 56; again at 152). E3's windows were bars 40-55 and 136-151, which end one bar before each entry, so E3 saw "no hat on 0, 4, 8, 12" correctly for those windows. Pattern, spectrum and name (closed hat, shaker, ride) need E3 on bars 56-71 and 152-167.
+- The break clap: E3 keeps a clap at steps 4 and 12, −14 dB re main. My 16th profile of 2.5-6 kHz in bars 104-115 has steps 4 and 12 as the two quietest steps (−8 and −7 dB re the loudest), so there is no clap contrast; any clap is below −14 dB. I follow E3 (`clap.level` 0.2 in the break) because it costs nothing, and mute it in 120-135 where the 2.5-6 kHz profile is flat.
+
+## V3 arrangement: a song.js-shaped section table (input for A7)
+
+Convention as in `song.js`: `bars` = length, `play` = track: pattern letter, `set` applies at the section start, `ramp` entries use section-relative bars `[from, to]` (default whole section), `fx` = {bar, track, bars}. Bars are song bars of the reference grid; 200 bars in all (15 sections: 16+8+16+16+20+12+16+16+8+7+1+16+28+4+16 = 200). Names: intro, intro2, build, mainA, break, breakLate (V2's name), breakEnd, mainB, outro kept; added splits: mainA_b (56), mainA2 (76), mainA3 (88), gap (135), mainB_b (152), mainB_c (180). The app's mainA2 boundary moves from 72 to 76 and mainA from 72 to 56/76, because the record has no change at 72. Parameters marked **new** are spec entries A7 must add (default keeps today's sound); levels with (E2/E3/E1) are those analysts' numbers, others mine.
+
+Patterns (letters used below): `kick` A `x...x...x...x...`, G (gap) `x...x...x.......`; `sub` A one hit per bar (E1's drone voice); `bass` D = E2's two-bar pattern (steps 1, 6, 11, 14; bar 2 with 11 loud and 1, 8, 14 soft), note G#1 (E2); `stab` S = E2's G#m11f four-bar pattern `x..........x....` / `.x.........x....` / `....x..x........` / `....x..x........` (E2 section D2); `pad` A whole-bar chord (E2); `clap` A `....x.......x...`; `hat_open` A `..x...x...x...x.` (E3, unchanged); `hat_closed` H = `x.......x.......` (steps 0, 8; the on-beat layer, name pending E3); `shaker` G `...x...x...x...x` (ghost, E3), B `x....x..x....x..` (break, E3); `burst` P = four bars, only bar 4 has `............x...` (E3 P4, step 12); `bed` = the riser instrument with `tone` 0, `floor` **new** (E3 P5).
+
+| # | name | start | bars | play | set at start | ramp (bars relative) | fx |
+|---|---|---|---|---|---|---|---|
+| 1 | intro | 0 | 16 | kick A, sub A, hat_open A, burst P | kick.lowcut 0, sub.level 1, hat_open.level 0.002 | hat_open.level 0.002 → 0.0136 expo [0,16] | none |
+| 2 | intro2 | 16 | 8 | same | – | hat_open.level 0.0136 → 0.035 expo [0,8]; `burst.level` ×2.5 (bar 23 only: set via a per-bar level or a second burst note, E3) | none |
+| 3 | build | 24 | 16 | kick A, sub A, hat_open A, stab S, burst P | hat_open.level 0.2 (the +13 dB step) | hat_open.level 0.2 → 1.0 expo [0,15]; kick.lowcut 0 → −9 dB [0,16] (E1: ramps in across 24-39); stab.cutoff low → high expo [4,16] (E2's sweep, bars 28-39; E2 supplies the two cutoffs, the measured rise is D#6 +20 dB); no clap | none (the app's riser is removed) |
+| 4 | mainA | 40 | 16 | kick A, sub A, stab S, clap A, hat_open A, shaker G | kick.lowcut 0; stab.cutoff = E2's mainA value (reset: the sweep drops 12 dB at 40); hat_open.level 1; clap.level 1 | – | none (the app's impact is removed) |
+| 5 | mainA_b | 56 | 20 | mainA's play + hat_closed H | hat_closed.level 0.4 (−8 dB re the off-beat hat, est.) | – | none |
+| 6 | mainA2 | 76 | 12 | mainA_b's play + pad A | pad.level per E2 (C#5 −36 dBFS narrowband) | – | none |
+| 7 | mainA3 | 88 | 16 | mainA2's play + bass D | bass.level 0.25 | bass.level 0.25 → 1.0 expo [0,16] (E2: 88-103); hat_open.level 1 → 0.5 expo [2,16] (E3: 90-103; mine −8 dB on the off-beat hat); sub.level 1 → 0.1 expo [3,16] (E1: 91-103, −20 dB) | none (the app's riser at 100-104 is removed) |
+| 8 | break | 104 | 16 | kick A, sub A, bass D, stab S, pad A, clap A, hat_open A, shaker B | kick.lowcut −9; clap.level 0.2 (E3); hat_open.level 0.45 (E3: −7 dB, 104-119); shaker.level per E3 | – | bed: {bar 4, track 'bed', bars 28} (E3 P5, 108 to 136; if fx longer than the section is not allowed, chain it as a 16-bar fx here and 8 + 7 bar fx in the next two sections) |
+| 9 | breakLate | 120 | 8 | kick A, sub A, bass D, stab S, pad A | hat_open off, shaker off, clap off (jump 2.8 dB at all 16 steps: no hits); no master.lp.cutoff (the V2 value 6000 is removed) | – | the bed continues |
+| 10 | breakEnd | 128 | 7 | breakLate's play + hat_open A | hat_open.level 0.1 | hat_open.level 0.1 → 0.55 expo [0,7] (hats return 128, jump 7 → 19 dB, post −37 → −24 dB); sub.level 0.1 → 1.0 expo [2,7] (E1: 130-134); stab.cutoff up ≈ +7 dB at 2 kHz over [0,7] (E2) | bed continues; no riser, no clap roll, no master.hp ramp |
+| 11 | gap | 135 | 1 | kick **G**, sub A, bass D, stab S, pad A | hat_open off | – | none (beat 4: kick and hats absent, the chord and bass keep going) |
+| 12 | mainB | 136 | 16 | kick A, sub A, bass D, stab S, pad A, clap A, hat_open A, shaker G | kick.lowcut 0, sub.level 1, hat_open.level 1, clap.level 1, stab.cutoff as mainA | – | none |
+| 13 | mainB_b | 152 | 28 | mainB's play + hat_closed H | hat_closed.level 0.4 | – | none |
+| 14 | mainB_c | 180 | 4 | mainB_b's play minus pad | pad off at 180 (E2: bed to 179); burst P at 183 with `burst.level` 0.5 (the weak phrase-end hit at 183, 1 kHz +6 dB) | – | none (the app's riser at 180-184 is removed) |
+| 15 | outro | 184 | 16 | kick A, sub A, bass D, stab S, clap A, burst P | hat_open off, hat_closed off, shaker off; stab.level × 0.58 (1.6-3.2 kHz −4.7 dB, est., or a lower cutoff: E2/E5) | bass.level 1.0 → 0.7 expo [0,16] (E2 est., −3 to −5 dB over the last 16 bars); no master.lp.cutoff ramp, no stab.cutoff ramp | none; last kick and last burst at bar 199 beat 4; render with `tailSeconds` 6.5 (the record rings 6.43 s after bar 200: RT60 5 to 6.5 s, wide) and the reverb send's decay set to match (A8: either a long song-wide send or a throw on the final clap, e.g. `clap.sends.reverb` raised at bar 199) |
+
+Removed from V3 relative to the baseline and V2 (all measured absent or contradicted): `lead` (E2), `riser` at the build, mainA2, breakEnd and mainB (and the 8-bar breakEnd one), `impact` at 40 and 136, `perc`, the clap in the build and in 120-135, `master.hp.cutoff` ramps (build 24→180 Hz, breakEnd 24→500 Hz), `master.lp.cutoff` at 120 and the outro's ramp, V2's `breakLate` LP 6000, `kick.level 0.6` (replaced by `kick.lowcut`), `bass` before bar 88, `stab` before bar 24, the app's closed-hat patterns B, C, D, E (E3: no counterpart). Global (E3, pending a second analyst's confirmation): swing about 0.6.
+
+Mapping each section's evidence to this table: boundaries 24, 40, 56, 76, 88, 104, 120, 128, 135, 136, 152, 180, 184 are all measured steps or fades in rounds 1 and 2 of this transcript (`Section 2` for 24-136 and 184; D9 and D2 above for 76 and 180; the hat table in D4 for 128 and 135). Bar 72 is deliberately not a boundary. Estimates: the on-beat layer's level (0.4), the pad entry (a 4 to 6 dB floor lift, not a note onset), the 180 bed exit (±2 bars), and every level in the `ramp` column that carries only a name for E1, E2 or E3.
