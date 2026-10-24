@@ -15,3 +15,9 @@ Demucs (4.1.0) and torch (2.14.1, CUDA build from PyPI since the CPU index is bl
 ## 2026-10-24 00:31 EDT (04:31 UTC) — times now in Eastern; usage status
 
 Owner's instruction: report times in Eastern Time. From here, log entries carry ET with UTC in parentheses (CLAUDE.md updated). The session limit hit at about 9:17 PM EDT on 23 October and reset at 11:50 PM EDT; the five analysts were resumed at 12:28 AM EDT and are writing at 12:30 AM with no new limit errors in their outputs. The coordinator cannot read the account's remaining allowance; it only sees the refusals when they come.
+
+## 2026-10-24 00:47 EDT (04:47 UTC) — E3 hand-back (drums above the kick)
+
+Transcript E3-drums-top.md committed. Inventory: 9 reference sounds and 1 automation; the recreation has 4 of them. Largest deltas, E3's measurements on the mixed reference: the hat's centroid 10.9 kHz against 6.6 kHz and its peak +9.7 dB re the kick; the kick click 14 to 28 dB too bright above 1 kHz (E1's element; E1 told); hats and a clap in sections where the reference has none, and no ghost shaker on the odd 16ths; swing estimated at 20 to 30 ms on odd 16ths against the app's 2.4 ms. The 4-bar "sweeps" are noise bursts on beat 4 of bars 4n+3 with different noise each time (not a sample; E4 needs no slice); the real riser is a break noise bed whose lowpass opens from 5 kHz at bar 108 to above 16 kHz at bar 124.
+
+Rulings on E3's questions: (1) the outro's −20 dB hit on steps 4 and 12: E2 and E4 settle it in round 2; the clap stays until then. (2) Swing: a global value goes into GUIDANCE_V3 only if E1 or E2 confirm it on another element's onsets (bass 16ths are the natural check); round 2. (3) Yes: A7 may add `first` (clap), `hold` (shaker) and `floor` (riser) to synths.js, each as a spec entry with a default that keeps today's sound. (4) Sent to E1.
