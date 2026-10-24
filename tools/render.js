@@ -52,7 +52,7 @@ var ISOLATION = {
 function fail(msg) { process.stderr.write('render.js: ' + msg + '\n'); process.exit(2); }
 
 function parseArgs(argv) {
-  var o = { page: 'studio', song: 'baseline', sections: null, bars: null, sr: 44100, tail: 2.5, seed: 1, out: DEFAULT_OUT };
+  var o = { page: 'studio', song: 'baseline', solo: null, sections: null, bars: null, sr: 44100, tail: 2.5, seed: 1, out: DEFAULT_OUT };
   for (var i = 0; i < argv.length; i++) {
     var a = argv[i];
     var next = function () { if (i + 1 >= argv.length) fail(a + ' needs a value'); return argv[++i]; };
@@ -72,12 +72,14 @@ function parseArgs(argv) {
     else if (a === '--tail') o.tail = parseFloat(next());
     else if (a === '--seed') o.seed = parseInt(next(), 10);
     else if (a === '--song') o.song = next();
+    else if (a === '--solo') o.solo = next().split(',').map(function (s) { return s.trim(); }).filter(Boolean);
     else if (a === '--out') o.out = path.resolve(next());
     else if (a === '-h' || a === '--help') { process.stdout.write(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 17).join('\n') + '\n'); process.exit(0); }
     else fail('unknown argument ' + a);
   }
   if (!(o.sr > 0)) fail('bad --sr');
   if (o.song !== 'baseline' && o.song !== 'v2') fail('--song must be baseline or v2');
+  if (o.solo && o.page !== 'app') fail('--solo needs --page app (Host.solo)');
   return o;
 }
 
@@ -146,6 +148,7 @@ async function pageRender(job) {
   if (typeof Math.random.reset === 'function') Math.random.reset(job.seed);
   var buf;
   if (window.__host) {
+    (job.solo || []).forEach(function (name) { window.__host.solo(name, true); });
     buf = await window.__host.render({ from: job.from, to: job.to, sampleRate: job.sr, tail: job.tail });
   } else {
     buf = await window.Sequencer.render(function (s) {
@@ -235,6 +238,8 @@ async function main() {
       // archived-page renders keep plain names; other pages get a prefix so the two never overwrite each other
       if (opts.page !== 'studio') job.name = (opts.page === 'app' ? 'app' : 'page') + '-' + job.name;
       if (opts.song === 'v2') job.name += '-v2';
+      job.solo = opts.solo;
+      if (opts.solo) job.name += '-solo-' + opts.solo.join('-');
       var r = await page.evaluate(pageRender, job);
       var nBytes = r.bytes, parts = [], CH = 4 * 1024 * 1024;
       for (var o = 0; o < nBytes; o += CH) {
