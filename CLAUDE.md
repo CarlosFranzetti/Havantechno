@@ -7,10 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The repo has no package.json, no build step and no linter. The studio is plain browser JS that loads as globals.
 
 - Serve the folder over HTTP: `python3 -m http.server 8000`. The studio is at `http://localhost:8000/olde%20Havantechno%20dub%20studio/`.
-- Archived studio smoke test: `node "olde Havantechno dub studio/selfcheck.js"` (161 checks). New engine: `node app/engine/selfcheck.js` (263 checks, including schedule equivalence with the archived engine and the Host and Project). Both print `OK: N checks passed` and exit 0 on success; neither has a flag to run one section, so to isolate a check you edit the script.
+- Archived studio smoke test: `node "olde Havantechno dub studio/selfcheck.js"` (161 checks). New engine: `node app/engine/selfcheck.js` (337 checks, including schedule equivalence with the archived engine, the Host and Project, and the sampler and audio map). Both print `OK: N checks passed` and exit 0 on success; neither has a flag to run one section, so to isolate a check you edit the script.
 - App checks: `node tools/browser-check.js` (serves the repo, opens `app/index.html` in headless Chromium, 26 checks) and one Node check per UI module in `tools/*-check.js` (widgets, faces, system-editor, step-view, synths, processors). Run checks directly and read the exit code; a pipe to `tail` hides it.
 - Serve the app with `node tools/serve.js` (COOP/COEP headers, port 8000), then open `http://localhost:8000/app/`. Desktop: `cd app && npm install && npm start`.
-- Render and score: `node tools/render.js --page app --sections intro --bars 2` writes WAVs to `tools/out/` (ignored); `python3 tools/score.py <wav> --json` measures them; `tools/README.md` has the options. A full 200-bar offline render takes 3 to 4 minutes.
+- Render and score: `node tools/render.js --page app --sections intro --bars 2` writes WAVs to `tools/out/` (ignored); `python3 tools/score.py <wav> --json` measures them; `tools/README.md` has the options. The offline render schedules two bars ahead and suspends once per bar; 48 bars take about 13 s (was 115 s), and a full 200-bar render has not been timed since.
 
 ## Repo shape
 
