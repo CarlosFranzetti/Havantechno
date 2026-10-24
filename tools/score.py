@@ -672,16 +672,19 @@ def hf_per_bar(tr, s0, s1):
     return out
 
 
-def onset_offsets(tr, s0, s1, band, search=(-10.0, 30.0), env_ms=3.0, loud_db=8.0):
+def onset_offsets(tr, s0, s1, band, method='slope', search=(-10.0, 30.0), env_ms=2.0, loud_db=8.0):
     """Per-16th onset offsets (ms) re the straight grid line. Band-pass (4th order, zero phase), power
-    envelope with a boxcar of env_ms. In [grid + search] the peak is taken; the onset is the first envelope
-    sample at 50 % of that peak. A hit counts when its peak is within loud_db of the loudest hit (E3's rule).
+    envelope with a boxcar of env_ms. In [grid + search] the peak is taken and the hit's level is its peak.
+    method 'slope' (default, E2's rule): the onset is the sample of maximum rise of the envelope in dB;
+    method 'rise': the first envelope sample at 50 % of the peak (E3-style; fragile for narrow bands, it
+    collapses to the window edge). A hit counts when its peak is within loud_db of the loudest hit (E3).
     Returns {step: [(offset_ms, peak_db), ...]}."""
     p0, p1 = padded(tr, s0, s1, 0.25)
     x = tr.x[p0:p1].astype(np.float64).mean(axis=1)
     x = _bp(x, band[0], band[1])
     n = max(1, int(round(env_ms * 1e-3 * SR)))
     env = np.convolve(x * x, np.ones(n) / n, mode='same')
+    envdb = 10 * np.log10(np.maximum(env, 1e-30))
     hits = {}
     k_lo = int(math.ceil((s0 - tr.grid0) / tr.stepS))
     k_hi = int(math.floor((s1 - tr.grid0) / tr.stepS)) - 1
@@ -697,7 +700,11 @@ def onset_offsets(tr, s0, s1, band, search=(-10.0, 30.0), env_ms=3.0, loud_db=8.
         peak = float(seg[pk])
         if peak <= 0:
             continue
-        j = int(np.argmax(seg >= 0.5 * peak))
+        if method == 'slope':
+            d = np.diff(envdb[i0:i1])
+            j = int(np.argmax(d[:max(1, pk)])) + 0.5 if pk > 0 else 0.0
+        else:
+            j = float(np.argmax(seg >= 0.5 * peak))
         onset = (i0 + j + p0) - g
         hits.setdefault(k % STEPS, []).append((onset / SR * 1000.0, 10 * math.log10(peak)))
     allp = [pk for v in hits.values() for (_, pk) in v]
@@ -786,7 +793,7 @@ def print_v3(res, has_render):
             row += cell(v)
         print(row)
     print()
-    print('29 THIRD-OCTAVE BANDS, dB re window total (render minus reference); column "E5 chk" = reference minus E5 table')
+    print('29 THIRD-OCTAVE BANDS, dB re window total (render minus reference); the E5 check is printed below the table')
     e5 = {}
     for fc_i, fc in enumerate(TOB_FC):
         row = '%-30s' % ('%g Hz' % fc)
@@ -882,30 +889,53 @@ ONSET_REF_TABLE = {
 }
 
 
-def onsets_report(args, tr, ref_tr, band):
-    s0, s1 = sample_range(tr, window_bars(args, load_sidecar(args.render) if args.render else None), 0.0)
-    rend = onset_offsets(tr, s0, s1, band)
+ONSET_CONTROL_1IDX = (2, 4, 8, 10, 12, 16)   # even steps other than 6 (the bass nudge): the control for "relative"
+
+
+def onsets_report(args, tr, ref_tr, band, method='slope'):
+    """Per-16th onset offsets. Absolute values carry the method's own convention (a 50 % rise on a plucked
+    note reads early on even steps); the swing check uses 'rel', each step minus the median of the even
+    control steps in the same measurement. Steps 1, 6, 11 and 14 are checked on rel against the reference
+    measured the same way, at the 4 ms threshold."""
+    win = window_bars(args, load_sidecar(args.render))
+    s0, s1 = sample_range(tr, win, 0.0)
+    rend = onset_offsets(tr, s0, s1, band, method)
     ref = None
     if ref_tr is not None:
-        r0, r1 = sample_range(ref_tr, window_bars(args, load_sidecar(args.render) if args.render else None), 0.0)
-        ref = onset_offsets(ref_tr, r0, r1, band)
-    print('onset offsets per 16th, band %g-%g Hz, search -10..+30 ms, 50 %% rise, hits within 8 dB of the loudest' % band)
-    print('%5s %6s %10s %10s %8s %10s %8s  %s' % ('step', 'n', 'render', 'sd', 'ref', 'ref sd', 'delta', 'PASS/FAIL (4 ms)'))
+        r0, r1 = sample_range(ref_tr, win, 0.0)
+        ref = onset_offsets(ref_tr, r0, r1, band, method)
+
+    def stats(hits):
+        v = [h[0] for h in hits]
+        return (len(v), float(np.median(v)) if v else float('nan'), float(np.std(v)) if v else float('nan'))
+
+    def controls(table):
+        meds = [float(np.median([h[0] for h in table[st - 1]])) for st in ONSET_CONTROL_1IDX if table.get(st - 1)]
+        return float(np.median(meds)) if meds else float('nan')
+
+    rctl = controls(rend)
+    fctl = controls(ref) if ref is not None else float('nan')
+    print('window bars %s..%s, band %g-%g Hz, method %s, search -10..+30 ms, hits within 8 dB of the loudest' % (
+        win[0] if win else 0, (win[1] - 1) if win else '-', band[0], band[1], method))
+    print('control (even steps %s): render %+.2f ms, reference %+.2f ms' % (
+        ','.join(str(x) for x in ONSET_CONTROL_1IDX), rctl, fctl))
+    print('%5s | %4s %8s %7s %8s | %4s %8s %7s %8s | %9s %9s  %s' % (
+        'step', 'n', 'abs', 'sd', 'rel', 'n', 'abs', 'sd', 'rel', 'delta rel', 'delta abs', 'PASS/FAIL 4 ms (rel)'))
+    print('%5s | %-31s | %-31s |' % ('', 'render', 'reference (mix)'))
     for st in range(STEPS):
-        rv = rend.get(st, [])
-        ro = [h[0] for h in rv]
-        rr = [h[0] for h in ref.get(st, [])] if ref is not None else []
-        rmed = float(np.median(ro)) if ro else float('nan')
-        rsd = float(np.std(ro)) if ro else float('nan')
-        fmed = float(np.median(rr)) if rr else float('nan')
-        fsd = float(np.std(rr)) if rr else float('nan')
-        delta = rmed - fmed if (ro and rr) else float('nan')
+        rn, ra, rsd = stats(rend.get(st, []))
+        fn, fa, fsd = stats(ref.get(st, [])) if ref is not None else (0, float('nan'), float('nan'))
+        rrel = ra - rctl if rn else float('nan')
+        frel = fa - fctl if fn else float('nan')
+        dr = rrel - frel if (rn and fn) else float('nan')
+        da = ra - fa if (rn and fn) else float('nan')
         check = ''
-        if not math.isnan(delta) and (st + 1) in (1, 6, 11, 14, 2, 10):
-            check = 'PASS' if abs(delta) <= 4.0 else 'FAIL'
-        print('%5d %6d %+10.2f %10.2f %+8.2f %10.2f %+8.2f  %s' % (st + 1, len(ro), rmed, rsd, fmed, fsd, delta, check))
-    print('(step numbers 1-indexed; ref = the same measure on the reference mix; E numbers: ' +
-          '; '.join('%d: %s' % (k, v) for k, v in ONSET_REF_TABLE.items()) + ')')
+        if (st + 1) in (1, 6, 11, 14) and not math.isnan(dr):
+            check = 'PASS' if abs(dr) <= 4.0 else 'FAIL'
+        print('%5d | %4d %+8.2f %7.2f %+8.2f | %4d %+8.2f %7.2f %+8.2f | %+9.2f %+9.2f  %s' % (
+            st + 1, rn, ra, rsd, rrel, fn, fa, fsd, frel, dr, da, check))
+    print('reference n is the hit count in the mix (small n = unreliable). E numbers (absolute, their conventions): ' +
+          '; '.join('%d: %s' % (k, v) for k, v in ONSET_REF_TABLE.items()))
 
 
 def selftest():
@@ -1003,6 +1033,43 @@ def selftest():
           abs(d20 - expect20) < 1.5 and abs(d200) < 1.0,
           '20 ms %.2f dB (expect %.2f), 200 ms %.2f dB' % (d20, expect20, d200))
 
+    # V3 measures (spec 5.2)
+    tone = np.zeros((SR * 4, 2), dtype=np.float32)
+    tt = np.arange(SR * 4) / SR
+    tone[:, 0] = np.sin(2 * math.pi * 1000 * tt) * 0.1
+    tone[:, 1] = tone[:, 0]
+    tb = tob_bands(tone)
+    best = max(tb, key=lambda k: tb[k])
+    check('29 third-octave bands: 1 kHz tone lands in the 1000 Hz band', len(tb) == 29 and best == '1000',
+          'bands %d, peak band %s, 1000 Hz %.2f dB' % (len(tb), best, tb['1000']))
+    same = np.stack([tone[:, 0], tone[:, 0]], axis=1)
+    tr_same2 = Track('t', '', same, '', 0, 126.0, 0.0)
+    ms_same = ms_bands(tr_same2, 0, len(same))
+    check('mid/side: identical channels give rho 1 and no side power', all(
+        abs(v['rho'] - 1.0) < 1e-6 and math.isnan(v['sm_db']) for v in ms_same.values()),
+        'rho %.6f' % ms_same['300-1000']['rho'])
+    check('V3 mapping: sections land in E5 windows', (
+        v3_window('mainA_b') == 'mainA' and v3_window('mainA3') == 'mainA2' and v3_window('breakLate') == 'break'
+        and v3_window('gap') == 'breakEnd' and v3_window('mainB_c') == 'mainB' and v3_window('mainB_b') == 'mainB'
+        and len(V3_SECTIONS) == 15 and sum(b - a for a, b in V3_SECTIONS.values()) == 200))
+    check('E5 reference column: 29 values for each of the 9 windows', all(len(v) == 29 for v in E5_REF29.values())
+          and set(E5_REF29) == set(E5_WINDOW_ORDER))
+    ev = np.zeros((SR * 2, 2), dtype=np.float32)
+    trs = Track('t', '', np.zeros((SR * 4, 2), dtype=np.float32), '', 0, 126.0, 0.0)
+    for k in range(16 * 2):
+        g = int(round(k * trs.stepS))
+        off = int(round(10e-3 * SR)) if k % 2 == 1 else 0
+        n_ = int(0.2 * SR); tt2 = np.arange(n_) / SR
+        tn = np.sin(2 * math.pi * 520 * tt2) * np.minimum(tt2 / 0.004, 1.0) * np.exp(-tt2 / 0.08)
+        if g + off + n_ < len(trs.x):
+            trs.x[g + off:g + off + n_, 0] += tn
+            trs.x[g + off:g + off + n_, 1] += tn
+    ons = onset_offsets(trs, 0, 16 * 2 * int(round(trs.stepS)), (350, 1000))
+    ev_m = float(np.median([h[0] for st in (0, 2, 4, 6) for h in ons.get(st, [])]))
+    od_m = float(np.median([h[0] for st in (1, 3, 5, 7) for h in ons.get(st, [])]))
+    check('onset check: an odd-step offset of 10 ms reads 8 to 12 ms relative to even steps (slope rule)',
+          7.5 <= od_m - ev_m <= 12.5, 'odd-even %.2f ms' % (od_m - ev_m))
+
     print('OK: all selftest checks passed' if ok_all else 'FAILED: see FAIL lines above')
     return 0 if ok_all else 1
 
@@ -1030,7 +1097,8 @@ def main():
     ap.add_argument('--v3', action='store_true',
                     help='V3 report: per-window delta table (render minus reference) for every measure, one run')
     ap.add_argument('--onsets', action='store_true', help='per-16th onset offsets of the render (and the reference)')
-    ap.add_argument('--onset-band', default='400-1000', help='band for --onsets, Hz lo-hi (default 400-1000)')
+    ap.add_argument('--onset-band', default='350-1000', help='band for --onsets, Hz lo-hi (default 350-1000, E2)')
+    ap.add_argument('--onset-method', choices=['slope', 'rise'], default='slope', help='onset rule for --onsets')
     args = ap.parse_args()
     if args.selftest:
         sys.exit(selftest())
@@ -1064,7 +1132,7 @@ def main():
         lo, hi = (float(v) for v in args.onset_band.split('-'))
         render_tr = load_track(args.render, side, True)
         ref_tr = load_track(args.ref, None, False) if args.ref else None
-        onsets_report(args, render_tr, ref_tr, (lo, hi))
+        onsets_report(args, render_tr, ref_tr, (lo, hi), args.onset_method)
         return
     win = window_bars(args, side)
     tracks = []

@@ -174,6 +174,66 @@ centred moving average. The output is dB relative to the mean power over 300-450
 - The archived sub is a plucked oscillator with no duck (the reference has a ducked drone), so its profile is
   a plateau-relative rise, which is expected and is the point of the measure.
 
+## Ear Crew additions (V3, 2026-10-24)
+
+**Render latency (fixed).** Every app render used to start 16.4 ms late against its sidecar grid (E1). The cause
+is the chain's two dynamics compressors: measured in a scratch test with the master units bypassed one at a time
+(the solo sub, master on): the glue compressor adds about 458 samples (10.4 ms), the limiter about 266 (6.0 ms),
+together 722 (16.4 ms), and the other units add nothing measurable. The latency depends on the chain, so it is
+measured per render: `render.js` renders a one-bar solo of the sub (or the kick) before each run, takes its first
+sample above 1e-4 and subtracts the scheduled grid (sample 2205). The sidecar now carries `gridStartSample`
+(the grid as it appears in the WAV = 2205 + latency), `scheduledGridSample` (2205) and `latencySamples`.
+Measured values: app baseline 722 (16.37 ms), archived page 530 (12.0 ms), app V3 588 (13.3 ms). Renders made
+before this change carry the scheduled grid, so their kick glide and any onset offsets are off by the latency.
+Check: the app intro kick glide after the fix is f0 274 Hz, fT 39, tau 26 ms (before: 188, 5 (bound), 75 ms).
+
+**V3 layout.** `--layout auto` (default) reads the sidecar's song: `v3` gives E4's 15 sections (`V3_SECTIONS`,
+bars on the reference grid). Each maps to one of E5's nine windows by its start bar (`v3_window`): mainA_b to
+mainA, mainA3 to mainA2, breakLate to break, gap to breakEnd, mainB_b and mainB_c to mainB. Archive names keep the
+nine windows (the same bars).
+
+**`--v3` report.** `python3 tools/score.py <render> --ref <mp3> --v3` (add `--json` for the raw values). One run
+measures the nine windows (and the two extra mid/side windows of spec 5.2(e)) for both files; windows outside the
+render print n/a. Printed: the loudness and peak rows (ungated and gated LUFS, sample peak, true peak, rms,
+crest = sample peak minus rms, PLR = true peak minus gated LUFS); the 29 third-octave bands; mid/side per coarse
+band (S/M dB and rho); the per-bar 4 to 8, 8 to 12 and 12 to 16 kHz levels averaged over each window's bars; kick
+glide f0, fT, tau; the sub duck at 0, 20, 60, 100 and 200 ms; then the twelve largest |render - reference| deltas.
+Every cell is render minus reference.
+- **29 third-octave bands** (spec 5.2b): ISO centres 25 Hz to 16 kHz, edges fc / 2^(1/6) to fc x 2^(1/6), summed PSD
+  of L and R (mid+side power), Welch Hann nperseg 16384 with 50 % overlap, dB re the window's total power (all bins).
+  **Verified:** the reference's own values agree with E5's column to 0.05 dB (max) in every window; the table
+  is `E5_REF29` and was checked against the spec text (29 rows, 0 mismatches).
+- **Mid/side per band** (spec 5.2e): zero-phase 4th-order bands 20-120, 120-300, 300-1k, 1-4k, 4-10k, 10-16k Hz.
+  M = (L+R)/2, S = (L-R)/2, S/M = 10 log10(sum S^2 / sum M^2); rho = sum(L R) / sqrt(sum L^2 sum R^2). E5 says
+  "equal-level rho": read here as the same normalized correlation (not verified otherwise). Identical channels give
+  rho 1 and no S/M (selftest).
+- **Per-bar 4 to 16 kHz** (spec 5.2d, hf2): zero-phase 4th-order bands on the mid signal, mean square per bar,
+  10 log10 (dB re full scale squared). The window value is the mean of its bars' dB.
+- **Crest and PLR** (spec 5.2c): crest is sample peak minus rms; PLR is true peak minus gated LUFS. **Verified:**
+  on the reference's nine windows, sample peak, true peak, rms, crest and PLR agree with E5's table (c) to 0.01 dB
+  in every window.
+- **Loudness, ungated** (E5 1b): K-weighting as in measure 3, with the mean over all 400 ms blocks and no
+  absolute or relative gate. On the full baseline song the ungated and gated values agree to 0.01 LU.
+
+**`--onsets` (swing check).** `python3 tools/score.py <solo render> --ref <mp3> --onsets [--onset-band 350-1000]
+[--onset-method slope|rise]`. For each 16th, the offset of the envelope onset from the straight grid line (the grid
+includes the render's latency now), with the hit's peak within 8 dB of the loudest (E3's rule). Two rules:
+- `slope` (default, E2's rule): the sample of maximum rise of the 2 ms power envelope in dB, searched from -10 to
+  +30 ms around the grid.
+- `rise` (E3-style): the first sample at 50 % of the local peak. Fragile for narrow bands (500 to 535 Hz collapses
+  to the search edge), so it is not the default.
+The absolute offsets carry the method's convention (a plucked note reads early on even steps by about 6 ms), so the
+check uses **rel**: each step minus the median of even control steps 2, 4, 8, 10, 12, 16 (the step-6 nudge is
+excluded). Steps 1, 6, 11 and 14 are checked on rel against the reference measured the same way, at 4 ms.
+- **Verified:** on a synthetic note train with odd steps 10 ms late, slope gives odd minus even 8.9 ms (rise 9.9 ms):
+  the method reads about 1 ms under for this case. Selftest checks it (7.5 to 12.5 ms).
+- **Reference limit:** on the mix the bass onsets are not resolved (0 to 16 hits per step, sd several ms; the
+  even controls read +10 ms from the stabs and hats). The mix numbers are therefore weak; the solo render is the
+  reliable side. E numbers are printed as context, in their own conventions (E3 even hats at -6.5 ms, odd bass
+  +21 to +24 ms on its stab, E2 bass step 11 +9.9, step 1 +16.3, step 14 -4.2).
+- **Observed:** a baseline solo bass render (mainB, swing 0.06, which predicts 2.4 ms) reads odd steps about 11 ms
+  late against the even controls. Not explained by the swing alone; open.
+
 ## Reference numbers used in this file
 
 Reference mainA 2 bars (song bars 40-41) and intro 0-16 are scored from `/root/.claude/uploads/...Guidance_Original_Mix_192kbps.mp3`.
