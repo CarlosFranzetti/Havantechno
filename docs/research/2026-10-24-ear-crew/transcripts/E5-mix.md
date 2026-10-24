@@ -251,3 +251,138 @@ Method: sample peak and 4x true peak as in 1c; per-beat peak = max |x| over the 
 - App: the per-beat kick peaks are pinned at -5.8 dB (p5 -5.84, p50 -5.76, p95 -5.57, std 0.08, intro) and the section maxima are -5.0 to -5.5 dB; the true peaks are -3.8 to -5.5 dBTP, whole song -3.77. The app's ceiling is therefore about -5.5 dBFS, 5 dB below the record, and it is the limiter's compressor-plus-`ceiling` trim doing the work: the clipper at `clip` -0.5 dBFS never engages (only 1 to 38 samples lie within 0.1 dB of the maximum (mainB 1, mainA 4, break 9, intro 38); in the record 2,287 do in the intro).
 - The master's effect on the mix (render of mainA 16 bars with the same code, sets and bypasses from a scratch copy of `tools/render.js` that adds `--set path=value` and `--bypass id`; the repo's `render.js` is unchanged): before glue, saturator and limiter (eq, hp, lp only) the mix is at peak +3.1 dBFS, rms -6.5 dBFS, crest 9.6 dB, -5.5 LUFS; as shipped it is peak -5.2, rms -11.9, crest 6.7, -11.25 LUFS. The reference's mainA is peak -0.2, rms -11.2, crest 11.0, -10.26 LUFS. So the sources reach the master 5.8 LU too hot and about 3 dB of crest is lost in the master (including the Web Audio `DynamicsCompressorNode` automatic makeup gain: glue alone adds +1.4 dB, saturator +1.3 dB, limiter +2.1 dB at the given thresholds, which the -4.2 dB `ceiling` is cancelling).
 - What gets the crest back (render of mainA 16 bars, all track `gain`s multiplied by 0.58 = -4.7 dB, impact 0.46): `limiter.ceiling` 0 and `threshold` -1.5 with glue and saturator bypassed: peak -1.0 dBFS, rms -10.55, crest 9.6, -9.5 LUFS (v2). With the saturator on: peak -0.43, rms -8.57, crest 8.1, -7.9 LUFS (v1; the saturator adds 1 dB of rms and costs 1.5 dB of crest here). Shipped chain with the same gains and `ceiling` 0: peak -1.4, rms -7.8, crest 6.4, -7.1 LUFS (too loud, crest unchanged). The reference's crest of 11 dB is not reachable by the master alone: the raw mix has 9.6 dB, and the record's 11 dB means the sustained body (kick tail, bass, stab) is lower against the kick peak than in the app.
+
+## 3e. The app's master: what it does to the balance (measured; needed to split source from master in section 5)
+
+Method: the same 16-bar windows rendered three ways with the real engine (`Host.render`, via a scratch copy of `tools/render.js` in the scratchpad that adds `--set path=value` and `--bypass id`; nothing in the repo was changed): (a) as shipped (`tools/out/app-<section>-0-16.wav`); (b) "raw": glue set to `threshold` 0, `ratio` 1, `knee` 0, `makeup` -12 dB and the saturator and limiter bypassed, then the WAV multiplied by 4 (+12 dB) in numpy, so the 16-bit file does not clip (this leaves `eq`, `hp`, `lp` only); (c) the reference, same bars. 1/3-octave shares as in section 0.
+
+Level of the three (LUFS ungated / rms dBFS / sample peak dBFS):
+
+| window | raw | shipped | reference |
+|---|---|---|---|
+| intro 0-16 | -5.76 / -6.62 / +1.58 | -12.49 / -12.40 / -5.53 | -10.55 / -11.17 / -0.49 |
+| mainA 40-56 | -5.46 / -6.48 / +3.09 | -11.25 / -11.92 / -5.19 | -10.26 / -11.19 / -0.21 |
+| break 104-120 | -6.52 / -8.18 / +4.36 | -9.02 / -11.14 / -5.37 | -12.63 / -14.31 / -0.42 |
+| mainB 136-152 | -5.61 / -6.67 / +4.47 | -10.67 / -11.98 / -5.18 | -9.87 / -10.93 / -0.18 |
+
+- The sources reach the master 4.8 to 6.5 LU hotter than the record's final loudness. The master takes 6.7 LU off the intro, 5.8 off mainA, 2.5 off the break and 5.1 off mainB. It therefore flattens and inverts the curve: raw, the break is 1.1 LU quieter than mainA (the record: 2.4 LU quieter); shipped, it is 2.2 LU louder than mainA. Net: break +3.4 LU too loud, a master-induced error on top of a source error (the break's sources are not quiet enough).
+- Balance changes made by the master, `shipped - raw`, in dB re total (mainA 16 bars; full table in section 5): 40 Hz +4.7, 125 Hz -4.2, 160 Hz -8.4, 200 Hz -5.1, 400 Hz +4.7, 1 kHz +5.6, 4 kHz +6.8, 6.3 kHz +7.5, 8 kHz +6.9, 12.5 kHz +7.3. Cause (inferred): the limiter's compressor has a 1 ms attack and ratio 20 with a threshold at -6 dB while the raw peaks are +3 to +4.5 dBFS, so it removes 9 to 10 dB at the kick's onset, which is where the 150-250 Hz body of the kick sits, and the glue compressor (threshold -14, ratio 2.5) follows the loud 40-125 Hz content; everything not dominated by the low end rises in share. A gentle limiter (v2 above: `threshold` -1.5, `ceiling` 0, glue and saturator bypassed, track gains x0.58) leaves the balance identical to raw within 0.1 dB in every band (measured).
+- The `eq` unit (low shelf +1.5 dB at 90 Hz, 400 Hz peak -1 dB Q 0.8, high shelf +1 dB at 8 kHz) is inside "raw" and moves bands by 1 dB at most; in the right direction at 400 Hz and 8 kHz, but 10 dB too small to matter.
+
+### mainA (bars 40-55), 1/3-octave, dB re the file's own total
+
+| fc (Hz) | ref | raw mix (before glue, sat, limiter) | shipped master | source part (raw - ref) | master part (shipped - raw) |
+|---|---|---|---|---|---|
+| 25 | -26.5 | -31.6 | -31.8 | -5.2 | -0.1 |
+| 31.5 | -16.3 | -22.0 | -24.0 | -5.6 | -2.0 |
+| 40 | -20.0 | -11.0 | -6.3 | +8.9 | +4.7 |
+| 50 | -11.6 | -8.5 | -6.4 | +3.1 | +2.0 |
+| 63 | -5.3 | -13.8 | -13.3 | -8.5 | +0.5 |
+| 80 | -8.4 | -12.2 | -14.2 | -3.7 | -2.0 |
+| 100 | -9.7 | -12.1 | -14.3 | -2.4 | -2.2 |
+| 125 | -9.2 | -3.4 | -7.6 | +5.8 | -4.2 |
+| 160 | -11.6 | -13.4 | -21.8 | -1.8 | -8.4 |
+| 200 | -11.9 | -19.3 | -24.3 | -7.3 | -5.1 |
+| 250 | -15.7 | -17.8 | -19.2 | -2.1 | -1.3 |
+| 315 | -17.5 | -22.2 | -17.5 | -4.7 | +4.7 |
+| 400 | -22.1 | -17.5 | -12.8 | +4.6 | +4.7 |
+| 500 | -20.4 | -19.7 | -20.1 | +0.7 | -0.4 |
+| 630 | -23.5 | -20.8 | -15.9 | +2.7 | +4.8 |
+| 800 | -26.8 | -21.3 | -17.5 | +5.5 | +3.8 |
+| 1000 | -26.6 | -21.6 | -16.0 | +5.0 | +5.6 |
+| 1250 | -29.2 | -23.8 | -19.3 | +5.3 | +4.5 |
+| 1600 | -25.6 | -24.4 | -18.9 | +1.3 | +5.4 |
+| 2000 | -28.8 | -22.8 | -18.6 | +6.0 | +4.2 |
+| 2500 | -27.9 | -26.5 | -20.8 | +1.4 | +5.7 |
+| 3150 | -28.5 | -28.6 | -22.5 | -0.1 | +6.0 |
+| 4000 | -25.3 | -32.1 | -25.3 | -6.8 | +6.8 |
+| 5000 | -27.2 | -35.9 | -27.9 | -8.6 | +8.0 |
+| 6300 | -24.2 | -36.8 | -29.4 | -12.6 | +7.5 |
+| 8000 | -24.1 | -35.1 | -28.3 | -11.1 | +6.9 |
+| 10000 | -25.0 | -34.3 | -27.4 | -9.3 | +6.9 |
+| 12500 | -28.4 | -33.8 | -26.4 | -5.3 | +7.3 |
+| 16000 | -35.6 | -32.8 | -26.8 | +2.8 | +6.0 |
+
+### Coarse bands, four 16-bar windows (power-summed 1/3-octave bands; source part = raw - ref, master part = shipped - raw)
+
+| band | intro: src / master | mainA: src / master | break: src / master | mainB: src / master |
+|---|---|---|---|---|
+| 25-63 | -1.7 / +3.2 | -1.7 / +2.8 | -0.2 / +1.9 | -1.1 / +1.5 |
+| 80-125 | +1.6 / -3.1 | +1.9 / -3.6 | +1.8 / -5.6 | +1.8 / -4.1 |
+| 160-250 | -3.3 / -4.7 | -3.4 / -5.2 | -7.4 / -3.8 | -3.5 / -4.9 |
+| 315-630 | +7.7 / +3.7 | +0.6 / +3.9 | -0.0 / +3.8 | -0.7 / +5.0 |
+| 800-2k | +8.2 / +2.1 | +4.6 / +4.7 | +3.8 / +3.6 | +2.1 / +4.9 |
+| 2.5k-5k | +5.2 / +6.9 | -2.5 / +6.2 | +1.2 / +4.8 | -0.8 / +6.2 |
+| 6.3k-10k | +9.6 / +10.2 | -10.9 / +7.0 | -10.6 / +6.8 | -9.6 / +6.0 |
+| 12.5k-16k | +14.9 / +4.5 | -2.6 / +6.6 | -7.8 / +7.5 | -1.5 / +4.9 |
+
+## 4. EQ match: proposed biquads for the app's master (a check, not the fix)
+
+Method: long-term average spectra (mid+side power, Welch 16384) of mainA bars 40-72 for the reference and for the app as shipped (`app-bars-0-200.wav`), 1/3-octave sums 31.5 Hz to 16 kHz, each normalised to its own total, target = reference minus app in dB (a free global gain is allowed). Target spread (rms about its mean): 7.07 dB. Fit: up to six RBJ biquads (Web Audio `BiquadFilterNode` formulas; shelf Q fixed at 0.7071 because Web Audio ignores Q on shelves), differential evolution then least squares (scripts `eqfit3.py`, `eqrefine.py`), gains limited to +-12 dB, peaking Q to 0.4-4, each filter's frequency confined to its own range so that the list is readable (kick region, sub body, 190 Hz body, mid cut, hat presence, top shelf). Then applied to the app's mainA render with `scipy.signal.lfilter` and the band table recomputed.
+
+Engine mapping: the master's own `eq` unit has one low shelf, one peak and one high shelf (`low`, `lowFreq`, `mid`, `midFreq`, `midQ`, `high`, `highFreq`), not enough for six bands. The generic `filter` unit takes `mode` ('peaking', 'highshelf', ...), `cutoff` (20-20000 Hz), `q` (0.05-20) and `gain` (-24 to +24 dB), so six `{ type: 'filter', name: 'm1', mode: 'peaking', cutoff: ..., q: ..., gain: ... }` units inserted after `eq` in `Processors.master` express the list exactly.
+
+Six-band list (the main proposal; residual rms 3.07 dB with the free shelf Q, 3.08 dB with the shelf Q fixed at 0.7071 as listed; on the app's actual mainA render 7.07 dB before, 3.46 dB after):
+
+| # | `mode` | `cutoff` (Hz) | `q` | `gain` (dB) | what it corrects |
+|---|---|---|---|---|---|
+| 1 | peaking | 41.1 | 4.0 (bound) | -12.0 (bound) | the app's 40-50 Hz kick fundamental (app +13.8 dB at 40 Hz, +5.2 at 50) |
+| 2 | peaking | 68.8 | 4.0 (bound) | +9.3 | the missing 63-100 Hz body (app -7.9 at 63, -5.7 at 80, -4.5 at 100) |
+| 3 | peaking | 189.0 | 2.69 | +12.0 (bound) | the missing 160-250 Hz (app -10.2 at 160, -12.4 at 200) |
+| 4 | peaking | 1368.7 | 0.4 (bound) | -12.0 (bound) | the 400 Hz-3 kHz excess (app +9 to +10.6 at 800-2k) |
+| 5 | peaking | 7010.8 | 0.96 | +7.2 | hat presence (app -5.7 at 6.3 kHz, -5.1 at 8 kHz) |
+| 6 | highshelf | 13165 | 0.7071 (fixed; ignored by Web Audio) | -12.0 (bound) | 16 kHz excess (app +8.9) |
+
+Smaller lists (the same method, residual rms about the target's mean): four bands (1-4 above) 4.00 dB: 41.2 Hz Q 4 -12; 68.9 Hz Q 4 +10.2; 188.2 Hz Q 2.73 +12; 1173.7 Hz Q 0.57 -11.8. Five bands (adds 7006 Hz Q 0.91 +12; retunes 58.2 Hz Q 0.4 +9.8; 1460 Hz Q 0.68 -5.4) 3.49 dB.
+
+Result on mainA (app + the six-band EQ, dB re total, minus the reference): 31.5 Hz -12.8 (before -8.9), 40 +5.3 (+13.8), 50 +1.0 (+5.2), 63 -1.0 (-7.9), 80 0.0 (-5.7), 100 -2.5, 125 +4.0 (+1.6), 160 -5.0 (-10.2), 200 -4.0 (-12.4), 250 -0.9, 315 -0.9, 400 +5.8 (+8.8), 500 -5.9 (-0.9), 630 -2.5, 800 +0.5 (+8.9), 1k +0.3 (+10.6), 1.25k -1.1, 1.6k -4.2, 2k +0.7 (+10.0), 2.5k -0.6, 3.15k +0.2, 4k -2.7, 5k -0.3, 6.3k -1.6 (-5.7), 8k -0.7 (-5.1), 10k -1.5, 12.5k -1.4, 16k +0.5 (+8.9). Rms about the mean over 31.5 Hz-16 kHz: mainA 7.07 to 3.46 dB, mainA2 7.21 to 2.96, mainB 6.78 to 3.00, break 7.77 to 4.76, build 6.92 to 4.53, outro 6.72 to 4.73, intro 10.23 to 9.31. The same list generalises to the other main sections (it was fitted on mainA only); it does not help the intro (the intro's problems are the mid stack and the HF tail, which a static EQ cannot fix without hurting mainA).
+
+Cost and caveats (measured unless marked):
+
+1. Headroom and loudness. Applied after the shipped master, this EQ moves the sample peak from -5.2 to +1.1 dBFS (+6.2 dB, the 69 and 189 Hz boosts add to the kick) and K-weighted loudness from -11.25 to -11.58 LUFS. In the chain it would sit before `glue`, so the compressor and limiter would work harder (the dynamics of section 3e would change); the numbers above are a spectral check on a finished render, not a prediction of the re-rendered result.
+2. Three of the six filters sit on their bounds (gain 12 dB, Q 4 or 0.4). The unconstrained optimum is more extreme (an earlier unconstrained run stacked two -14 dB notches at 43.4 Hz and a +14 dB peak at 185 Hz). That is the signature of a source error being patched: a -12 dB Q 4 notch at 41 Hz is a stand-in for retuning the kick (E1: the record's kick body is at 51-59 Hz), the +12 dB at 189 Hz is a stand-in for the missing kick body or bass harmonic, the -12 dB wide dip at 1.4 kHz is a stand-in for fixing the stab and bass harmonic levels.
+3. What an EQ cannot do: the record's 31.5-35 Hz layer (app -8.9 dB at 31.5 and the EQ makes it -12.8, since the 41 Hz notch has a skirt) is a missing sound, not a level; the 400 Hz (+5.8) and 500 Hz (-5.9) residuals are a tonal pair (the app's bass/stab partial at 371-414 Hz against the record's peaks at 309.5/368.8 and 409/474 Hz) that needs a notch the six-filter budget does not leave; 160-200 Hz stays 4-5 dB low.
+4. Decision for the owner: fix the mix or fix the master. The coordinator's view (fix the sources first, EQ as a check) is supported by the evidence in section 5: a quarter to half of each large delta is created by the master's dynamics, not by the sources, so an EQ matched to the shipped render would be compensating a limiter-induced tilt and would have to be re-fitted after any change of gains or limiter settings. If the owner prefers an EQ-only route, use the four-band list (it has the simplest moves) and expect to re-fit.
+
+## 5. Which deltas are source problems and which are master problems
+
+Evidence: the raw/shipped/reference decomposition of section 3e, solo-track contributions (`solo.py`, mainA 16 bars, each solo rendered through the master so contributions are not additive), and the per-bar and per-step measurements above. "Source part" = raw minus reference, "master part" = shipped minus raw, both in dB re total, mainA window (the other three sections are in the coarse table). A source delta is for E1-E3 (kick/sub; bass/stab/lead/pad; hats/clap/shaker/sweeps); a master delta is for A8.
+
+| delta (shipped vs record, mainA) | source part | master part | verdict and owner | evidence |
+|---|---|---|---|---|
+| 40-50 Hz too strong (+13.8, +5.2) | +8.9 at 40, +3.1 at 50 | +4.7 at 40, +2.0 at 50 | SOURCE (E1): kick fundamental at 44 Hz, the record is at 51-59 Hz; the master adds 4.7 dB more | solo kick contributes -6.2 / -6.4 dB at 40 / 50 Hz re mix, the same as the mix itself (-6.3 / -6.4); reference peak is 59.2 Hz (coordinator) |
+| 63-100 Hz too weak (-7.9, -5.7, -4.5) | -8.5 at 63, -3.7 at 80, -2.4 at 100 | +0.5 / -2.0 / -2.2 | SOURCE (E1/E2): the 59 Hz sub/kick body is under-represented; master neutral | raw and shipped agree within 2.2 dB |
+| 31.5 Hz layer missing (-8.9) | -5.6 (mainA; -5.4 intro) | -2.0 (mainA; -4.6 intro) | SOURCE (E1): the 35 Hz second peak is absent; master worsens it | reference 35.0 Hz peak at -33 dB; app has nothing there |
+| 125 Hz bass fundamental (+1.6; 124 Hz is the app's bass note) | +5.8 | -4.2 | SOURCE (E2): bass fundamental about 5 dB too strong; the master happens to hide it | raw 125 Hz band -3.4 dB against -9.2 |
+| 160-250 Hz hole (-10.2 at 160, -12.4 at 200) | -1.8 at 160, -7.4 at 200 (mainA window) | -8.4, -5.1 | BOTH: 160 Hz is a MASTER problem (sources are within 2 dB, shipped is 10 dB low), 200 Hz about 60 % source (E1: kick body/glide) and 40 % master | raw 160 Hz -13.4 vs ref -11.6 vs shipped -21.8; limiter at ratio 20, 1 ms attack removes the kick's first 20 ms where the 150-250 Hz sweep sits (inferred) |
+| 315-630 Hz and 800-2k excess (+9 to +10.6 at 400-2k) | +4.6 at 400, +5.5 at 800, +5.0 at 1k, +6.0 at 2k | +4.7, +3.8, +5.6, +4.2 | BOTH, half each. Source (E2): bass harmonic stack at 247/371/614/737/861/985/1109 Hz and the stab (solo stab -13 to -16 dB re mix at 630-2k, solo bass -13.8 at 400 Hz); master: share rise from compressing the lows | solo contributions; v2 render (gentle limiter) removes the master part, leaving the raw excess |
+| intro 300 Hz-1.2 kHz stack (+17 at 400, +15 at 630) | +11.6 / +11.5 / +12.7 (400/630/800) | +5.3 / +3.8 / +0.4 | SOURCE (E2): the bass's harmonic stack; the record has nothing there (-30 to -36 dB) | `intro` raw render, ref intro table |
+| 6.3-10 kHz too weak (-5.7 at 6.3, -5.1 at 8k) | -12.6 / -11.1 / -9.3 (6.3 / 8 / 10 kHz) | +7.5 / +6.9 / +6.9 | SOURCE (E3): the hats are about 10 dB too quiet before the master; the master's makeup (compression of the lows) lifts them 7 dB and conceals most of the error. Once the master is relaxed (A8) the hats need roughly +9 to +11 dB | raw HF is -11 dB below the record, 4 kHz -6.8, 12.5 kHz -5.3; hat solos: closed -36.4 dBFS rms, open -25.1 (coordinator) |
+| 16 kHz excess (+8.9) | +2.8 | +6.0 | MASTER mostly (relative lift), small source; and the record is band-limited above 12.5 kHz in the break and 19.5 kHz always | table |
+| intro 4-16 kHz tail (+14 to +22 dB) | +5 to +18 | +3 to +10 | SOURCE (E1): the kick's click and drive harmonics are the only HF source in the intro (kick solo -36.8 dB at 4 kHz re mainA mix; app intro -34 dB re its own total); the master adds 3 to 10 dB | intro tables |
+| loudness: intro -1.9 LU, mainA -1.0, mainB -0.8, outro -1.6, break +3.4 | sources +4.8 to +6.5 LU hot | -6.7 / -5.8 / -2.5 / -5.1 LU | MASTER (A8) for the level and the curve shape (it inverts the break); SOURCE (E4/E1) for the break: the record's break is 2.4 LU below mainA, the raw sources give only 1.1 LU below, the shipped master turns that into 2.2 LU above | loudness table, raw/shipped table |
+| peak and crest (peak -5.2 against -0.2, crest 6.7 against 11.0) | raw crest 9.6 | ceiling -4.2 dB and a clipper that never acts | MASTER: `ceiling` -4.2 applied before the clipper; set `ceiling` 0 and let `clip` -0.55 be the ceiling. A residual 1.4 dB crest gap is SOURCE (body too long against the kick peak) | v2 render: crest 9.6, peak -1.0, LUFS -9.5 |
+| stereo: 300 Hz-1 kHz narrower (-8.5 against -2.4 dB S/M), 4-10 kHz wider (-6.2 against -10.1) | n/a | n/a | SOURCE (E2/E3): widen the stab, narrow its upper partials | section 2 |
+| HF presence timeline (record ramps; app steps) | the ramp in the record: +1.5 dB/bar in bars 16-23 (a lowpassed element), +13 dB at bar 24, +0.75 dB/bar in bars 24-39, fade of 0.4-0.7 dB/bar in bars 89-103, steps at 120 and 184 | n/a | SOURCE (E3/E4): automation of the hat and noise levels, not a master filter | sections 3b, 3c |
+
+## 6. Proposals for A7 and A8 with engine names and ranges (estimates marked)
+
+For A8 (`processors.js`, `Processors.master`), in order of evidence:
+
+1. `limiter`: `ceiling` 0 (range -12..0), `clipOn` true, `clip` -0.55 (range -12..0; the record's kick peaks sit at -0.57 to -0.54 dBFS in the intro, std 0.01 dB, so `clip` -0.55 reproduces a ceiling the record has), `threshold` -1.5 (range -30..0; measured with glue and saturator bypassed and the track gains x0.58: the balance is unchanged from the raw mix within 0.1 dB in every band), `release` 0.08 (unchanged; 0.05 was louder by 0.7 LU and lost 2 dB of crest in the test v3).
+2. `glue` and `sat`: with the sources at x0.58 the glue (threshold -14, ratio 2.5) is not needed to hold the level; bypassed in the best test (v2: peak -1.0, rms -10.55, crest 9.6, -9.5 LUFS against the record's peak -0.2, rms -11.2, crest 11.0, -10.26 LUFS). Note that Web Audio's `DynamicsCompressorNode` applies its own makeup gain (measured here: glue +1.4 dB, limiter +2.1 dB at the shipped thresholds, saturator +1.3 dB): re-check the level after each change. Saturator on costs about 1.5 dB of crest and adds 1 dB of rms (v1: crest 8.1).
+3. `eq` unit: its present settings (+1.5 dB / 90 Hz, -1 dB / 400 Hz, +1 dB / 8 kHz) are right in sign for 400 Hz and 8 kHz and about 10 dB too small. Do not enlarge them before the sources are retuned; the six-band list in section 4 is the target if the owner wants an EQ-only route.
+4. Loudness targets per section (ungated K-weighted, record): intro -10.56, intro2 -10.53, build -11.7 falling to -12.4, mainA -10.24, mainA2 -10.3 (to -10.6 by bar 100), break -12.4 to -12.9, breakEnd -12.2, mainB -9.9 (the loudest, 0.35 LU above mainA), outro -10.4. The curve is flat inside each section (spread 0.1 LU): a static master with no section-dependent gain reproduces it if the sources' section balance is right.
+
+For A7 (`song.js` / GUIDANCE_V3), estimates, not rendered unless stated:
+
+1. Scale all track `gain`s by about 0.58 (the v2 render did exactly this and `impact.gain` to 0.46), then trim 0.7 dB further to land on -10.3 LUFS.
+2. Hats: follow the record's 8-12 kHz band (-80 dBFS squared in bars 0-15, rising 1.5 dB/bar to -62 by bar 23, a step to -49 at bar 24, then +0.75 dB/bar to the plateau at -34.7 by bar 40) by ramping `hat_closed.gain` and `hat_open.gain` (the 12-16 kHz band rises only 3 dB in bars 16-23, so the intro2 element is dark: give it a low `tone`) using section `ramp` entries (`{ param: 'hat_closed.gain', from: ..., to: ..., curve: 'expo' }`), then a fade of 0.4-0.7 dB/bar from bar 89 to 103 and the steps at bars 120 and 184 (section lengths differ from the record's phrases: bar 120 is inside the app's `break`, which GUIDANCE_V2 splits into `break` 16 + `breakLate` 8).
+3. The record has no master lowpass in the break; do not use `master.lp.cutoff` 6000 for `breakLate`. If a duller break is wanted, shape the hats' own `tone` (about -34 dB at 16 kHz against 8 kHz in the break's hat hits, -13 dB in mainA).
+4. Stab: `widener` `width` about 1.6-2.0 and `monoBelow` 250 (estimate from section 2; the stab solo is already -4 to -8 dB S/M at 315 Hz-2.5 kHz and the record's mix is -2.4 dB at 300-1k).
+
+## 7. Estimates, limits, what I did not do
+
+- Estimates (not measured): the cause of the master's 160-200 Hz loss (limiter on the kick onset); the widener width of 1.6-2.0; the idea that the break's HF shoulder is a different hat voicing or the encoder rather than a filter; the +9 to +11 dB hat boost after the master is relaxed (extrapolated from the raw-minus-reference 6.3-10 kHz figures).
+- Measurement limits: MP3 at 192 kbps (side channel above about 10 kHz, band-limit above 19.5 kHz); one window length (Welch 16384) for all bands, so 25-40 Hz bands rest on 1-5 bins; "total" in the 1/3-octave tables is the full-band total, so a change in one dominant band moves all the others (that is why the decomposition tables matter); the K-weighted loudness here is ungated (the coordinator's gated section values agree to 0.1 LU); the solo-track contributions are not additive because each solo passes through the master.
+- Not done: round 2 (cross-read of the other transcripts); web search (none used); no repo file other than this transcript was written or changed. Scratch scripts and renders (`e5/` in the scratchpad) are outside the repo: `common.py`, `bands.py`, `loud.py`, `loud2.py`, `peaks.py`, `hf.py`, `hf2.py`, `hits.py`, `lpfit.py`, `clip.py`, `solo.py`, `eqfit.py`, `eqfit3.py`, `eqrefine.py`, `eqapply.py`, `decomp.py`, `render_e5.js` (patched copy of `tools/render.js` with `--set`, `--bypass`, `--tag`).
