@@ -494,7 +494,7 @@ console.log('9. Ear Crew V3: kick attack, swell, length, harmonic, clickDecay; s
   var doc = sb.Song.documentV3(), seqD = sb.Sequencer.create(null); sb.Song.build(seqD, doc); seqD.scheduleAll(0, null, 0);
   ok(JSON.stringify(seqD.hits()) === JSON.stringify(hv), 'documentV3 schedules the same hits as GUIDANCE_V3');
   var bassD = doc.tracks.filter(function (t) { return t.name === 'bass'; })[0];
-  ok(bassD.variants.D.bars === 2 && near(bassD.variants.D.cells[6].nudge, 2 / 24, 1e-9) && bassD.variants.D.cells[1].vel === 0.5 && bassD.variants.D.cells[27].acc === true, 'bass D is a two-bar variant with the +2/24 nudge on bar 1 step 6 and the accent on bar 2 step 11');
+  ok(bassD.variants.D.bars === 2 && near(bassD.variants.D.cells[6].nudge, -1.4 / 24, 1e-9) && bassD.variants.D.cells[1].vel === 0.5 && bassD.variants.D.cells[27].acc === true, 'bass D is a two-bar variant: step 6 at -1.4/24 (timing fit, A9 iteration 4), the accent on bar 2 step 11');
   ok(doc.swing === 0.40 && doc.master.limiter.clip === -0.55 && doc.master.glue.bypass === true, 'documentV3 carries swing 0.40 and the master (limiter -1.5 / 0 / clip -0.55, glue and saturator bypassed)');
   // the Host opens the document (Node, no audio)
   var hostFile = path.join(ENGINE, 'host.js');

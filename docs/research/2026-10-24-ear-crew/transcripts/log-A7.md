@@ -240,3 +240,60 @@ $ python3 tools/score.py <each of the four> --ref <BRIEF reference> --v3  -> exi
 - The bass highpass at 95 Hz is a first setting: the break's 50 Hz is at +7 against the reference in the 29-band basis.
 - The synths.js change is one parameter (`clickLp`), with a default that keeps the existing calls.
 - No commits.
+
+---
+
+## Round 6: A9 section 9 (iteration 4), coordinator 2026-10-24 (last of this session)
+
+Read `log-A9.md` section 9. Renders: intro 16, break 16 (`--sections break --bars 16`), mainB 16; solos for the kick and the mainB bass. Scores: `score.py --ref <BRIEF reference> --v3` (exit 0 each) and `--onsets` on the mainB bass solo (exit 0). Exit codes read directly.
+
+### What changed
+
+1. **Break hat (12.5 to 16 kHz).** The break's hat lowpass 8 kHz to 7 kHz (6 kHz tried: 8 to 12 kHz fell 6 dB under E5). Absolute mix, bars 104 to 119, 4-8 / 8-12 / 12-16 kHz: -36.9 / -43.7 / -52.6 dBFS^2 against E5's -38.2 / -40.1 / -53.5. The 12 to 16 kHz band is within 1 dB in absolute terms; the 8 to 12 kHz is 3.6 dB low, the cost of the lowpass. The 29-band table's 16 kHz (relative to the window total, which the low end dominates) is +8.0; 12.5 kHz -3.7.
+2. **Intro 500 Hz (+10.3, the kick alone).** Tested: the knock (the 520 Hz triangle) does not move 400 to 630 Hz (click 0: unchanged); the 2f `harmonic` does not either. The source is the drive's second harmonic, which sweeps through 400 to 630 Hz during the early glide. Drive 0.03 gives only 2 dB and moves 40 to 125 Hz by 1.6 dB (rejected). Drive 0 with the kick's track gain raised 0.58 to 0.96 (+4.4 dB, so the 40 to 125 Hz band is unchanged: -11.63 against -11.52) gives 400 to 630 Hz -41.0 against -32.1 (about 9 dB). The side effect: 630 to 1250 Hz falls 13 dB, and the mix's 1 kHz is -5.6 dB (was +3.4). A narrow +8 dB peak at 1 kHz on the kick's `lc` eq3 mid (Q 2) recovers about 3 dB there and costs about 1 dB at 400 to 630 Hz; kept. Intro 500 Hz +10.3 to +3.0; 400 Hz -1.4; 630 Hz -1.2. Intro LUFS +0.24.
+3. **Bass highpass and onsets.** The highpass is 4th order at 95 Hz (two 12 dB/oct stages, `hp` and `hp2`). Its group delay moves every bass step about 8 ms late. Fix: every bass cell takes -1.6/24 of a step, steps 11 and 14 another -1/24 (the earlier correction), step 6 is set to -1.4/24 (its +2/24 was not the early step the record has), and step 1 to -1.2/24 more. The onsets (mainB bass solo, `--onsets`, 4 ms rel check): step 1 -2.2 PASS, step 6 +2.5 PASS, step 11 +2.3 PASS, step 14 +2.7 PASS (absolute deltas -4.9, -0.1, -0.3, +0.1 ms). The bass test in `synths-check` now asserts the fitted step 6 value (it had the old +2/24; that is the one check that failed before this round). Break 40 Hz -1.9 (was +14), 50 Hz +1.7 (was +11.9), intro 40 Hz -1.9 (absolute).
+4. **Bursts, 7 to 11 kHz.** A high shelf at -3 dB at 7 kHz (eq3 `hi`) after the 5 kHz lowpass in both burst chains. intro2 2.5 / 4 kHz were within 3 dB before this change (-1.2 / -2.0 at the last check); the shelf does not touch that band.
+5. **hat_open -1 dB:** kept (accepted; applied in round 5).
+
+Not touched: the outro's top band.
+
+### Scores (render minus reference, `--v3`)
+
+| window | measure | before this round | after |
+|---|---|---|---|
+| intro (0-15) | LUFS | -0.03 | +0.24 |
+| intro | 500 Hz (29-band) | +10.3 | +3.0 |
+| intro | 400 / 630 Hz | +5.7 / +8.5 (A9 section 9) | -1.4 / -1.2 |
+| intro | 16 kHz | -4.2 | -5.6 |
+| break (104-119) | LUFS | +0.12 | +0.44 |
+| break | 40 / 50 Hz | +3.5 / +7.1 | -1.9 / +1.7 |
+| break | 12.5 kHz / 16 kHz | +0.9 / +11.4 | -3.7 / +8.0 |
+| mainB (136-151) | LUFS | +0.18 | +0.31 |
+| mainB | 500 Hz | +3.8 (A9) | +4.6 |
+| bass onsets (steps 1 / 6 / 11 / 14, rel) | | 1: +6.5, 6: +3.5, 11: +3.4, 14: +3.7 (ms) | -2.2 / +2.5 / +2.3 / +2.7 (all PASS) |
+
+Note on the table: the 29-band rows are relative to each window's total, so a change in the kick's low end moves every other row; the kick's absolute 40 to 125 Hz band is unchanged (-11.6 against -11.5 dBFS^2).
+
+### Verification (exit codes read directly)
+
+```
+$ node --check app/engine/song.js           -> exit 0
+$ node --check app/engine/synths.js         -> exit 0
+$ node tools/synths-check.js                -> OK: 109 checks passed   exit 0
+$ node app/engine/selfcheck.js              -> OK: 340 checks passed   exit 0
+$ node tools/render.js --page app --sections intro --bars 16 --song v3   -> exit 0, page errors: none
+$ node tools/render.js --page app --sections break --bars 16 --song v3  -> exit 0, page errors: none
+$ node tools/render.js --page app --sections mainB --bars 16 --song v3 --solo bass -> exit 0, page errors: none
+$ python3 tools/score.py <intro>  --ref <BRIEF reference> --v3   -> exit 0
+$ python3 tools/score.py <break>  --ref <BRIEF reference> --v3   -> exit 0
+$ python3 tools/score.py <mainB>  --ref <BRIEF reference> --v3   -> exit 0
+$ python3 tools/score.py <mainB bass solo> --ref <BRIEF reference> --onsets -> exit 0
+```
+
+### Open
+
+- Break 8 to 12 kHz is 3.6 dB low in absolute terms (the cost of the 7 kHz hat lowpass); the 29-band break 16 kHz is +8.0 relative (the denominator effect above; absolute 12 to 16 kHz is within 1 dB).
+- The kick's 630 to 1250 Hz is about 10 dB low (the drive's upper harmonics are gone); the +8 dB peak at 1 kHz recovers 3 dB of it. Decision for the coordinator: the 400 to 630 Hz fix costs the kick's 1 kHz unless the drive is put back for the upper harmonics only.
+- Bass step 1: the onset is noisy (sd 2.7 to 7.8 ms per render); the pass is at this one render.
+- Outro top band: not touched.
+- No commits.

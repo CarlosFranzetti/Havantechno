@@ -191,6 +191,14 @@
   function bassVariant() {
     var v = grid(['.o....o....o..o.', '.o......o..X..o.'], HIT);
     v.cells[6].nudge = 2 / 24;
+    // A9 (iteration 4): the fourth-order highpass at 95 Hz delays every bass step by about 8 ms (steps 1, 6, 11 and 14
+    // all 7 to 9 ms late against the record's onsets): every hit goes 1.6 24ths of a step early, and steps 11 and 14
+    // one 24th more. 1 24th of a step is 4.96 ms at 0.40 swing (the sequencer's unit)
+    for (var i = 0; i < v.cells.length; i++) if (v.cells[i]) v.cells[i].nudge = (v.cells[i].nudge || 0) - 1.6 / 24;
+    var late = [11, 14, 27, 30];
+    for (var k = 0; k < late.length; k++) if (v.cells[late[k]]) v.cells[late[k]].nudge -= 1 / 24;
+    v.cells[6].nudge = -1.4 / 24;   // step 6 (bar 1): its +2/24 was not the record's early step (A9, iteration 4)
+    v.cells[1].nudge -= 1.2 / 24; v.cells[17].nudge -= 1.2 / 24;   // step 1: about 6 ms earlier (A9's relative check)
     return v;
   }
   // the on-beat hat layer (E3 on-beat section, LOG 01:12): X at steps 0 and 8 at 0.85, o at steps 5 and 13 at -3 dB
@@ -201,10 +209,10 @@
     progression: ['G#m11f'],
     sends: copy(GUIDANCE.sends),
     tracks: [
-      { name: 'kick', inst: 'kick', gain: 0.58,
+      { name: 'kick', inst: 'kick', gain: 0.96,
         params: { tune: 53, punch: 265, tau: 0.022, attack: 0.02, swell: 2, hold: 0.045, decay: 0.45, length: 0.197, harmonic: 0.1,
-                  click: 0.05, clickDecay: 0.0015, clickLp: 12000, drive: 0.1 },
-        chain: [{ type: 'eq3', name: 'lc', low: 0, lowFreq: 90 }],
+                  click: 0.05, clickDecay: 0.0015, clickLp: 12000, drive: 0 },
+        chain: [{ type: 'eq3', name: 'lc', low: 0, lowFreq: 90, mid: 8, midFreq: 1000, midQ: 2 }],
         duck: ['sub', 'bass', 'stab', 'pad'],
         patterns: { A: 'x...x...x...x...', G: 'x...x...x.......' } },
       { name: 'sub', inst: 'sub', note: 'C#1', gain: 0.088, gate: 16,
@@ -214,6 +222,7 @@
       { name: 'bass', inst: 'bass', note: 'G#1', gain: 0.305, gate: 0.9,
         params: { wave: 'sawtooth', detune: 4, sub: 0, cutoff: 450, env: 2600, res: 2.5, attack: 0.008, decay: 0.07, release: 0.03, drive: 0.5, glide: 0 },
         chain: [{ type: 'filter', name: 'hp', mode: 'highpass', cutoff: 95, q: 0.7 },
+                { type: 'filter', name: 'hp2', mode: 'highpass', cutoff: 95, q: 0.7 },
                 { type: 'eq3', name: 'eq', low: 2, lowFreq: 200, mid: 0, midFreq: 250, midQ: 1.2, high: -4, highFreq: 1500 }],
         sidechain: { depth: 0.5, release: 0.2 },
         variants: { D: bassVariant() } },
@@ -243,10 +252,12 @@
         params: { tone: 3500, q: 0.3, attack: 0.002, decay: 0.10, hold: 0 },
         patterns: { T: 'x...x...x...x...' } },
       { name: 'burst', inst: 'shaker', gain: 0.5, pan: -1,
-        params: { tone: 1600, q: 1.2, attack: 0.004, hold: 0.30, decay: 0.30 }, chain: [{ type: 'decorrelate', name: 'dec' }, { type: 'filter', name: 'lp', mode: 'lowpass', cutoff: 5000, q: 0.7 }],
+        params: { tone: 1600, q: 1.2, attack: 0.004, hold: 0.30, decay: 0.30 }, chain: [{ type: 'decorrelate', name: 'dec' }, { type: 'filter', name: 'lp', mode: 'lowpass', cutoff: 5000, q: 0.7 },
+               { type: 'eq3', name: 'hi', high: -3, highFreq: 7000 }],
         sends: { reverb: 0.35 }, patterns: { P: ['................', '................', '................', '............x...'] } },
       { name: 'burst_r', inst: 'shaker', gain: 0.5, pan: 1,
-        params: { tone: 1600, q: 1.2, attack: 0.004, hold: 0.30, decay: 0.30 }, chain: [{ type: 'decorrelate', name: 'dec' }, { type: 'filter', name: 'lp', mode: 'lowpass', cutoff: 5000, q: 0.7 }],
+        params: { tone: 1600, q: 1.2, attack: 0.004, hold: 0.30, decay: 0.30 }, chain: [{ type: 'decorrelate', name: 'dec' }, { type: 'filter', name: 'lp', mode: 'lowpass', cutoff: 5000, q: 0.7 },
+               { type: 'eq3', name: 'hi', high: -3, highFreq: 7000 }],
         sends: { reverb: 0.35 }, patterns: { P: ['................', '................', '................', '............x...'] } },
       { name: 'bed', inst: 'riser', gain: 0.044,
         params: { tone: 0, from: 10000, to: 10000, q: 0.3, floor: 0.04, hold: 15 * BAR },   // the rise is the fx (16 bars); the plateau runs to bar 139
@@ -287,7 +298,7 @@
                { param: 'shaker.level', from: 1, to: 0.22, curve: 'expo', bars: [2, 16] }] },
       { name: 'break', bars: 16, play: { kick: 'A', sub: 'A', bass: 'D', stab: 'S', pad: 'A', clap: 'A', hat_open: 'A', shaker_on: 'X', burst: 'P', burst_r: 'P' },
         set: { 'kick.lc.low': -9, 'sub.level': 0, 'clap.level': 0.2, 'hat_open.level': 0.45, 'hat_open.decay': 0.05, 'burst.level': 1, 'burst_r.level': 1,
-               'bed.lp.cutoff': 6000, 'hat_open.lp.cutoff': 8000 },   // the break hat is darker: its 12-16 kHz was 9 dB over E5 (solo measure)
+               'bed.lp.cutoff': 6000, 'hat_open.lp.cutoff': 7000 },   // the break hat is darker: its 12-16 kHz was 9 dB over E5 (solo measure)
         ramp: [{ param: 'bed.lp.cutoff', from: 6000, to: 11000, curve: 'expo', bars: [4, 16] }],
         fx: [{ bar: 4, track: 'bed', bars: 16 }] },
       { name: 'breakLate', bars: 8, play: { kick: 'A', sub: 'A', bass: 'D', stab: 'S', pad: 'A' },
