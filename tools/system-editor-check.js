@@ -59,6 +59,14 @@ vm.createContext(sb);
 function load(rel) { vm.runInContext(fs.readFileSync(path.join(APP, rel), 'utf8'), sb, { filename: rel }); }
 function exists(rel) { return fs.existsSync(path.join(APP, rel)); }
 
+// Node has no OfflineAudioContext: the Host decodes added audio through this stand-in (one frame per 4 bytes, 48 kHz stereo)
+sb.OfflineAudioContext = function () {
+  this.decodeAudioData = function (ab) {
+    var n = Math.max(1, ab.byteLength >> 2);
+    return Promise.resolve({ duration: n / 48000, sampleRate: 48000, numberOfChannels: 2, length: n, getChannelData: function () { return new Float32Array(n); } });
+  };
+};
+
 var used = {};
 ['engine/core.js', 'engine/synths.js', 'engine/processors.js', 'engine/songdoc.js', 'engine/sequencer.js', 'engine/song.js'].forEach(load);
 
@@ -294,6 +302,7 @@ if (used.widgets) {
   host.off('document', phCount);
 }
 
+function finish() {
 // update() x100 with the playhead moving, no DOM rebuild
 var nodesBefore = mountEl.find(function () { return true; }).length;
 var t0 = Date.now();
@@ -317,3 +326,97 @@ view.update(); view.dispose(); passed += 1;
 
 console.log('using: host=' + hostKind + ', widgets=' + (used.widgets ? 'real' : 'fake') + ', faces=' + (used.faces ? 'real' : 'fake') + ', windows=' + (used.windows ? 'real' : 'fake'));
 console.log('OK: ' + passed + ' checks passed');
+}
+
+// ------------------------------------------------------------------ sampler tracks: drop, "+ track" menu, remove
+function waitFor(cond, what) {
+  return new Promise(function (resolve, reject) {
+    var t0 = Date.now();
+    (function poll() {
+      if (cond()) return resolve();
+      if (Date.now() - t0 > 3000) return reject(new Error('timed out waiting for ' + what));
+      setTimeout(poll, 5);
+    })();
+  });
+}
+var picked = 0;
+function samplerTests() {
+  if (hostKind !== 'real Host.create()' || typeof host.addSampler !== 'function') { console.log('  (sampler cases skipped: need the real Host with addSampler)'); return Promise.resolve(); }
+  var ed0 = function () { return host.editor(); }, events = 0;
+  host.on('document', function () { events++; });
+  var fileA = { name: 'Kick Loop.wav', type: 'audio/wav', arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(960)); } };
+  var fileB = { name: 'Snare Hit.wav', type: 'audio/wav', arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(480)); } };
+  var txt = { name: 'notes.txt', type: 'text/plain', arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(8)); } };
+  function trackNames() { return host.document().tracks.map(function (t) { return t.name; }); }
+  function rowEl(n) { return mountEl.find(function (x) { return x.attrs['data-track'] === n; })[0]; }
+  function bodyEl() { return mountEl.find(function (x) { return hasClass(x, 'se-body'); })[0]; }
+  function menuEl() { return mountEl.find(function (x) { return hasClass(x, 'se-menu'); })[0]; }
+  function menuItem(label) { return menuEl().find(function (x) { return hasClass(x, 'se-menuitem') && label.test(x.textContent); })[0]; }
+  function plusBtn() { return mountEl.find(function (x) { return hasClass(x, 'se-btn') && x.textContent === '+ track'; })[0]; }
+  var n0 = trackNames().length, undo0, ev0;
+
+  // (1) drop target: dragover highlights, a text drag does not, dragleave clears
+  ok(bodyEl().listeners.drop && bodyEl().listeners.dragover, 'the track list is a drop target');
+  bodyEl().fire('dragover', { dataTransfer: { types: ['text/plain'] }, preventDefault: function () {} });
+  ok(!hasClass(bodyEl(), 'se-drop'), 'a text drag does not highlight the track list');
+  bodyEl().fire('dragenter', { dataTransfer: { types: ['Files'] }, preventDefault: function () {} });
+  bodyEl().fire('dragover', { dataTransfer: { types: ['Files'] }, preventDefault: function () {} });
+  ok(hasClass(bodyEl(), 'se-drop'), 'dragover with files highlights the track list');
+  bodyEl().fire('dragleave', { dataTransfer: { types: ['Files'] } });
+  ok(!hasClass(bodyEl(), 'se-drop'), 'dragleave clears the highlight');
+
+  // (2) a simulated drop (one audio file, one text file) adds one sampler track and a document event
+  ev0 = events; undo0 = ed0()._undo.length;
+  bodyEl().fire('drop', { dataTransfer: { types: ['Files'], files: [fileA, txt] }, preventDefault: function () {} });
+  return waitFor(function () { return trackNames().indexOf('Kick_Loop') >= 0; }, 'the dropped sampler track').then(function () {
+    var t = host.document().tracks.filter(function (x) { return x.name === 'Kick_Loop'; })[0];
+    ok(trackNames().length === n0 + 1, 'a drop of one audio file and one text file adds exactly one track (' + n0 + ' -> ' + trackNames().length + ')');
+    ok(t.type === 'sampler' && (t.family || 'drums') === 'drums' && host.document().audio[t.params.buffer], 'the track is a sampler on the file just decoded, family drums');
+    ok(events > ev0, "the drop caused a 'document' event (" + (events - ev0) + ')');
+    ok(t.variants.A && t.variants.A.cells.every(function (c) { return c === null; }), 'the new track starts with an empty pattern');
+    var names = mountEl.find(function (x) { return x.attrs['data-track']; }).map(function (x) { return x.attrs['data-track']; });
+    ok(names.indexOf('Kick_Loop') === 6 && rowEl('Kick_Loop').attrs['data-fam'] === 'drums', 'the row appears under DRUMS like any track (position ' + names.indexOf('Kick_Loop') + ')');
+    ok(/Kick_Loop/.test(mountEl.find(function (x) { return hasClass(x, 'se-dtitle') && /^PATTERN/.test(x.textContent); })[0].textContent), 'the new track is selected and its PATTERN face shows');
+    // (3) "+ track" -> "Sampler track from file..." uses Project.pickAudio then host.addSampler
+    sb.Project = { pickAudio: function () { picked++; return Promise.resolve(fileB); } };
+    plusBtn().fire('click');
+    ok(menuEl() && menuItem(/Sampler track from file/), 'the + track control opens a menu with "Sampler track from file..."');
+    menuItem(/Sampler track from file/).fire('click');
+    return waitFor(function () { return trackNames().indexOf('Snare_Hit') >= 0; }, 'the picked sampler track');
+  }).then(function () {
+    ok(picked === 1, 'Project.pickAudio was called once');
+    ok(!menuEl(), 'the menu closed after the choice');
+    // (4) the fresh row is editable: the first step toggle makes the current section play variant A (one undo entry)
+    var u = ed0()._undo.length, secIdx = host.transport.pos().section, secName = host.document().sections[secIdx].name;
+    ok(!host.document().sections[secIdx].play.Snare_Hit, 'a fresh sampler is not played by the current section yet');
+    rowEl('Snare_Hit').find(function (x) { return x.attrs['data-i'] === '2'; })[0].fire('click');
+    var sec = host.document().sections[secIdx], tr = host.document().tracks.filter(function (x) { return x.name === 'Snare_Hit'; })[0];
+    ok(sec.play.Snare_Hit && tr.variants[sec.play.Snare_Hit].cells[2], 'the first step toggle makes ' + secName + ' play the sampler and sets the step');
+    ok(ed0()._undo.length === u + 1, 'that first edit is one undo entry (+' + (ed0()._undo.length - u) + ')');
+    // (5) remove from the row's context menu: one undo entry; undo brings the track and its play back
+    var u2 = ed0()._undo.length, ev1 = events;
+    rowEl('Snare_Hit').fire('contextmenu', { clientX: 10, clientY: 10, preventDefault: function () {} });
+    ok(menuEl() && menuItem(/Remove track/), 'a sampler row has a context menu with "Remove track"');
+    menuItem(/Remove track/).fire('click');
+    ok(trackNames().indexOf('Snare_Hit') < 0 && !rowEl('Snare_Hit'), 'Remove track removes the sampler track and its row');
+    ok(ed0()._undo.length === u2 + 1, 'removing a track is one undo entry (+' + (ed0()._undo.length - u2) + ')');
+    ok(events === ev1 + 1, "removing a track emits one 'document' event");
+    ed0().undo(); host.commit();
+    ok(trackNames().indexOf('Snare_Hit') >= 0 && !!rowEl('Snare_Hit'), 'undo brings the removed track back, with its row');
+    ok(host.document().sections[secIdx].play.Snare_Hit, 'undo also restores the section play entry');
+    // (6) header menu: Remove track acts on the selected sampler and is disabled for a built-in track
+    view.select('kick');
+    plusBtn().fire('click');
+    ok(menuItem(/Remove track/).attrs.disabled !== undefined, 'the header menu disables Remove track on a built-in track');
+    menuItem(/Remove track/).fire('click');
+    ok(trackNames().indexOf('kick') >= 0, 'a disabled Remove track does nothing');
+    plusBtn().fire('click');                       // toggles the menu closed
+    view.select('Kick_Loop');
+    plusBtn().fire('click');
+    menuItem(/Remove track/).fire('click');
+    ok(trackNames().indexOf('Kick_Loop') < 0 && trackNames().length === n0 + 1, 'the header menu removes the selected sampler track');
+    ok(!/Kick_Loop/.test(mountEl.find(function (x) { return hasClass(x, 'se-dtitle') && /^PATTERN/.test(x.textContent); })[0].textContent), 'the selection moved off the removed track');
+  });
+}
+
+samplerTests().then(finish, function (e) { console.log('FAIL: ' + e.message); process.exitCode = 1; });
