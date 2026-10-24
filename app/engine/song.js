@@ -165,6 +165,7 @@
   // EDT). A new constant: GUIDANCE and GUIDANCE_V2 are not changed. The track gains are starting values to be
   // re-set from the level table (see the log); A9 scores them.
   var BAR = 4 * 60 / 126;                  // one bar at 126 BPM (1.9047619 s)
+  var HAT_OPEN = { x: { vel: 0.85, nudge: -1 / 24 } };   // A9: the open hats land 6 ms late; one 24th of a step (5 ms) early
   var HIT = { x: { vel: 0.85 }, X: { vel: 1, acc: true }, o: { vel: 0.5 } };
 
   // a variant from bar strings: each character maps to a cell (map), '.' is an empty step
@@ -227,10 +228,10 @@
       { name: 'clap', inst: 'clap', gain: 0.296,
         params: { tone: 1500, q: 0.4, decay: 0.12, tail: 0.3, tailDecay: 0.25, flams: 3, flam: 0.011, first: 1 },
         sends: { reverb: 0.25 }, patterns: { A: '....x.......x...' } },
-      { name: 'hat_open', inst: 'hat_open', gain: 0.154, pan: 0.08,
+      { name: 'hat_open', inst: 'hat_open', gain: 1.48, pan: 0.08,
         params: { decay: 0.26, tone: 2000, ring: 1500, metal: 0.15, metalHp: 4000 },
         chain: [{ type: 'filter', name: 'lp', mode: 'lowpass', cutoff: 11000, q: 0.7 }],
-        sends: { reverb: 0.12 }, patterns: { A: '..x...x...x...x.' } },
+        sends: { reverb: 0.12 }, variants: { A: grid(['..x...x...x...x.'], HAT_OPEN) } },
       { name: 'shaker', inst: 'shaker', gain: 0.042, pan: 0.3,
         params: { tone: 6500, q: 0.35, attack: 0.028, decay: 0.07 },
         patterns: { G: '...x...x...x...x' } },
@@ -240,14 +241,18 @@
       { name: 'tick', inst: 'shaker', gain: 0.053,
         params: { tone: 3500, q: 0.3, attack: 0.002, decay: 0.10, hold: 0 },
         patterns: { T: 'x...x...x...x...' } },
-      { name: 'burst', inst: 'shaker', gain: 0.035, pan: -1,
-        params: { tone: 1400, q: 0.35, attack: 0.004, hold: 0.30, decay: 0.30 }, chain: [{ type: 'decorrelate', name: 'dec' }],
+      { name: 'burst', inst: 'shaker', gain: 0.058, pan: -1,
+        params: { tone: 1600, q: 1.2, attack: 0.004, hold: 0.30, decay: 0.30 }, chain: [{ type: 'decorrelate', name: 'dec' }],
         sends: { reverb: 0.35 }, patterns: { P: ['................', '................', '................', '............x...'] } },
-      { name: 'burst_r', inst: 'shaker', gain: 0.035, pan: 1,
-        params: { tone: 1400, q: 0.35, attack: 0.004, hold: 0.30, decay: 0.30 }, chain: [{ type: 'decorrelate', name: 'dec' }],
+      { name: 'burst_r', inst: 'shaker', gain: 0.058, pan: 1,
+        params: { tone: 1600, q: 1.2, attack: 0.004, hold: 0.30, decay: 0.30 }, chain: [{ type: 'decorrelate', name: 'dec' }],
         sends: { reverb: 0.35 }, patterns: { P: ['................', '................', '................', '............x...'] } },
-      { name: 'bed', inst: 'riser', gain: 0.9,
-        params: { tone: 0, from: 5000, to: 16000, q: 0.3, floor: 0.04, hold: 15 * BAR },   // the rise is the fx (16 bars); the plateau runs to bar 139
+      { name: 'bed', inst: 'riser', gain: 0.044,
+        params: { tone: 0, from: 10000, to: 10000, q: 0.3, floor: 0.04, hold: 15 * BAR },   // the rise is the fx (16 bars); the plateau runs to bar 139
+        // E3: a noise bed whose lowpass opens from about 5 kHz at bar 108 to above 16 kHz at bar 124 (V3-SPEC 2.12).
+        // The riser's own sweep is off, so the filters carry the shape. decorrelate: the record's bed is wide.
+        chain: [{ type: 'filter', name: 'hp', mode: 'highpass', cutoff: 4000, q: 0.7 }, { type: 'decorrelate', name: 'dec' },
+                { type: 'filter', name: 'lp', mode: 'lowpass', cutoff: 6000, q: 0.7 }],
         patterns: {} }
     ],
     // 15 sections, 200 bars (E4's table, amended by the rulings; see V3-SPEC section 3.2)
@@ -278,11 +283,14 @@
                { param: 'sub.level', from: 1, to: 0.03, curve: 'expo', bars: [5, 16] },
                { param: 'shaker.level', from: 1, to: 0.22, curve: 'expo', bars: [2, 16] }] },
       { name: 'break', bars: 16, play: { kick: 'A', sub: 'A', bass: 'D', stab: 'S', pad: 'A', clap: 'A', hat_open: 'A', shaker_on: 'X', burst: 'P', burst_r: 'P' },
-        set: { 'kick.lc.low': -9, 'sub.level': 0, 'clap.level': 0.2, 'hat_open.level': 0.45, 'hat_open.decay': 0.05, 'burst.level': 1, 'burst_r.level': 1 },
+        set: { 'kick.lc.low': -9, 'sub.level': 0, 'clap.level': 0.2, 'hat_open.level': 0.45, 'hat_open.decay': 0.05, 'burst.level': 1, 'burst_r.level': 1,
+               'bed.lp.cutoff': 6000, 'hat_open.lp.cutoff': 8000 },   // the break hat is darker: its 12-16 kHz was 9 dB over E5 (solo measure)
+        ramp: [{ param: 'bed.lp.cutoff', from: 6000, to: 11000, curve: 'expo', bars: [4, 16] }],
         fx: [{ bar: 4, track: 'bed', bars: 16 }] },
-      { name: 'breakLate', bars: 8, play: { kick: 'A', sub: 'A', bass: 'D', stab: 'S', pad: 'A' } },
+      { name: 'breakLate', bars: 8, play: { kick: 'A', sub: 'A', bass: 'D', stab: 'S', pad: 'A' },
+        ramp: [{ param: 'bed.lp.cutoff', from: 11000, to: 16000, curve: 'expo', bars: [0, 4] }] },
       { name: 'breakEnd', bars: 7, play: { kick: 'A', sub: 'A', bass: 'D', stab: 'S', pad: 'A', hat_open: 'A' },
-        set: { 'sub.level': 0, 'hat_open.level': 0.12, 'hat_open.decay': 0.26, 'stab.cutoff': 700 },
+        set: { 'sub.level': 0, 'hat_open.level': 0.12, 'hat_open.decay': 0.26, 'stab.cutoff': 700, 'bed.lp.cutoff': 16000, 'hat_open.lp.cutoff': 11000 },
         ramp: [{ param: 'sub.level', from: 0.03, to: 1, curve: 'expo', bars: [2, 7] },
                { param: 'hat_open.level', from: 0.12, to: 0.6, curve: 'expo', bars: [0, 7] },
                { param: 'stab.cutoff', from: 700, to: 1000, curve: 'expo', bars: [0, 7] }] },

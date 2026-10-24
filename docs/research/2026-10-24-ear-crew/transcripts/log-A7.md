@@ -119,3 +119,69 @@ Full song (after the last gain change): `node tools/render.js --page app --bars 
 - The check-suite and render exit codes are above. No commits.
 - Open for the coordinator: the end tail (decision 10), the bed's end at bar 139 (decision 5), `beat3Phase` (decision 2), the peak observation above.
 
+
+---
+
+## Round 4: A9's section 7 fixes (coordinator, 2026-10-24 about 01:48 EDT, 05:48 UTC)
+
+Read `log-A9.md` section 7 (the V3 delta table, the three largest deltas, the open-hat timing). Four fixes asked. Scoring with `tools/score.py --ref <BRIEF reference> --v3` on fresh renders: mainA 0-16, the absolute window 104 to 136 (break and breakEnd together, because the bed is a fx that starts at bar 108 and a render that begins at 128 never triggers it), and intro2 0-8. Exit codes read directly: every score and render exit 0, `page errors: none` on every render.
+
+### Correction to my own earlier bed check
+
+My bed check in the previous round read bars 4 to 6 instead of 16 to 24 (the offset `16*4*SD` is four bars, not one), so the "matches E5 at -45" result was a rise measurement, not the plateau. The bed was about 25 dB too loud from the start. The corrected plateau measurement (bars 120 to 127, bed solo) of the first new bed was -20 dB against E5's -45, and the gain is now 0.044.
+
+### What changed
+
+1. **Bed (break and breakEnd, 8 to 16 kHz).** The riser's own sweep is off (`from` = `to` = 10 kHz); the bed chain is `hp` 4 kHz, `decorrelate` (A8's, the record's bed is wide), then `lp` 6 kHz at bar 108, opening to 11 kHz by bar 120 (break ramp, bars 4 to 16) and to 16 kHz by bar 124 (breakLate ramp, bars 0 to 4); `breakEnd` sets the lowpass to 16 kHz. The bed's gain is 0.044 (solo plateau -46.3 / -45.3 / -45.9 dBFS^2 against E5's -45 / -45 / -48). The rise follows E3's shape (solo -71 to -91 dBFS^2 at bars 104 to 111, -56 to -65 at 112 to 119).
+2. **Hat gain (mainA high band, the ruling).** `hat_open` gain 0.154 to 1.48. Solo measure, sample peak per hit against the kick: the hat was -18.0 dB re kick at 0.154, now -0.04 (target 0 dB in the main sections, per the ruling).
+3. **Burst.** The burst's level already met E5's -30 dB re kick on the peak basis (-29.9 dB at gain 0.035). A9's miss is a band-RMS basis: E3's -31 dBFS is a 1 to 2.5 kHz RMS, and a sustained noise with a -30 dB peak has a band RMS near -42 dBFS, so the two rules conflict for this sound. I did what the peak rule allows: the burst band was narrowed (`tone` 1600, `q` 1.2, from 1400 and 0.35; the record's 1 to 2.5 kHz band holds 13 dB more than 2.5 to 4 kHz), and the gain set to 0.058 for the -30 dB peak (solo -30.00). The intro2 2.5 to 4 kHz delta moved from -15.4 to -14.1 dB; it cannot reach -31 without giving up the peak rule. **Ruling needed** (see below).
+4. **Open hats.** The hat cells carry `nudge` -1/24 (about -5 ms). A9's onset check: the render's open hats moved from -0.95 ms to -5.87 ms against the reference's -7.14 ms (absolute deltas now +1.3, +1.2, +0.9, +0.9 ms, against +6 before).
+
+Also in this round: the break hat's own lowpass is 8 kHz in `break` (the hat's 12 to 16 kHz was 9 dB over E5 on its own; solo measure), back to 11 kHz at `breakEnd`.
+
+### Scores: the three deltas (render minus reference, `score.py --v3`)
+
+| delta | before | after |
+|---|---|---|
+| break 16 kHz band (29-band table, dB re window total) | +27.3 | +9.5 (12.5 kHz: +3.2 to -0.8) |
+| break LUFS (bars 104 to 127) | +1.58 | +1.29 |
+| breakEnd LUFS (bars 128 to 135) | +5.79 (A9's full render) | +0.77 (104 to 136 render) |
+| breakEnd 16 kHz band | +29.6 (A9's full render) | +6.9 (104 to 136 render) |
+| mainA 16 kHz band | -12.4 | +1.6 |
+| mainA 8 kHz / 10 kHz bands | -15.5 / -13.8 | +2.4 / +3.5 |
+| mainA LUFS (bars 40 to 55) | -0.16 | +0.41 |
+| intro2 2.5 kHz / 4 kHz band (burst) | -15.4 / -16.5 | -14.1 / -15.5 |
+| intro2 LUFS | -1.33 | -1.33 |
+| open hats, timing vs record | +6.2 ms late | +1.3 ms |
+
+The 29-band rows are each band's share of its window total, so a loud low end (the reference's 50 Hz, the render's 50 Hz at +4 to +12 dB) makes every high-band delta look larger. The absolute check (mid mean square, E5's values for bars 104 to 119, which are absolute): the mix measures -35.9 / -40.6 / -50.4 dBFS^2 at 4 to 8 / 8 to 12 / 12 to 16 kHz, against E5's -38.2 / -40.1 / -53.5, so the break's high band is within 2 to 3 dB in absolute terms. mainA is 3 to 5 dB above E5's per-bar values in the high band (-29.3 / -30.0 / -36.9 against -32.5 / -34.7 / -42.0): the 0 dB hat ruling is the cause, and I kept it.
+
+### Open, for the coordinator's ruling
+
+- **Burst, 1 to 2.5 kHz band.** E3's -31 dBFS (band RMS) and E5's -30 dB re kick (peak) cannot both hold for a sustained noise (the band RMS of a -30 dB peak is about -42). I kept the peak rule (the number the coordinator asked for). If the band rule is the one wanted, the burst peak would have to be about -18 dB re kick (+12 dB on the peak rule, about +25 dB on the current band RMS), which would make the bursts the loudest element. Ruling: which basis?
+- **Hat level in mainA.** The 0 dB peak ruling puts the mainA high band 3 to 5 dB above E5's absolute per-bar values. A -3 dB hat would meet the absolute values and miss the peak ruling. Ruling: which basis?
+- **Bed to bar 139 and the breakEnd bed** are as before (the bed's plateau runs to bar 139; A9 measures what is left).
+
+### Verification (exit codes read directly)
+
+```
+$ node --check app/engine/song.js                 -> exit 0
+$ node --check app/engine/synths.js               -> exit 0
+$ node tools/synths-check.js                      -> OK: 109 checks passed   exit 0
+$ node app/engine/selfcheck.js                    -> OK: 340 checks passed   exit 0
+$ node tools/render.js --page app --sections mainA --bars 16 --song v3       -> exit 0, page errors: none
+$ node tools/render.js --page app --sections intro2 --bars 8 --song v3       -> exit 0, page errors: none
+$ node tools/render.js --page app --bars 104:136 --song v3                   -> exit 0, page errors: none
+$ python3 tools/score.py tools/out/app-mainA-0-16-v3.wav --ref <BRIEF reference> --v3   -> exit 0
+$ python3 tools/score.py tools/out/app-bars-104-136-v3.wav --ref <BRIEF reference> --v3 -> exit 0
+$ python3 tools/score.py tools/out/app-intro2-0-8-v3.wav --ref <BRIEF reference> --v3   -> exit 0
+$ python3 tools/score.py tools/out/app-mainA-0-16-v3.wav --ref <BRIEF reference> --onsets --onset-band 6000-16000 -> exit 0
+```
+
+The reference path is the BRIEF's (`scratchpad/ref/reference.mp3`), not the path A9 printed. No commits.
+
+### For A9
+
+- The breakEnd window: score the 104 to 136 render (`--bars 104:136`), not a breakEnd-only render; the bed is a fx that begins at bar 108.
+- The bed gain is 0.044 and the hat gain 1.48; the burst is narrow (1.6 kHz, Q 1.2) with gain 0.058.
+- The reference path I used is the BRIEF's.
