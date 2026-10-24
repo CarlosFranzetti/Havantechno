@@ -152,3 +152,7 @@ DISCUSSION.md compiled by the scribe (35 threads) and committed. The scribe's in
 ## 2026-10-24 06:02 EDT (10:02 UTC) — second session-limit stop; A9 resumed
 
 A9 was stopped by the account's session limit while starting the fourth score (reset 5:20 AM ET / 9:20 UTC). Resumed at 6:02 AM ET. The owner asked the session to leave AassMaster: that checkout is clean and fully pushed and is not touched; removing its folder needs a person's approval (a safety check refused the coordinator), and the session's GitHub tooling scope (fixed at session start) can only change in a new session started from Havantechno. All DAW work continues on Havantechno main.
+
+## 2026-10-24 06:07 EDT (10:07 UTC) — A9's fourth score; the loop pauses
+
+log-A9.md section 10 committed. Section loudness deltas: intro +0.24, intro2 +0.23, build −0.23, mainA +0.34, mainA2 +0.47, break +0.33, breakEnd −0.24, mainB +0.34, outro −0.43 LU; whole song +0.24. Bands within 2 dB: 13, 16, 17, 16, 18, 17, 15, 17, 15 of 29. Hats and bass onsets all PASS. Largest remaining: break 16 kHz +11.2 (break hat), outro 16 kHz −9.7 (unnamed source), intro 1.25 to 1.6 kHz −9 (burst tone). Tail RT60 by band: the render's mids too short, top too long (A8). REPORT.md finalized with these numbers; docs/research/README.md row added. The loop pauses here for the owner to listen; what remains is listed in REPORT.md section 6 with owners.

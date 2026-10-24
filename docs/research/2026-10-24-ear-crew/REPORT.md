@@ -8,7 +8,7 @@ The owner listened to the app's first full render against the original and said 
 
 ## 2. Result in one paragraph
 
-The recreation's harmony, bass and arrangement were wrong in kind, not in degree, and the master was reshaping the balance by up to 8 dB per band. After five analysts' inventories, a cross-read that settled nine disputes by measurement, a consolidated spec and three build-and-score iterations, the V3 song renders within 1 LU of the record in every one of nine sections (whole song −10.62 LUFS against −10.65), with the record's ceiling, the record's swing on every hat, and the bass on grid in three of four measured steps. In third-octave terms, between 8 and 16 of 29 bands per section sit within 2 dB of the record; the rest are named in section 6 with an owner each. Nobody has listened to it.
+The recreation's harmony, bass and arrangement were wrong in kind, not in degree, and the master was reshaping the balance by up to 8 dB per band. After five analysts' inventories, a cross-read that settled nine disputes by measurement, a consolidated spec and three build-and-score iterations, the V3 song renders within 0.5 LU of the record in every one of nine sections (whole song −10.41 LUFS against −10.65), with the record's ceiling, the record's swing on every hat, and the bass on the record's timing on all four measured steps. In third-octave terms, between 13 and 18 of 29 bands per section sit within 2 dB of the record after the fourth pass (8 to 16 after the third); the rest are named in section 6 with an owner each. Nobody has listened to it.
 
 ## 3. What the record contains (the inventory)
 
@@ -50,16 +50,21 @@ Loudness delta per section, render minus record (LU), `log-A9.md` sections 7 to 
 | 1 (first V3) | −1.32 | −1.33 | +0.28 | −0.18 | +0.14 | +3.22 | +5.79 | +0.58 | −0.18 |
 | 2 (bed, hat, nudge) | −1.32 | −1.33 | +0.56 | +0.39 | +0.58 | +1.27 | +0.76 | +0.81 | −0.18 |
 | 3 (burst, bass hp, stab, intro) | −0.03 | −0.03 | −0.58 | +0.12 | +0.27 | +0.12 | −0.44 | +0.18 | −0.69 |
+| 4 (kick drive, 4th-order bass hp and nudges, break hat, burst shelf) | +0.24 | +0.23 | −0.23 | +0.34 | +0.47 | +0.33 | −0.24 | +0.34 | −0.43 |
 
-Third-octave bands within 2 dB of the record at score 3: intro 8 of 29, intro2 14, build 13, mainA 12, mainA2 14, break 15, breakEnd 14, mainB 16, outro 12. Timing at score 3: every off-beat hat within 1.2 ms of the record; bass steps 1 and 6 pass, 11 and 14 fail by 6 to 8 ms after the bass highpass delayed its onsets (iteration 4 addresses it). The ceiling holds: sample peak −0.55 dBFS, true peak −0.16 dBTP, no overshoot.
+Third-octave bands within 2 dB of the record, score 3 → score 4: intro 8 → 13 of 29, intro2 14 → 16, build 13 → 17, mainA 12 → 16, mainA2 14 → 18, break 15 → 17, breakEnd 14 → 15, mainB 16 → 17, outro 12 → 15. Timing at score 4: every off-beat hat within 1.2 ms of the record; bass steps 1, 6, 11 and 14 all pass (−2.2, +2.5, +2.3, +2.7 ms) after the 4th-order highpass's delay was compensated with fitted nudges. The ceiling holds: sample peak −0.55 dBFS, true peak −0.10 dBTP, no overshoot. Whole song −10.41 LUFS against −10.65.
 
-What each iteration changed: (1) the break bed came down 25 dB (its first level had been read off the wrong bars) and was decorrelated; the open hat rose 14 dB to the record's level and was nudged 5 ms earlier; (2) the bursts came up to the record's band level, a highpass went under the bass, the stab lost 3 dB and went mono below 250 Hz in the build, the intro's kick and drone rose 1.3 dB together, the kick's click was lowpassed at 12 kHz; (3) see section 6.
+What each iteration changed: (1) the break bed came down 25 dB (its first level had been read off the wrong bars) and was decorrelated; the open hat rose 14 dB to the record's level and was nudged 5 ms earlier; (2) the bursts came up to the record's band level, a highpass went under the bass, the stab lost 3 dB and went mono below 250 Hz in the build, the intro's kick and drone rose 1.3 dB together, the kick's click was lowpassed at 12 kHz; (3) the kick lost its drive (the intro's 500 Hz excess fell from +10.3 to +3.0 dB) with a 1 kHz peak recovering part of what that cost, the bass highpass became 4th order (break 40 Hz +14 → −1.9 dB) with nudges fitted so all four measured bass steps pass, the break hat's lowpass went to 7 kHz, the bursts gained a −3 dB shelf above 7 kHz.
 
 ## 6. What is still off, with an owner
 
-From A9's third score and iteration 4's scope:
+From A9's fourth score (`log-A9.md` section 10), where the loop paused:
 
-- The break's open hat is too bright at 16 kHz (+11 dB); the kick alone is +10 dB at 500 Hz in the intro; the bursts are 3 dB hot at 7 to 11 kHz; the bass keeps +7 dB at 30 to 50 Hz in the break (a 4th-order highpass is the proposal); the bass onset regression. All A7, iteration 4.
+- The break's open hat is still too bright at 16 kHz (+11.2 dB; its lowpass at 7 kHz was not enough), and breakEnd's 16 kHz +8.8; mainA's 500 Hz +6.4 is unattributed. A7.
+- The intro's bursts are 9 dB quiet at 1.25 to 1.6 kHz though they pass at 2.5 to 4 kHz: the burst's spectrum is flatter than the record's (tone and level, A7).
+- The record's outro has a top-band source (8 to 16 kHz, −9.7 at 16 kHz in the render) the inventory never named. Open for E3 and E4.
+- 25 Hz is 6 dB low in the build, mainA2 and mainB (the drone's level or its partials; A7).
+- The end tail's RT60 by band, record against render: 500 Hz 5.5 against 2.9 s; 2 kHz 4.2 against 1.7 s; 8 kHz 1.2 against 2.3 s. The render's mids ring too short and its top too long: A8's reverb damping.
 - The record's outro has a top-band source (8 to 16 kHz) the inventory never named; the recreation is 8 to 10 dB quiet there. Open for E3 and E4.
 - The intro's side energy: the record is wide at 120 Hz to 1 kHz in the intro (burst reverb tails and the faint 408/472 Hz tones); the recreation is near mono there (S/M −32 dB). A texture item, not addressed.
 - The break's 4 to 10 kHz is more mono than the record's (−11.8 against −5.0 dB S/M).

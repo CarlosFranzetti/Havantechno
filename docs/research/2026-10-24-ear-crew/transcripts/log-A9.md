@@ -812,3 +812,262 @@ later on steps 11 and 14. **Owner A7** (bass hp; the hp is a filter, so its phas
   high-pass; burst top band (4 kHz cutoff estimate).
 - A8: nothing new from this loop (the eq question for bass 16 kHz is listed under A7 until checked).
 - Mine: the outro top band has no spec element to score against; ask E3 and E4 for one.
+
+
+## 10. Fourth and final score of this session (iteration 4, after A7's iteration 4)
+
+Exit codes read directly: `--v3` on the full render 0; `--v3` on the four 16-bar windows 0 each (re-rendered with `--song v3`);
+`--onsets` 0 (mainA hats, mainB bass; the bass solo re-rendered, 0); solo renders 0 (mainA hat_open, mainB bass, intro burst and
+kick); selftest 0; py_compile 0; node --check 0. The full render is the coordinator's `tools/out/app-bars-0-200-v3.wav` (sidecar
+latency 458, tail 6.5 s, swing 0.40). No engine files changed; no commits.
+
+### 10.1 Per-section delta table, full V3 song (render minus reference)
+
+Pasted from the saved run (`scratchpad/loop4/v3_full.txt`). The last column is the whole song (LUFS +0.24, which is the coordinator's
+-10.41 against the reference's -10.65).
+
+```
+V3 report: render tools/out/app-bars-0-200-v3.wav (layout v3, latency 458 samples), reference /root/.claude/uploads/341aa418-0695-5408-80be-331d2fec6cae/9014b1a3-Guidance_Original_Mix_192kbps.mp3
+measure                           intro   intro2    build    mainA   mainA2    break breakEnd    mainB    outro break104 break120 render0-
+------------------------------------------------------------------------------------------------------------------------------------------
+LOUDNESS AND PEAKS (render minus reference)
+LUFS ungated (E5 1b)               0.24     0.23    -0.23     0.34     0.47     0.33    -0.24     0.34    -0.43     0.44     0.15     0.24
+LUFS gated (O1 M9)                 0.24     0.23    -0.23     0.34     0.47     0.33    -0.24     0.34    -0.43     0.44     0.15     0.24
+sample peak dBFS                  -0.06    -0.03    -0.03    -0.34    -0.31    -0.18    -0.04    -0.37    -0.16    -0.18    -0.85    -0.37
+true peak dBTP                    -0.06    -0.02     0.02    -0.13     0.06    -0.14     0.02    -0.10    -0.24    -0.14    -0.86    -0.10
+rms dBFS (L+R mean square)         0.62     0.60    -0.05     0.30     0.41     0.26    -0.21     0.34    -0.15     0.36     0.08     0.31
+crest, sample peak - rms          -0.68    -0.63     0.01    -0.64    -0.72    -0.44     0.17    -0.71    -0.01    -0.53    -0.93    -0.68
+PLR, TP - gated LUFS              -0.30    -0.25     0.25    -0.47    -0.40    -0.47     0.26    -0.45     0.18    -0.58    -1.01    -0.34
+
+29 THIRD-OCTAVE BANDS, dB re window total (render minus reference); the E5 check is printed below the table
+25 Hz                             -4.79    -5.26    -6.18    -6.14    -6.24    -4.81    -7.75    -5.96    -5.56    -4.77    -4.71    -5.91
+31.5 Hz                            3.85     3.71     2.87     2.86     2.59   -11.07     1.53     2.86     3.30   -11.14   -10.92     2.99
+40 Hz                             -1.88    -1.99    -2.92    -2.84    -3.16    -2.01    -4.41    -2.91    -2.33    -1.96    -2.12    -2.70
+50 Hz                              1.72     1.71     2.50     0.96     0.77     1.84     2.23     1.04     1.44     1.74     2.03     1.25
+63 Hz                              0.77     0.76     1.10     0.09     0.09    -0.21     0.24     0.17     0.56    -0.31    -0.05     0.34
+80 Hz                              0.24     0.27     0.48    -0.07    -0.05    -0.08     0.24     0.06     0.35    -0.17     0.06     0.12
+100 Hz                            -1.00    -1.06    -1.36    -1.28    -1.10    -1.68    -1.64    -1.28    -0.98    -1.71    -1.68    -1.21
+125 Hz                            -2.57    -2.48    -2.98    -2.90    -2.83    -3.09    -2.71    -2.67    -2.45    -3.16    -3.01    -2.78
+160 Hz                            -0.93    -0.91    -1.25    -1.58    -1.14     0.39     0.44    -0.10     0.18     0.39     0.39    -0.54
+200 Hz                            -1.60    -1.58    -1.27    -1.09    -1.05    -0.50    -0.40    -0.91    -1.51    -0.57    -0.33    -1.07
+250 Hz                            -2.19    -2.14    -0.58     0.29     0.61     0.82     0.57     0.17    -1.10     0.77     0.95    -0.05
+315 Hz                            -1.23    -1.13     1.73     1.21     0.23     0.23    -0.07    -0.85    -4.61    -0.14     1.00    -0.36
+400 Hz                            -1.43    -1.39     3.37     5.35     3.74     3.84     3.63     2.56     0.84     3.59     4.37     3.26
+500 Hz                             2.96     1.57     3.99     6.38     5.72     4.81     5.01     3.77     3.74     4.88     4.69     4.66
+630 Hz                            -1.19    -7.12    -2.02     0.76     1.33    -0.78    -1.02    -1.18     0.57    -0.12    -1.84    -0.44
+800 Hz                            -2.10    -5.97     0.76     6.15     3.45     0.16     0.56    -0.32     1.07     0.45    -0.35     1.26
+1000 Hz                           -5.59    -7.22     5.08     4.31     5.75     0.78     1.09     2.13     2.50     3.87    -2.15     2.54
+1250 Hz                           -8.96    -3.63    -1.79     1.31    -0.12    -2.72    -4.42     0.23    -1.05    -0.81    -5.14    -0.99
+1600 Hz                           -9.09    -1.22    -0.72    -2.63    -0.16    -3.22    -5.92    -0.89    -1.82    -2.90    -3.95    -1.99
+2000 Hz                           -6.61     0.88     3.14     1.18     2.69     3.03    -3.55     2.61    -1.97     3.06     2.81     1.60
+2500 Hz                           -2.79    -1.50     1.46     1.09     1.58     1.17    -3.01     1.82    -1.76     1.35     0.35     1.17
+3150 Hz                            0.05    -2.09     1.89     2.13     1.42    -1.35    -3.76     2.12    -1.90    -1.04    -3.47     1.46
+4000 Hz                            1.26    -2.09    -0.66    -0.25    -0.63    -0.12    -2.20    -0.31    -2.34    -0.18    -0.34    -0.44
+5000 Hz                            3.05     1.22     1.82     2.05     1.77     0.77    -0.35     2.04    -3.35     0.98    -1.24     1.79
+6300 Hz                            3.31     2.44     0.14    -0.23    -0.42    -1.22    -0.55    -0.27    -5.49    -1.46     0.29    -0.33
+8000 Hz                            2.58     0.38     1.38     0.81     0.29    -3.81     0.81     0.72    -8.54    -4.55     0.71     0.52
+10000 Hz                           1.19     0.04     3.39     2.40     2.52    -3.63     1.87     2.56    -9.36    -5.41     0.05     2.38
+12500 Hz                          -3.10    -5.49     3.87     2.93     3.40     0.28     3.65     3.17    -9.31    -3.67     3.06     3.12
+16000 Hz                          -5.63    -8.01     1.42     1.14     1.91    11.20     8.82     1.34    -9.70     7.88    12.26     1.98
+  E5 check, max |ref - E5| and mean (dB): intro 0.05/-0.00  intro2 0.05/+0.01  build 0.05/+0.01  mainA 0.05/-0.01  mainA2 0.05/+0.00  break 0.05/+0.01  breakEnd 0.05/-0.01  mainB 0.05/+0.00  outro 0.05/-0.00
+
+MID/SIDE PER BAND (render minus reference): S/M dB, then rho
+20-120 Hz S/M dB                 -14.84   -11.23    -4.97    -6.52    -7.03    -5.55    -6.05    -7.26   -10.78    -5.84    -4.93    -7.12
+20-120 Hz rho                      0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00
+120-300 Hz S/M dB                -32.77   -25.72    10.46     8.22     7.23     6.53     5.30     5.88     2.10     6.43     6.75     6.58
+120-300 Hz rho                     0.00     0.00    -0.11    -0.16    -0.14    -0.13    -0.10    -0.11    -0.02    -0.13    -0.14    -0.11
+300-1000 Hz S/M dB               -16.86   -14.90     2.84     2.27     1.97     2.30     2.53     2.63     2.68     2.37     2.18     2.50
+300-1000 Hz rho                    0.14     0.40    -0.31    -0.26    -0.22    -0.25    -0.27    -0.28    -0.29    -0.26    -0.24    -0.27
+1000-4000 Hz S/M dB                1.50     3.60     1.53     1.22     0.69    -0.45     0.70     0.12     3.92    -0.73     0.08     0.19
+1000-4000 Hz rho                  -0.17    -0.39    -0.14    -0.10    -0.06     0.04    -0.07    -0.01    -0.40     0.07    -0.01    -0.02
+4000-10000 Hz S/M dB               3.38     5.05    -7.52   -10.46   -11.29    -4.60     2.07    -9.79    12.78    -8.77     2.50    -8.56
+4000-10000 Hz rho                 -0.35    -0.51     0.14     0.16     0.22     0.28    -0.14     0.16    -0.63     0.39    -0.27     0.18
+10000-16000 Hz S/M dB             -9.04    -5.61    -9.22   -10.93   -12.02     2.87     4.37    -7.58     0.76    -8.42     3.55    -4.69
+10000-16000 Hz rho                 0.49     0.34     0.06     0.09     0.12    -0.28    -0.38     0.08    -0.00     0.33    -0.39     0.08
+
+PER-BAR 4-16 kHz LEVEL, window mean of bars, dB (render minus reference)
+4000-8000 Hz                      -6.35    -8.74    -0.15     1.33     1.43     0.01    -1.24     1.29    -7.49     0.44    -1.09    -0.81
+8000-12000 Hz                      2.89    -2.23     2.70     2.87     3.25    -3.21     0.88     2.99    -9.65    -4.41    -1.37     0.83
+12000-16000 Hz                    -1.38    -5.66     2.68     3.09     4.62     1.63     3.46     3.32    -9.39     0.01     3.05     1.39
+
+KICK GLIDE AND SUB DUCK (coherent fit; render minus reference)
+glide f0 Hz                       38.59    45.62    49.71    65.05    74.39    93.88    90.98    82.29    66.08      n/a      n/a      n/a
+glide fT Hz                        2.15     3.08     2.51     3.74     4.18     3.30     2.42     4.52     3.77      n/a      n/a      n/a
+glide tau ms                      -2.90    -3.80    -3.69    -5.34    -6.04    -6.55    -6.12    -6.61    -5.46      n/a      n/a      n/a
+sub duck 0 ms                     -0.19    -0.14     1.15     0.36    -1.99     5.70    -2.79     0.89    -0.59      n/a      n/a      n/a
+sub duck 20 ms                    -1.59    -3.41    -2.31     0.19     1.72     6.98    -4.26    -0.82     1.01      n/a      n/a      n/a
+sub duck 60 ms                     0.76     1.50     1.05     3.61     2.76     8.20    -3.12     3.24     3.26      n/a      n/a      n/a
+sub duck 100 ms                   -0.59    -0.46    -2.60    -0.99    -2.33     4.13    -5.62    -0.50    -1.89      n/a      n/a      n/a
+sub duck 200 ms                    2.01     0.24     0.64    -0.90    -2.63    -1.21    -1.14     0.78    -2.63      n/a      n/a      n/a
+
+largest |render - reference| deltas in the table:
+     -32.77  intro: S/M 120-300 Hz
+     -25.72  intro2: S/M 120-300 Hz
+     -16.86  intro: S/M 300-1000 Hz
+     -14.90  intro2: S/M 300-1000 Hz
+     -14.84  intro: S/M 20-120 Hz
+     +12.78  outro: S/M 4000-10000 Hz
+     +12.26  break120-128: 16000 Hz band
+     -12.02  mainA2: S/M 10000-16000 Hz
+     -11.29  mainA2: S/M 4000-10000 Hz
+     -11.23  intro2: S/M 20-120 Hz
+     +11.20  break: 16000 Hz band
+     -11.14  break104-120: 31.5 Hz band
+```
+
+### 10.2 Verdict on score 4
+
+- **Loudness: every section within 1 LU.** Deltas: intro +0.24, intro2 +0.23, build -0.23, mainA +0.34, mainA2 +0.47, break +0.33,
+  breakEnd -0.24, mainB +0.34, outro -0.43.
+- **Bands: no section within 2 dB in every band.** Bands within 2 dB (of 29): intro 13, intro2 16, build 17, mainA 16, mainA2 18,
+  break 17, breakEnd 15, mainB 17, outro 15. mainA2 is the closest.
+- Worst band per section: intro 1.6 kHz -9.1, intro2 16 kHz -8.0, build 25 Hz -6.2, mainA 500 Hz +6.4, mainA2 25 Hz -6.2,
+  break 16 kHz +11.2, breakEnd 16 kHz +8.8, mainB 25 Hz -6.0, outro 16 kHz -9.7.
+
+### 10.3 Twelve largest deltas (the tool's ranking, as printed)
+
+```
+largest |render - reference| deltas in the table:
+     -32.77  intro: S/M 120-300 Hz
+     -25.72  intro2: S/M 120-300 Hz
+     -16.86  intro: S/M 300-1000 Hz
+     -14.90  intro2: S/M 300-1000 Hz
+     -14.84  intro: S/M 20-120 Hz
+     +12.78  outro: S/M 4000-10000 Hz
+     +12.26  break120-128: 16000 Hz band
+     -12.02  mainA2: S/M 10000-16000 Hz
+     -11.29  mainA2: S/M 4000-10000 Hz
+     -11.23  intro2: S/M 20-120 Hz
+     +11.20  break: 16000 Hz band
+     -11.14  break104-120: 31.5 Hz band
+```
+
+The ranking is still dominated by mid/side in dB (side-to-mid), mostly on the intro and intro2 low mid (the render is wide there
+where the record is mono).
+
+### 10.4 Three largest level deltas, each with parameter and owner
+
+1. **break, 16 kHz: +11.2 dB over bars 104 to 127 (+12.3 over bars 120 to 127; +8.6 over bars 104 to 119).** Unchanged from score 3
+   (+11.35). The break's open hat, as before: `hat_open` in the break (solo 16 kHz -61.8 dBFS against the reference's -66.1). Iteration 4
+   did not touch it. **Owner A7** (`hat_open` in the break section: level or lowpass).
+2. **outro, 16 kHz: -9.7 dB (8 kHz -8.5, 12.5 kHz -9.3).** Unchanged from score 3 (-9.9). The top band of the outro is short of the
+   reference (solo, bars 184 to 199 at 8 kHz: clap -62.8, bass -64.6, burst -69.4 dBFS; mix -59.5, reference -50.6). The spec has no
+   top-band element for the outro (E3 and E4: no hat, tick or shaker there). **Owner A7** (outro clap level and brightness); the source
+   of the record's outro top band is open (ask E3 and E4).
+3. **intro, 1.25 to 1.6 kHz: -9.0 and -9.1 dB (1 kHz -5.6, 2 kHz -6.6).** New as the worst band of the intro, now that the kick's 500 Hz
+   is fixed (score 3: 500 Hz +10.3, now +3.0). Solo: the burst hit at bar 3 and bar 7 (step 12, 0.3 s, band RMS) is -41.0 and -41.6 dBFS
+   at 1 to 2.5 kHz, against the reference's -31.1 and -32.2 (E3: -31). At 2.5 to 4 kHz the burst is -45.9 and -45.4 against -48.1 and
+   -47.0 (passes). The record falls about 17 dB from 1 to 2.5 kHz to 2.5 to 4 kHz; the burst falls about 4 dB. So the burst's spectrum is
+   too flat: its `tone` (1600 Hz, q 1.2) and its 5000 Hz lowpass set the 2.5 to 4 kHz level, and the 1 to 2.5 kHz needs about +10 dB.
+   **Owner A7** (burst: `tone` lower and the 1 to 2.5 kHz level). Unchanged since iteration 3, when this item was not yet visible.
+
+Not attributed: mainA 500 Hz +6.4 (score 3: +6.6; the kick is fixed in intro, so the mainA 500 Hz is the stab or the kick at the
+mainA level; not measured here).
+
+### 10.5 Tail RT60 per band (the 6.5 s tail after bar 200)
+
+Method: from the end of content (bar 200 plus 0.05 s) to the end of each file, 20 ms power envelope of the third-octave band of the mid
+signal, a straight-line fit of dB against time over the part of the tail more than 10 dB above the file's own floor, RT60 = -60 / slope.
+Schroeder backward integration was tried first and rejected: over a tail of about 6 s it reports 30 s at 8 kHz, which is a floor
+artefact. Checked against O1's reference tail figure (-9.4 dB/s, whole band): the reference's 125 to 500 Hz fits give about 6 s, which is
+consistent.
+
+| band (Hz) | reference RT60 (s) | render RT60 (s) | note |
+|---|---|---|---|
+| 125 | 6.1 | 45.9 | render fit not meaningful: the tail is nearly flat at -61 dB (floor -125 dB); the sub's release, not reverb |
+| 500 | 5.5 | 2.9 | render decays about half as fast as the reference |
+| 2000 | 4.2 | 1.7 | render too short by about 2.5 times |
+| 8000 | 1.2 | 2.3 | render too long by about 2 times |
+| 16000 | n/a | n/a | both at the file floor |
+
+Owners: **A8** (processors.js: the end-tail send and reverb decay; the render's mids die in under 3 s, the record's in about 5 to 6 s;
+8 kHz is the other way round, so the damping is not the same across bands). **A7** (the sub's release, which sets the 125 Hz tail).
+Limits: a 6.4 s tail, few fit points at the top bands, and the reference's own MP3 noise sets the floor.
+
+### 10.6 Score 1 to score 4, per section
+
+Score 1 = the first V3 score (section 7). Score 2 = section 8. Score 3 = section 9. Score 4 = this section. LUFS delta; bands within
+2 dB (of 29); worst band.
+
+| section | score 1 | score 2 | score 3 | score 4 |
+|---|---|---|---|---|
+| intro | -1.32 / 6 / 500 Hz +10.3 | -1.32 / 7 / 500 Hz +10.3 | -0.03 / 8 / 500 Hz +10.3 | +0.24 / 13 / 1.6 kHz -9.1 |
+| intro2 | -1.33 / 8 / 3.15 kHz -16.9 | -1.33 / 9 / 3.15 kHz -15.6 | -0.03 / 14 / 500 Hz +8.8 | +0.23 / 16 / 16 kHz -8.0 |
+| build | +0.28 / 5 / 6.3 kHz -17.0 | +0.56 / 9 / 1 kHz +10.3 | -0.58 / 13 / 1 kHz +5.9 | -0.23 / 17 / 25 Hz -6.2 |
+| mainA | -0.18 / 5 / 6.3 kHz -17.0 | +0.39 / 11 / 500 Hz +6.6 | +0.12 / 12 / 500 Hz +6.6 | +0.34 / 16 / 500 Hz +6.4 |
+| mainA2 | +0.14 / 9 / 6.3 kHz -16.5 | +0.58 / 13 / 500 Hz +5.8 | +0.27 / 14 / 1 kHz +6.0 | +0.47 / 18 / 25 Hz -6.2 |
+| break | +3.22 / 7 / 16 kHz +33.9 | +1.27 / 11 / 40 Hz +14.0 | +0.12 / 15 / 16 kHz +11.3 | +0.33 / 17 / 16 kHz +11.2 |
+| breakEnd | +5.79 / 5 / 16 kHz +29.6 | +0.76 / 12 / 50 Hz +12.4 | -0.44 / 14 / 16 kHz +8.8 | -0.24 / 15 / 16 kHz +8.8 |
+| mainB | +0.58 / 10 / 16 kHz +12.2 | +0.81 / 17 / 50 Hz +6.5 | +0.18 / 16 / 25 Hz -5.4 | +0.34 / 17 / 25 Hz -6.0 |
+| outro | -0.18 / 7 / 8 kHz -10.2 | -0.18 / 7 / 8 kHz -10.4 | -0.69 / 12 / 16 kHz -9.9 | -0.43 / 15 / 16 kHz -9.7 |
+
+Closing comparison, in words. Loudness went from failing (break +3.2 LU and breakEnd +5.8, intro and intro2 about -1.3) to passing
+in every section; the break and breakEnd fix is the bed and the hat's level and the whole song is now +0.24 LU. Bands went from 5 to 10 of
+29 in most sections (score 1) to 12 to 18 of 29 (score 4). Every section's worst band has changed: the 6 to 17 kHz deficit of mainA,
+mainA2 and build (score 1) is gone; the break and breakEnd 16 kHz excess (+30 to +34 dB, score 1) is down to +9 to +11 dB; intro's
+kick-driven 500 Hz (+10.3, score 1 to 3) is now 3 dB; intro2's 2.5 to 4 kHz burst deficit (-17, score 1) is fixed (-2 dB). What is left
+is in the top band (outro's 16 kHz -9.7, break's 16 kHz +11, intro2's 16 kHz -8), the burst's 1 to 2.5 kHz (intro -9), and the 25 Hz to
+50 Hz low end (build, mainA2, mainB: -6 dB at 25 Hz, and the break's +7 at 50 Hz is now in the mid-30s of within-2 bands). Three things moved
+from fixed to open in this run: intro's worst band (the burst's 1 to 2.5 kHz), and mainA's 500 Hz (+6.4, unattributed).
+
+### 10.7 Onsets (`--onsets`, 0-based, 4 ms threshold)
+
+Open hats, mainA (6 to 16 kHz, absolute; steps 2, 6, 10, 14): deltas +1.2, +1.2, +0.9, +0.9 ms: PASS on all four (unchanged).
+
+```
+window bars 40..55, band 6000-16000 Hz, method slope, search -10..+30 ms, hits within 8 dB of the loudest
+control (0-based even steps 0,2,4,8,10,12,14): render -5.90 ms, reference -7.14 ms
+step0 |    n      abs      sd      rel |    n      abs      sd      rel | delta rel delta abs  PASS/FAIL 4 ms (rel)
+      | render                          | reference (mix)                 |
+    0 |    0     +nan     nan     +nan |    0     +nan     nan     +nan |      +nan      +nan  
+    1 |    0     +nan     nan     +nan |    0     +nan     nan     +nan |      +nan      +nan  
+    2 |   16    -5.90    0.70    +0.00 |   16    -7.14    0.57    +0.00 |     +0.00     +1.24  
+    3 |    0     +nan     nan     +nan |    0     +nan     nan     +nan |      +nan      +nan  
+    4 |    0     +nan     nan     +nan |   11    -7.15    0.71    -0.01 |      +nan      +nan  
+    5 |    0     +nan     nan     +nan |    0     +nan     nan     +nan |      +nan      +nan  
+    6 |   16    -5.91    0.06    -0.01 |   16    -7.15    0.53    -0.01 |     +0.00     +1.24  PASS
+    7 |    0     +nan     nan     +nan |    0     +nan     nan     +nan |      +nan      +nan  
+    8 |    0     +nan     nan     +nan |    0     +nan     nan     +nan |      +nan      +nan  
+    9 |    0     +nan     nan     +nan |    0     +nan     nan     +nan |      +nan      +nan  
+   10 |   16    -5.93    0.07    -0.03 |   16    -6.79    0.60    +0.35 |     -0.39     +0.86  
+   11 |    0     +nan     nan     +nan |    0     +nan     nan     +nan |      +nan      +nan  
+   12 |    0     +nan     nan     +nan |   11    -7.20    0.56    -0.06 |      +nan      +nan  
+   13 |    0     +nan     nan     +nan |    0     +nan     nan     +nan |      +nan      +nan  
+   14 |   16    -5.87    0.08    +0.02 |   16    -6.81    0.62    +0.33 |     -0.31     +0.94  PASS
+   15 |    0     +nan     nan     +nan |    0     +nan     nan     +nan |      +nan      +nan  
+steps are 0-based (E1-E3 numbering). Reference n is the hit count in the mix (small n = unreliable). E numbers (absolute, their conventions): 1: E3 +11.0 / E2 +16.3 / E1 +9.6; 6: E3 +11.9 / E1 +9.7 (E2 n=6 unreliable); 8: E3 -4.6; 11: E3 +13.1 / E2 +9.9 / E1 +9.6; 14: E3 -5.0 / E2 -4.2 / E1 -4.3
+```
+
+Bass, mainB (the usable bass check; 350 to 1000 Hz, slope rule): steps 1, 6, 11 and 14 all PASS this time (rel deltas -2.2, +2.5,
++2.3, +2.7 ms). Score 3 had steps 11 and 14 failing (+6.4 and +8.4 ms); iteration 4 brought them within 4 ms.
+
+```
+window bars 136..151, band 350-1000 Hz, method slope, search -10..+30 ms, hits within 8 dB of the loudest
+control (0-based even steps 0,2,4,8,10,12,14): render -4.37 ms, reference -1.75 ms
+step0 |    n      abs      sd      rel |    n      abs      sd      rel | delta rel delta abs  PASS/FAIL 4 ms (rel)
+      | render                          | reference (mix)                 |
+    0 |    0     +nan     nan     +nan |   13    -1.44    2.58    +0.32 |      +nan      +nan  
+    1 |   16    +7.48    2.71   +11.85 |   16   +12.33    7.76   +14.08 |     -2.23     -4.85  PASS
+    2 |   16    -4.21    5.79    +0.16 |    2    +1.20    0.88    +2.95 |     -2.79     -5.41  
+    3 |    0     +nan     nan     +nan |    0     +nan     nan     +nan |      +nan      +nan  
+    4 |    0     +nan     nan     +nan |    8    -4.52    2.47    -2.77 |      +nan      +nan  
+    5 |    0     +nan     nan     +nan |    0     +nan     nan     +nan |      +nan      +nan  
+    6 |    8    +8.34    5.75   +12.71 |    8    +8.47    7.25   +10.23 |     +2.49     -0.13  PASS
+    7 |    4    -8.38    0.00    -4.01 |    7   +15.12   10.65   +16.87 |    -20.88    -23.50  
+    8 |    8    -2.30    2.62    +2.07 |   16    -1.75    3.02    +0.00 |     +2.07     -0.55  
+    9 |    4    -8.10    0.08    -3.73 |    1    -5.93    0.00    -4.17 |     +0.45     -2.17  
+   10 |    0     +nan     nan     +nan |    2    +0.50    6.84    +2.26 |      +nan      +nan  
+   11 |   16    +8.45    2.72   +12.81 |   16    +8.76    6.10   +10.51 |     +2.30     -0.31  PASS
+   12 |   12    -9.58    5.73    -5.21 |   11    -2.32    4.28    -0.57 |     -4.65     -7.26  
+   13 |    0     +nan     nan     +nan |    2    +3.54    7.90    +5.29 |      +nan      +nan  
+   14 |   16    -4.52    5.73    -0.16 |   11    -4.59   11.88    -2.83 |     +2.68     +0.06  PASS
+   15 |    7    -9.72    0.13    -5.35 |    0     +nan     nan     +nan |      +nan      +nan  
+steps are 0-based (E1-E3 numbering). Reference n is the hit count in the mix (small n = unreliable). E numbers (absolute, their conventions): 1: E3 +11.0 / E2 +16.3 / E1 +9.6; 6: E3 +11.9 / E1 +9.7 (E2 n=6 unreliable); 8: E3 -4.6; 11: E3 +13.1 / E2 +9.9 / E1 +9.6; 14: E3 -5.0 / E2 -4.2 / E1 -4.3
+```
+
+### 10.8 Open, by owner, after score 4
+
+- A7: break 16 kHz (hat_open, +11); outro top band (-9.7, open source); burst 1 to 2.5 kHz (intro -9; `tone` and level); bass 25 Hz and 50 Hz
+  low end (build, mainA2, mainB at -6 dB at 25 Hz, the break's 50 Hz); sub release (the 125 Hz tail).
+- A8: end-tail send and reverb decay (mids decay about twice as fast as the record; 8 kHz about twice as slow).
+- Mine: the mainA 500 Hz +6.4 (unattributed); the outro top band's source (ask E3 and E4).
