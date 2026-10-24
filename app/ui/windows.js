@@ -35,6 +35,7 @@
   var linkMode = 'single';
   var hiddenAll = false;
   var lastSel = null;
+  var headEvents = 0;       // bumped on host 'bypass' and 'audio' events; windows redraw their title bar
   var docEvents = 0;        // bumped on host 'document' events; windows re-check their device
   var subscribed = false;
   var pruneTick = 0;
@@ -132,18 +133,33 @@
     var t = trackOf(d); if (!t) return;
     if (typeof h.mute === 'function') h.mute(t, b); else h.setParam(t + '.mute', b);
   }
+  // Bypass goes through the Host (stored in the document, kept over rebuilds and in exports).
   function canBypass(h, d) {
-    return !!(d && ((d.ref && typeof d.ref.bypass === 'function') || typeof h.bypass === 'function'));
+    return !!(d && typeof h.bypass === 'function' && d.kind !== 'instrument' && d.kind !== 'channel' && d.ref && typeof d.ref.bypass === 'function');
   }
   function isBypassed(h, d) {
-    try {
-      if (typeof h.isBypassed === 'function') return !!h.isBypassed(d.id);
-      return !!(d.ref && d.ref._bypassed);
-    } catch (e) { return false; }
+    try { return !!h.isBypassed(d.id); } catch (e) { return false; }
   }
-  function setBypassed(h, d, b) {
-    if (typeof h.bypass === 'function') h.bypass(d.id, b);
-    else if (d.ref && typeof d.ref.bypass === 'function') d.ref.bypass(b);
+  function setBypassed(h, d, b) { h.bypass(d.id, b); }
+
+  // A sampler device whose audio file is missing: the buffer id it names, else null.
+  function missingBuffer(h, d) {
+    if (!d || d.type !== 'sampler' || typeof h.audio !== 'function') return null;
+    try {
+      var id = h.getParam(d.pathPrefix + '.buffer');
+      if (!id) return null;
+      var list = h.audio();
+      for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i].missing ? id : null;
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+  function relink(h, id) {
+    var P = root.Project;
+    if (!P || typeof P.pickAudio !== 'function' || typeof h.loadAudio !== 'function') return Promise.resolve(null);
+    return P.pickAudio({ shell: root.HavantechnoShell || null }).then(function (src) {
+      if (!src) return null;
+      return h.loadAudio(src, { id: id });
+    }).catch(function (e) { note(e); return null; });
   }
 
   // ------------------------------------------------------------------ chrome (shared by panels and child windows)
@@ -164,6 +180,8 @@
     var preset = btn('wn-preset', 'Preset ▾', 'Presets (not available yet)');
     preset.disabled = true;
     var sp = el('span', 'wn-sp');
+    var bRelink = btn('wn-relink', 'Re-add sample\u2026', 'The audio file for this sampler is missing: choose it again');
+    bRelink.hidden = true;
     var toggle = btn('wn-toggle', '', '');
     toggle.setAttribute('aria-pressed', 'false');
     var seg = el('span', 'wn-wseg');
@@ -177,7 +195,7 @@
     bPin.setAttribute('aria-pressed', 'false');
     var bClose = btn('wn-close', '×', 'Close window');
     head.appendChild(glyph); head.appendChild(title); head.appendChild(preset); head.appendChild(sp);
-    head.appendChild(toggle); head.appendChild(seg); head.appendChild(bLink); head.appendChild(bPin); head.appendChild(bClose);
+    head.appendChild(bRelink); head.appendChild(toggle); head.appendChild(seg); head.appendChild(bLink); head.appendChild(bPin); head.appendChild(bClose);
 
     var body = el('div', 'wn-wbody');
     var foot = el('div', 'wn-wf');
@@ -201,6 +219,10 @@
     bLink.addEventListener('click', function () { ctl.cycleLink(); c.refreshHead(true); });
     bPin.addEventListener('click', function () { ctl.pin(c.id, !ctl.isPinned(c.id)); c.refreshHead(true); });
     bClose.addEventListener('click', function () { ctl.close(c.id); });
+    bRelink.addEventListener('click', function () {
+      var mid = missingBuffer(h, c.dev);
+      if (mid) relink(h, mid).then(function () { c.refreshHead(true); });
+    });
     toggle.addEventListener('click', function () {
       var d = c.dev; if (!d) return;
       try {
@@ -235,6 +257,7 @@
         root_.setAttribute('aria-label', nm + ' ' + fam);
         if (root.document && c.embedded) doc.title = nm + ' · ' + fam + ' — Havantechno';
       }
+      bRelink.hidden = !missingBuffer(h, d);
       // bypass or mute
       var mode = (d.kind === 'instrument' || d.kind === 'channel') ? 'mute' : (canBypass(h, d) ? 'bypass' : '');
       toggle.hidden = !mode;
@@ -335,7 +358,8 @@
         else { c._seen = docEvents; }
       }
       if (c.face && typeof c.face.update === 'function') { try { c.face.update(); } catch (e) { if (!c._warned) { c._warned = true; note(e); } } }
-      if (c._frame % 6 === 0) c.refreshHead(false);
+      if (c._hseen !== headEvents) { c._hseen = headEvents; c.refreshHead(true); }
+      else if (c._frame % 6 === 0) c.refreshHead(false);
       if (c._frame % 3 === 0) c.footer();
     };
 
@@ -515,7 +539,8 @@
   function subscribe(h) {
     if (subscribed || !h || typeof h.on !== 'function') return;
     subscribed = true;
-    try { h.on('document', function () { docEvents++; }); } catch (e) { /* ignore */ }
+    try { h.on('document', function () { docEvents++; headEvents++; }); } catch (e) { /* ignore */ }
+    try { h.on('bypass', function () { headEvents++; }); h.on('audio', function () { headEvents++; }); } catch (e2) { /* ignore */ }
   }
 
   // ------------------------------------------------------------------ public API

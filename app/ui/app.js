@@ -129,15 +129,47 @@
     undo: function () { return doUndo(false); },
     redo: function () { return doUndo(true); },
     toast: toast,
+    relinkMissing: relinkMissing,
     boot: boot
   };
 
-  function toast(msg, ms) {
+  // toast(msg, ms, {label, run}): an optional action button inside the message
+  function toast(msg, ms, action) {
     var t = S.toastEl;
     if (!t) return;
     t.textContent = msg; t.hidden = false;
+    if (action && action.label) {
+      var b = button('', action.label);
+      b.style.marginLeft = '12px';
+      b.addEventListener('click', function () { t.hidden = true; try { action.run(); } catch (e) { report('toast action', e); } });
+      t.appendChild(b);
+    }
     if (S.toastTimer) clearTimeout(S.toastTimer);
     S.toastTimer = setTimeout(function () { t.hidden = true; }, ms || 4000);
+  }
+
+  // Re-add missing sampler files one by one: pick a file, relink it to the missing entry with the same file name
+  // (else the first missing one), then offer the next.
+  function missingAudio() {
+    var h = S.host, out = [];
+    try { if (h && typeof h.audio === 'function') h.audio().forEach(function (a) { if (a && a.missing) out.push(a); }); } catch (e) { out = []; }
+    return out;
+  }
+  function relinkMissing() {
+    var h = S.host, P = root.Project, miss = missingAudio();
+    if (!h || !P || typeof P.pickAudio !== 'function' || !miss.length) return Promise.resolve(0);
+    return P.pickAudio({ shell: shell }).then(function (src) {
+      if (!src) return null;
+      var nm = src.name || '', target = miss[0];
+      for (var i = 0; i < miss.length; i++) if (miss[i].name === nm) { target = miss[i]; break; }
+      return h.loadAudio(src, { id: target.id });
+    }).then(function (r) {
+      if (r == null) return 0;
+      var left = missingAudio().length;
+      if (left) toast(left + ' sample' + (left === 1 ? '' : 's') + ' still missing', 8000, { label: 'Re-add\u2026', run: relinkMissing });
+      else toast('Sample restored', 3000);
+      return 1;
+    }, function (e) { report('relink', e); toast('Could not load that file: ' + (e && e.message ? e.message : e)); return 0; });
   }
 
   // ---- bridge for Electron device windows (defined on the main window)
@@ -161,10 +193,10 @@
       swing: function () { return host.swing(); },
       totalBars: function () { return typeof host.totalBars === 'function' ? host.totalBars() : 0; },
       mute: function (t, v) { return host.mute(t, v); },
-      bypass: function (id, v) { return typeof host.bypass === 'function' ? host.bypass(id, v) : undefined; },
-      isBypassed: function (id) { return typeof host.isBypassed === 'function' ? host.isBypassed(id) : undefined; },
-      hasBypass: function () { return typeof host.bypass === 'function'; },
-      solo: function (t, v) { return host.solo(t, v); },
+      bypass: function (id, v) { return host.bypass(id, v); },
+      isBypassed: function (id) { return host.isBypassed(id); },
+      audio: function () { return host.audio(); },
+      loadAudio: function (src, o) { return host.loadAudio(src, o); },
       transportPos: function () { return host.transport.pos(); },
       playing: function () { return !!host.transport.playing; },
       on: function (type, fn) { return host.on(type, fn); },
@@ -200,9 +232,9 @@
     // paths) and resolves after that; missing samples play silent and are listed by host.audio().
     return root.Project.open({ shell: shell, host: h }).then(function (d) {
       if (!d) return null;
-      var miss = 0;
-      try { if (typeof h.audio === 'function') h.audio().forEach(function (a) { if (a && a.missing) miss++; }); } catch (e2) { miss = 0; }
-      toast(miss ? 'Opened song; ' + miss + ' sample' + (miss === 1 ? '' : 's') + ' missing' : 'Opened song', miss ? 6000 : 4000);
+      var miss = missingAudio().length;
+      toast(miss ? 'Opened song; ' + miss + ' sample' + (miss === 1 ? '' : 's') + ' missing' : 'Opened song', miss ? 12000 : 4000,
+            miss ? { label: 'Re-add\u2026', run: relinkMissing } : null);
       return d;
     }, function (e) { report('open', e); toast('Could not open: ' + (e && e.message ? e.message : e)); return null; });
   }
@@ -576,7 +608,15 @@
   function afterStart(host, audio) {
     function go(d) {
       if (d) {
-        try { host.loadDocument(d); toast('Restored your last session', 3000); } catch (e) { report('restore', e); }
+        try {
+          host.loadDocument(d);
+          var after = function () {
+            var m = missingAudio().length;
+            if (m) toast('Restored your last session; ' + m + ' sample' + (m === 1 ? '' : 's') + ' missing', 12000, { label: 'Re-add\u2026', run: relinkMissing });
+            else toast('Restored your last session', 3000);
+          };
+          if (typeof host.audioReady === 'function') host.audioReady().then(after, after); else after();
+        } catch (e) { report('restore', e); }
       }
       S.canAutosave = true;
     }
@@ -663,13 +703,9 @@
 
     var subs = [];
     var h = {};
-    ['setParam', 'getParam', 'hold', 'release', 'releaseAll', 'heldCount', 'isHeld', 'device', 'devices', 'meter', 'sections', 'tracks', 'sends', 'bpm', 'swing', 'totalBars', 'mute', 'solo'].forEach(function (n) {
+    ['setParam', 'getParam', 'hold', 'release', 'releaseAll', 'heldCount', 'isHeld', 'device', 'devices', 'meter', 'sections', 'tracks', 'sends', 'bpm', 'swing', 'totalBars', 'mute', 'solo', 'bypass', 'isBypassed', 'audio', 'loadAudio'].forEach(function (n) {
       if (typeof bridge[n] === 'function') h[n] = function () { return bridge[n].apply(bridge, arguments); };
     });
-    if (typeof bridge.hasBypass === 'function' && bridge.hasBypass()) {
-      h.bypass = function (id, v) { return bridge.bypass(id, v); };
-      h.isBypassed = function (id) { return bridge.isBypassed(id); };
-    }
     h.on = function (type, fn) { subs.push([type, fn]); bridge.on(type, fn); return h; };
     h.off = function (type, fn) { bridge.off(type, fn); return h; };
     h.transport = { pos: function () { return bridge.transportPos(); } };
