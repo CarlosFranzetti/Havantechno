@@ -88,8 +88,12 @@
       target(proc._dryBypass.gain, b ? 1 : 0, ctx.currentTime, 0.01);
     };
     proc.dispose = function () { for (var i = 0; i < proc.nodes.length; i++) disc(proc.nodes[i]); proc.nodes.length = 0; };
+    // opts.bypass: true starts the unit bypassed (no fade, so the first sample is already dry). It is not a spec
+    // parameter; the Host and a chain spec's `bypass: true` both use it. A bypassed unit's wet path is at gain 0,
+    // so its internal makeup gain (DynamicsCompressorNode) reaches the output with no level.
     if (!ctx) {
-      if (opts) for (var k in opts) if (opts.hasOwnProperty(k)) proc.set(k, opts[k]);
+      if (opts) for (var k in opts) if (opts.hasOwnProperty(k) && k !== 'bypass') proc.set(k, opts[k]);
+      if (opts && opts.bypass) proc._bypassed = true;
       proc.trigger = function () {};
       return proc;
     }
@@ -102,7 +106,8 @@
       proc.input.connect(proc._dryBypass); proc._dryBypass.connect(proc.output);
       proc._wet.connect(proc.output);
       build(proc);                                      // must connect proc.input ... -> proc._wet
-      if (opts) for (var k2 in opts) if (opts.hasOwnProperty(k2)) proc.set(k2, opts[k2]);
+      if (opts) for (var k2 in opts) if (opts.hasOwnProperty(k2) && k2 !== 'bypass') proc.set(k2, opts[k2]);
+      if (opts && opts.bypass) { proc._bypassed = true; val(proc._wet.gain, 0); val(proc._dryBypass.gain, 1); }
     } catch (e) {
       proc.input = proc.input || null; proc.output = proc.output || null;
     }
@@ -477,6 +482,21 @@
         else if (n === 'invert') auto(ctx, invR.gain, v ? -1 : 1, o);
       };
       var d0 = p.dispose; p.dispose = function () { try { lfo.stop(); } catch (e) {} d0(); };
+    }
+  };
+
+  // decorrelate: a mono source in, stereo out: left = the input, right = the input delayed by `time` s.
+  // A mid/side widener cannot widen a mono source (side = (L-R)/2 is 0 when L = R, so width does nothing), and
+  // a pan cannot separate one. For a noise voice, a delay of about 11 ms gives L/R correlation near 0, because
+  // the noise's correlation time is far shorter. Not suitable for tonal input (the delayed copy comb-filters).
+  BUILD.decorrelate = {
+    spec: { time: { min: 0.001, max: 0.05, value: 0.011, unit: 's' } },
+    build: function (p) {
+      var ctx = p.ctx, P = p.params, dR = p.track(ctx.createDelay(0.06)), mg = p.track(ctx.createChannelMerger(2));
+      val(dR.delayTime, P.time);
+      p.input.connect(mg, 0, 0); p.input.connect(dR); dR.connect(mg, 0, 1);
+      mg.connect(p._wet);
+      p.onParam = function (n, v, o) { if (n === 'time') auto(ctx, dR.delayTime, v, o); };
     }
   };
 

@@ -117,4 +117,8 @@ B0 bar stays a TODO; sub attack reading right; lowpass restore at 136; choke wit
 - Confirm the offline Python front end for milestone 6; confirm AGPL-3.0-or-later.
 - Stray cloud session `session_01YQ55qJkgnsfKmjr7VmKc1y` can be archived; model-name attribution on `546a2c6` remains in history.
 
+### Branch change (2026-10-24, owner's instruction)
+
+"Let's leave AassMaster and all commits should now be pushed to the main branch in Havantechno." The remote had no `main`; it was created from `6224ca0` (the tip of `claude/song-synths-sequencer-processors-e79zyb`, same history) and pushed. All further commits go to `main`. AassMaster is not touched again. GitHub still lists the old branch as the repository's default; changing that is a repository setting the owner makes on GitHub.
+
 <!-- next dump goes here -->

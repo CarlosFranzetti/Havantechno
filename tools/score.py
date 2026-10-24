@@ -47,6 +47,46 @@ SECTIONS = {
     'break': (104, 128), 'breakEnd': (128, 136), 'mainB': (136, 184), 'outro': (184, 200),
 }
 
+# ---- V3 (Ear Crew, V3-SPEC.md sections 3, 5 and 6). E4's 15 sections, bars [start, end) on the reference grid.
+V3_SECTIONS = {
+    'intro': (0, 16), 'intro2': (16, 24), 'build': (24, 40), 'mainA': (40, 56), 'mainA_b': (56, 76),
+    'mainA2': (76, 88), 'mainA3': (88, 104), 'break': (104, 120), 'breakLate': (120, 128),
+    'breakEnd': (128, 135), 'gap': (135, 136), 'mainB': (136, 152), 'mainB_b': (152, 180),
+    'mainB_c': (180, 184), 'outro': (184, 200),
+}
+# E5's nine windows (spec 5.2): the app's sections as unions of the V3 sections (archived names kept)
+WINDOWS9 = [('intro', 0, 16), ('intro2', 16, 24), ('build', 24, 40), ('mainA', 40, 72), ('mainA2', 72, 104),
+            ('break', 104, 128), ('breakEnd', 128, 136), ('mainB', 136, 184), ('outro', 184, 200)]
+# extra windows of spec 5.2(e), mid/side only
+MS_EXTRA_WINDOWS = [('break104-120', 104, 120), ('break120-128', 120, 128)]
+TOB_FC = [25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000,
+          2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000]          # ISO third-octave centres (29)
+MS_BANDS = [(20, 120), (120, 300), (300, 1000), (1000, 4000), (4000, 10000), (10000, 16000)]   # spec 5.2(e)
+HF_BANDS = [(4000, 8000), (8000, 12000), (12000, 16000)]                  # spec 5.2(d), hf2 method
+# E5's reference column (spec 5.2(b)): 29 bands x 9 windows, dB re each section's own total
+E5_REF29 = {
+    'intro':  [-26.7,-16.5,-20.4,-11.4,-5.1,-8.0,-9.2,-8.6,-11.3,-11.9,-16.2,-24.1,-29.7,-34.5,-34.1,-36.1,-35.6,-35.1,-34.3,-36.1,-41.0,-45.2,-47.9,-53.0,-57.9,-63.7,-65.7,-63.6,-68.1],
+    'intro2': [-26.4,-16.3,-19.9,-11.4,-5.1,-8.0,-9.2,-8.7,-11.4,-12.0,-16.3,-24.3,-29.7,-33.1,-28.1,-31.5,-31.4,-33.4,-34.0,-35.8,-34.6,-35.6,-36.8,-43.0,-48.7,-52.8,-56.6,-56.0,-62.4],
+    'build':  [-24.2,-14.0,-18.0,-14.5,-7.4,-9.3,-9.1,-7.7,-10.0,-10.2,-13.9,-18.3,-19.9,-17.9,-19.5,-22.8,-28.0,-26.2,-27.9,-31.1,-29.2,-29.3,-26.4,-28.6,-26.2,-26.1,-27.7,-31.2,-38.4],
+    'mainA':  [-26.5,-16.4,-20.1,-11.6,-5.3,-8.5,-9.8,-9.2,-11.6,-11.9,-15.7,-17.9,-21.6,-19.1,-20.3,-26.4,-26.6,-29.1,-25.5,-28.5,-27.8,-27.9,-24.8,-26.7,-23.6,-23.3,-24.5,-28.2,-35.7],
+    'mainA2': [-27.7,-17.7,-21.4,-11.4,-5.4,-8.5,-10.0,-9.2,-11.6,-11.8,-15.7,-16.5,-19.7,-18.2,-20.6,-23.3,-26.9,-26.2,-26.4,-29.0,-28.0,-27.8,-25.4,-27.4,-24.3,-23.8,-25.6,-29.6,-37.2],
+    'break':  [-40.1,-29.9,-33.6,-16.5,-9.0,-10.7,-9.8,-7.8,-9.1,-9.5,-12.5,-13.4,-16.5,-14.1,-15.3,-16.8,-18.6,-20.4,-20.8,-27.8,-27.8,-26.9,-28.6,-29.5,-27.4,-26.0,-28.5,-33.7,-47.0],
+    'breakEnd': [-28.7,-18.1,-22.2,-16.8,-9.4,-11.0,-9.7,-8.1,-9.1,-9.7,-12.6,-13.7,-17.2,-15.1,-15.7,-16.7,-16.9,-17.7,-17.8,-21.4,-24.4,-26.1,-27.7,-29.2,-27.8,-27.9,-28.2,-30.5,-38.0],
+    'mainB':  [-26.8,-16.7,-20.4,-11.9,-5.7,-8.9,-9.9,-9.5,-11.3,-12.1,-15.1,-15.6,-18.6,-16.4,-18.1,-19.6,-23.3,-26.4,-25.4,-28.6,-27.8,-27.9,-25.0,-27.0,-23.8,-23.5,-25.0,-28.6,-36.0],
+    'outro':  [-26.5,-16.4,-20.3,-11.5,-5.3,-8.4,-9.6,-9.1,-11.4,-11.9,-15.4,-15.4,-20.8,-20.4,-23.8,-25.0,-28.4,-29.5,-29.5,-30.6,-32.5,-33.6,-34.7,-36.2,-37.9,-38.8,-40.3,-42.6,-45.3],
+}
+E5_WINDOW_ORDER = [w[0] for w in WINDOWS9]
+
+
+def v3_window(name):
+    """The one of E5's nine windows that contains a V3 section's start bar."""
+    a = V3_SECTIONS[name][0]
+    for wname, wa, wb in WINDOWS9:
+        if wa <= a < wb:
+            return wname
+    raise KeyError(name)
+
+
 FFMPEG_CANDIDATES = [os.environ.get('FFMPEG'), '/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux',
                      '/usr/bin/ffmpeg', shutil.which('ffmpeg')]
 
@@ -128,12 +168,21 @@ def load_track(path, side, is_render):
     return Track('reference', path, x, ff, REF_T0 * SR, REF_BPM, REF_SWING)
 
 
+def layout_of(args, side):
+    """'v3' or 'archive'. --layout auto (default) reads the render's sidecar song name."""
+    lay = getattr(args, 'layout', 'auto')
+    if lay != 'auto':
+        return lay
+    return 'v3' if side and side.get('song') == 'v3' else 'archive'
+
+
 def window_bars(args, side):
     """Song-bar window (a, b) or None for the whole file."""
+    table = V3_SECTIONS if layout_of(args, side) == 'v3' else SECTIONS
     if args.section:
-        if args.section not in SECTIONS:
-            die('unknown section ' + args.section + '; known: ' + ', '.join(SECTIONS))
-        a0, a1 = SECTIONS[args.section]
+        if args.section not in table:
+            die('unknown section ' + args.section + '; known: ' + ', '.join(table))
+        a0, a1 = table[args.section]
         if args.bars:
             return (a0 + args.bars[0], min(a0 + args.bars[1], a1))
         return (a0, a1)
@@ -263,7 +312,8 @@ def loudness(seg):
     above_abs = lj > -70.0
     gamma_r = -0.691 + 10 * math.log10(z[above_abs].mean()) - 10.0
     keep = above_abs & (lj > gamma_r)
-    return {'lufs_integrated': float(-0.691 + 10 * math.log10(z[keep].mean())), 'blocks_used': int(keep.sum())}
+    return {'lufs_integrated': float(-0.691 + 10 * math.log10(z[keep].mean())), 'blocks_used': int(keep.sum()),
+            'lufs_ungated': float(-0.691 + 10 * math.log10(z.mean()))}
 
 
 def sample_peak_db(seg):
@@ -565,6 +615,329 @@ def print_report(out, labels):
         print(line)
 
 
+# ----------------------------------------------------------------- V3 measures (spec 5.2)
+
+def tob_bands(seg):
+    """29 ISO third-octave bands, mid+side power by Welch (Hann, nperseg 16384, 50 % overlap). Power is
+    the sum of the L and R PSDs (= 2 (M + S)). dB re the window's own total power (sum of all bins)."""
+    x = seg.astype(np.float64)
+    nper = min(16384, len(x))
+    f, Pl = signal.welch(x[:, 0], fs=SR, window='hann', nperseg=nper, noverlap=nper // 2, scaling='density')
+    _, Pr = signal.welch(x[:, 1], fs=SR, window='hann', nperseg=nper, noverlap=nper // 2, scaling='density')
+    P = Pl + Pr
+    total = float(P.sum())
+    out = {}
+    for fc in TOB_FC:
+        lo, hi = fc / 2 ** (1 / 6), fc * 2 ** (1 / 6)
+        pw = float(P[(f >= lo) & (f < hi)].sum())
+        out[str(fc)] = 10 * math.log10(pw / total) if pw > 0 and total > 0 else float('nan')
+    return out
+
+
+def _bp(x, lo, hi):
+    sos = signal.butter(4, [lo, hi], btype='bandpass', fs=SR, output='sos')
+    return signal.sosfiltfilt(sos, x, axis=0)
+
+
+def ms_bands(tr, s0, s1):
+    """Mid/side per coarse band: S/M in dB (power ratio) and rho = sum(L R) / sqrt(sum L^2 sum R^2)."""
+    p0, p1 = padded(tr, s0, s1)
+    seg = tr.x[p0:p1].astype(np.float64)
+    out = {}
+    for lo, hi in MS_BANDS:
+        f = _bp(seg, lo, hi)[s0 - p0:s1 - p0]
+        L, R = f[:, 0], f[:, 1]
+        M, S = (L + R) / 2, (L - R) / 2
+        ps, pm = float(S @ S), float(M @ M)
+        den = math.sqrt(float(L @ L) * float(R @ R))
+        out['%g-%g' % (lo, hi)] = {'sm_db': 10 * math.log10(ps / pm) if ps > 0 and pm > 0 else float('nan'),
+                                   'rho': float(L @ R / den) if den > 0 else float('nan')}
+    return out
+
+
+def hf_per_bar(tr, s0, s1):
+    """Per-bar mean square of the mid signal in 4-8, 8-12 and 12-16 kHz (4th-order zero phase), dB."""
+    p0, p1 = padded(tr, s0, s1)
+    mid = tr.x[p0:p1].astype(np.float64).mean(axis=1)
+    bands = {'%g-%g' % b: _bp(mid, b[0], b[1]) for b in HF_BANDS}
+    out = {}
+    b_lo = int(math.ceil((s0 - tr.grid0) / tr.barS))
+    b_hi = int(math.floor((s1 - tr.grid0) / tr.barS))
+    for b in range(b_lo, b_hi):
+        a = int(round(tr.grid0 + b * tr.barS)) - p0
+        e = int(round(tr.grid0 + (b + 1) * tr.barS)) - p0
+        if a < 0 or e > len(mid):
+            continue
+        out[str(b)] = {k: 10 * math.log10(max(float(np.mean(v[a:e] ** 2)), 1e-30)) for k, v in bands.items()}
+    return out
+
+
+def onset_offsets(tr, s0, s1, band, method='slope', search=(-10.0, 30.0), env_ms=2.0, loud_db=8.0):
+    """Per-16th onset offsets (ms) re the straight grid line. Band-pass (4th order, zero phase), power
+    envelope with a boxcar of env_ms. In [grid + search] the peak is taken and the hit's level is its peak.
+    method 'slope' (default, E2's rule): the onset is the sample of maximum rise of the envelope in dB;
+    method 'rise': the first envelope sample at 50 % of the peak (E3-style; fragile for narrow bands, it
+    collapses to the window edge). A hit counts when its peak is within loud_db of the loudest hit (E3).
+    Returns {step: [(offset_ms, peak_db), ...]}."""
+    p0, p1 = padded(tr, s0, s1, 0.25)
+    x = tr.x[p0:p1].astype(np.float64).mean(axis=1)
+    x = _bp(x, band[0], band[1])
+    n = max(1, int(round(env_ms * 1e-3 * SR)))
+    env = np.convolve(x * x, np.ones(n) / n, mode='same')
+    envdb = 10 * np.log10(np.maximum(env, 1e-30))
+    hits = {}
+    k_lo = int(math.ceil((s0 - tr.grid0) / tr.stepS))
+    k_hi = int(math.floor((s1 - tr.grid0) / tr.stepS)) - 1
+    a_off, b_off = search[0] * SR / 1000.0, search[1] * SR / 1000.0
+    for k in range(k_lo, k_hi):
+        g = tr.grid0 + k * tr.stepS
+        i0 = int(round(g + a_off)) - p0
+        i1 = int(round(g + b_off)) - p0
+        if i0 < 0 or i1 > len(env):
+            continue
+        seg = env[i0:i1]
+        pk = int(np.argmax(seg))
+        peak = float(seg[pk])
+        if peak <= 0:
+            continue
+        if method == 'slope':
+            d = np.diff(envdb[i0:i1])
+            j = int(np.argmax(d[:max(1, pk)])) + 0.5 if pk > 0 else 0.0
+        else:
+            j = float(np.argmax(seg >= 0.5 * peak))
+        onset = (i0 + j + p0) - g
+        hits.setdefault(k % STEPS, []).append((onset / SR * 1000.0, 10 * math.log10(peak)))
+    allp = [pk for v in hits.values() for (_, pk) in v]
+    if not allp:
+        return {}
+    top = max(allp)
+    return {st: [h for h in v if h[1] >= top - loud_db] for st, v in hits.items()}
+
+
+def window_measures(tr, s0, s1, want_glide=True):
+    """All V3 measures for one window of one track."""
+    seg = tr.x[s0:s1]
+    r = {}
+    ld = loudness(seg)
+    r['lufs_gated'] = ld['lufs_integrated']
+    r['lufs_ungated'] = ld['lufs_ungated']
+    r['sample_peak_dbfs'] = sample_peak_db(seg)
+    r['true_peak_dbtp'] = true_peak_db(tr.x, s0, s1)
+    sq = seg.astype(np.float64)
+    r['rms_dbfs'] = 10 * math.log10(max(float(np.mean((sq[:, 0] ** 2 + sq[:, 1] ** 2) / 2)), 1e-30))
+    r['crest_db'] = r['sample_peak_dbfs'] - r['rms_dbfs']
+    r['plr_db'] = r['true_peak_dbtp'] - r['lufs_gated']
+    r['tob29'] = tob_bands(seg)
+    r['ms'] = ms_bands(tr, s0, s1)
+    r['hf_bars'] = hf_per_bar(tr, s0, s1)
+    if want_glide:
+        g = kick_glide(tr, s0, s1)
+        r['kick_glide'] = g.get('coherent', {})
+        d = sub_duck(tr, s0, s1)
+        r['sub_duck'] = d.get('db_rel_plateau', {})
+    return r
+
+
+def _mean_hf(hf_bars):
+    if not hf_bars:
+        return {}
+    keys = list(next(iter(hf_bars.values())).keys())
+    return {k: float(np.mean([v[k] for v in hf_bars.values()])) for k in keys}
+
+
+def _cover(side, a, b):
+    if side is None:
+        return True
+    return side['from'] <= a and b <= side['to']
+
+
+V3_TABLE_ROWS = [('lufs_ungated', 'LUFS ungated (E5 1b)', '%+.2f'), ('lufs_gated', 'LUFS gated (O1 M9)', '%+.2f'),
+                 ('sample_peak_dbfs', 'sample peak dBFS', '%+.2f'), ('true_peak_dbtp', 'true peak dBTP', '%+.2f'),
+                 ('rms_dbfs', 'rms dBFS (L+R mean square)', '%+.2f'), ('crest_db', 'crest, sample peak - rms', '%+.2f'),
+                 ('plr_db', 'PLR, TP - gated LUFS', '%+.2f')]
+
+
+def v3_report(args, render_tr, ref_tr, side):
+    """Per-window delta table (render minus reference) for every measure, one run. Renders that do not
+    cover a window show n/a for it. The E5 reference column is printed beside the reference's own
+    29-band values as a check of the method."""
+    res = {}
+    for name, a, b in WINDOWS9 + MS_EXTRA_WINDOWS:
+        cov = render_tr is not None and _cover(side, a, b)
+        r_ref_lo, r_ref_hi = sample_range(ref_tr, (a, b), args.tail)
+        ref = window_measures(ref_tr, r_ref_lo, r_ref_hi, want_glide=(name in E5_REF29))
+        rend = None
+        if render_tr is not None and cov:
+            r_lo, r_hi = sample_range(render_tr, (a, b), args.tail)
+            rend = window_measures(render_tr, r_lo, r_hi, want_glide=(name in E5_REF29))
+        res[name] = {'ref': ref, 'render': rend, 'covered': cov}
+        sys.stderr.write('  measured %s (bars %d-%d)\\n' % (name, a, b - 1))
+    return res
+
+
+def print_v3(res, has_render):
+    names = [w[0] for w in WINDOWS9]
+    def cell(v):
+        return '      n/a' if v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))) else '%9.2f' % v
+    hdr = '%-30s' % 'measure' + ''.join('%9s' % n[:8] for n in names)
+    print(hdr)
+    print('-' * len(hdr))
+    print('LOUDNESS AND PEAKS (render minus reference)')
+    for key, label, _ in V3_TABLE_ROWS:
+        row = '%-30s' % label
+        for n in names:
+            r = res[n]
+            v = None
+            if has_render and r['render'] is not None:
+                v = r['render'][key] - r['ref'][key]
+            row += cell(v)
+        print(row)
+    print()
+    print('29 THIRD-OCTAVE BANDS, dB re window total (render minus reference); the E5 check is printed below the table')
+    e5 = {}
+    for fc_i, fc in enumerate(TOB_FC):
+        row = '%-30s' % ('%g Hz' % fc)
+        for n in names:
+            r = res[n]
+            v = None
+            if has_render and r['render'] is not None:
+                v = r['render']['tob29'][str(fc)] - r['ref']['tob29'][str(fc)]
+            row += cell(v)
+        print(row)
+    for n in names:
+        if n in E5_REF29:
+            d = [res[n]['ref']['tob29'][str(fc)] - E5_REF29[n][i] for i, fc in enumerate(TOB_FC)]
+            e5[n] = (float(np.max(np.abs(d))), float(np.mean(d)))
+    print('  E5 check, max |ref - E5| and mean (dB): ' + '  '.join(
+        '%s %.2f/%+.2f' % (n[:8], e5[n][0], e5[n][1]) for n in names if n in e5))
+    print()
+    print('MID/SIDE PER BAND (render minus reference): S/M dB, then rho')
+    for band in MS_BANDS:
+        key = '%g-%g' % band
+        for metric, mlabel in (('sm_db', 'S/M dB'), ('rho', 'rho')):
+            row = '%-30s' % ('%s %s' % (key + ' Hz', mlabel))
+            for n in names:
+                r = res[n]
+                v = None
+                if has_render and r['render'] is not None:
+                    v = r['render']['ms'][key][metric] - r['ref']['ms'][key][metric]
+                row += cell(v)
+            print(row)
+    print()
+    print('PER-BAR 4-16 kHz LEVEL, window mean of bars, dB (render minus reference)')
+    for band in HF_BANDS:
+        key = '%g-%g' % band
+        row = '%-30s' % (key + ' Hz')
+        for n in names:
+            r = res[n]
+            v = None
+            if has_render and r['render'] is not None:
+                rm = _mean_hf(r['render']['hf_bars'])
+                rf = _mean_hf(r['ref']['hf_bars'])
+                if key in rm and key in rf:
+                    v = rm[key] - rf[key]
+            row += cell(v)
+        print(row)
+    print()
+    print('KICK GLIDE AND SUB DUCK (coherent fit; render minus reference)')
+    for key, label in (('f0_hz', 'glide f0 Hz'), ('fT_hz', 'glide fT Hz'), ('tau_ms', 'glide tau ms')):
+        row = '%-30s' % label
+        for n in names:
+            r = res[n]
+            v = None
+            if has_render and r['render'] is not None and r['render'].get('kick_glide') and r['ref'].get('kick_glide'):
+                v = r['render']['kick_glide'].get(key, float('nan')) - r['ref']['kick_glide'].get(key, float('nan'))
+            row += cell(v)
+        print(row)
+    for t in ('0', '20', '60', '100', '200'):
+        row = '%-30s' % ('sub duck %s ms' % t)
+        for n in names:
+            r = res[n]
+            v = None
+            if has_render and r['render'] is not None and r['render'].get('sub_duck') and r['ref'].get('sub_duck'):
+                v = r['render']['sub_duck'].get(t, float('nan')) - r['ref']['sub_duck'].get(t, float('nan'))
+            row += cell(v)
+        print(row)
+    print()
+
+
+def top_deltas(res, k=12):
+    """The k largest |render - reference| deltas in the scored table, with their labels."""
+    rows = []
+    for n in [w[0] for w in WINDOWS9]:
+        r = res[n]
+        if r['render'] is None:
+            continue
+        for key, label, _ in V3_TABLE_ROWS:
+            rows.append((abs(r['render'][key] - r['ref'][key]), '%s: %s' % (n, label), r['render'][key] - r['ref'][key]))
+        for fc in TOB_FC:
+            d = r['render']['tob29'][str(fc)] - r['ref']['tob29'][str(fc)]
+            rows.append((abs(d), '%s: %g Hz band' % (n, fc), d))
+        for band in MS_BANDS:
+            key = '%g-%g' % band
+            d = r['render']['ms'][key]['sm_db'] - r['ref']['ms'][key]['sm_db']
+            rows.append((abs(d), '%s: S/M %s Hz' % (n, key), d))
+    rows = [x for x in rows if not math.isnan(x[0])]
+    rows.sort(key=lambda x: -x[0])
+    return rows[:k]
+
+
+ONSET_REF_TABLE = {
+    # spec 5.2(f): bass onsets in mainB (E3 mainB, E2 and E1 as given), ms re the grid line
+    1: ('E3 +11.0 / E2 +16.3 / E1 +9.6'), 6: ('E3 +11.9 / E1 +9.7 (E2 n=6 unreliable)'),
+    8: ('E3 -4.6'), 11: ('E3 +13.1 / E2 +9.9 / E1 +9.6'), 14: ('E3 -5.0 / E2 -4.2 / E1 -4.3'),
+}
+
+
+ONSET_CONTROL_1IDX = (2, 4, 8, 10, 12, 16)   # even steps other than 6 (the bass nudge): the control for "relative"
+
+
+def onsets_report(args, tr, ref_tr, band, method='slope'):
+    """Per-16th onset offsets. Absolute values carry the method's own convention (a 50 % rise on a plucked
+    note reads early on even steps); the swing check uses 'rel', each step minus the median of the even
+    control steps in the same measurement. Steps 1, 6, 11 and 14 are checked on rel against the reference
+    measured the same way, at the 4 ms threshold."""
+    win = window_bars(args, load_sidecar(args.render))
+    s0, s1 = sample_range(tr, win, 0.0)
+    rend = onset_offsets(tr, s0, s1, band, method)
+    ref = None
+    if ref_tr is not None:
+        r0, r1 = sample_range(ref_tr, win, 0.0)
+        ref = onset_offsets(ref_tr, r0, r1, band, method)
+
+    def stats(hits):
+        v = [h[0] for h in hits]
+        return (len(v), float(np.median(v)) if v else float('nan'), float(np.std(v)) if v else float('nan'))
+
+    def controls(table):
+        meds = [float(np.median([h[0] for h in table[st - 1]])) for st in ONSET_CONTROL_1IDX if table.get(st - 1)]
+        return float(np.median(meds)) if meds else float('nan')
+
+    rctl = controls(rend)
+    fctl = controls(ref) if ref is not None else float('nan')
+    print('window bars %s..%s, band %g-%g Hz, method %s, search -10..+30 ms, hits within 8 dB of the loudest' % (
+        win[0] if win else 0, (win[1] - 1) if win else '-', band[0], band[1], method))
+    print('control (even steps %s): render %+.2f ms, reference %+.2f ms' % (
+        ','.join(str(x) for x in ONSET_CONTROL_1IDX), rctl, fctl))
+    print('%5s | %4s %8s %7s %8s | %4s %8s %7s %8s | %9s %9s  %s' % (
+        'step', 'n', 'abs', 'sd', 'rel', 'n', 'abs', 'sd', 'rel', 'delta rel', 'delta abs', 'PASS/FAIL 4 ms (rel)'))
+    print('%5s | %-31s | %-31s |' % ('', 'render', 'reference (mix)'))
+    for st in range(STEPS):
+        rn, ra, rsd = stats(rend.get(st, []))
+        fn, fa, fsd = stats(ref.get(st, [])) if ref is not None else (0, float('nan'), float('nan'))
+        rrel = ra - rctl if rn else float('nan')
+        frel = fa - fctl if fn else float('nan')
+        dr = rrel - frel if (rn and fn) else float('nan')
+        da = ra - fa if (rn and fn) else float('nan')
+        check = ''
+        if (st + 1) in (1, 6, 11, 14) and not math.isnan(dr):
+            check = 'PASS' if abs(dr) <= 4.0 else 'FAIL'
+        print('%5d | %4d %+8.2f %7.2f %+8.2f | %4d %+8.2f %7.2f %+8.2f | %+9.2f %+9.2f  %s' % (
+            st + 1, rn, ra, rsd, rrel, fn, fa, fsd, frel, dr, da, check))
+    print('reference n is the hit count in the mix (small n = unreliable). E numbers (absolute, their conventions): ' +
+          '; '.join('%d: %s' % (k, v) for k, v in ONSET_REF_TABLE.items()))
+
+
 def selftest():
     ok_all = True
 
@@ -660,6 +1033,43 @@ def selftest():
           abs(d20 - expect20) < 1.5 and abs(d200) < 1.0,
           '20 ms %.2f dB (expect %.2f), 200 ms %.2f dB' % (d20, expect20, d200))
 
+    # V3 measures (spec 5.2)
+    tone = np.zeros((SR * 4, 2), dtype=np.float32)
+    tt = np.arange(SR * 4) / SR
+    tone[:, 0] = np.sin(2 * math.pi * 1000 * tt) * 0.1
+    tone[:, 1] = tone[:, 0]
+    tb = tob_bands(tone)
+    best = max(tb, key=lambda k: tb[k])
+    check('29 third-octave bands: 1 kHz tone lands in the 1000 Hz band', len(tb) == 29 and best == '1000',
+          'bands %d, peak band %s, 1000 Hz %.2f dB' % (len(tb), best, tb['1000']))
+    same = np.stack([tone[:, 0], tone[:, 0]], axis=1)
+    tr_same2 = Track('t', '', same, '', 0, 126.0, 0.0)
+    ms_same = ms_bands(tr_same2, 0, len(same))
+    check('mid/side: identical channels give rho 1 and no side power', all(
+        abs(v['rho'] - 1.0) < 1e-6 and math.isnan(v['sm_db']) for v in ms_same.values()),
+        'rho %.6f' % ms_same['300-1000']['rho'])
+    check('V3 mapping: sections land in E5 windows', (
+        v3_window('mainA_b') == 'mainA' and v3_window('mainA3') == 'mainA2' and v3_window('breakLate') == 'break'
+        and v3_window('gap') == 'breakEnd' and v3_window('mainB_c') == 'mainB' and v3_window('mainB_b') == 'mainB'
+        and len(V3_SECTIONS) == 15 and sum(b - a for a, b in V3_SECTIONS.values()) == 200))
+    check('E5 reference column: 29 values for each of the 9 windows', all(len(v) == 29 for v in E5_REF29.values())
+          and set(E5_REF29) == set(E5_WINDOW_ORDER))
+    ev = np.zeros((SR * 2, 2), dtype=np.float32)
+    trs = Track('t', '', np.zeros((SR * 4, 2), dtype=np.float32), '', 0, 126.0, 0.0)
+    for k in range(16 * 2):
+        g = int(round(k * trs.stepS))
+        off = int(round(10e-3 * SR)) if k % 2 == 1 else 0
+        n_ = int(0.2 * SR); tt2 = np.arange(n_) / SR
+        tn = np.sin(2 * math.pi * 520 * tt2) * np.minimum(tt2 / 0.004, 1.0) * np.exp(-tt2 / 0.08)
+        if g + off + n_ < len(trs.x):
+            trs.x[g + off:g + off + n_, 0] += tn
+            trs.x[g + off:g + off + n_, 1] += tn
+    ons = onset_offsets(trs, 0, 16 * 2 * int(round(trs.stepS)), (350, 1000))
+    ev_m = float(np.median([h[0] for st in (0, 2, 4, 6) for h in ons.get(st, [])]))
+    od_m = float(np.median([h[0] for st in (1, 3, 5, 7) for h in ons.get(st, [])]))
+    check('onset check: an odd-step offset of 10 ms reads 8 to 12 ms relative to even steps (slope rule)',
+          7.5 <= od_m - ev_m <= 12.5, 'odd-even %.2f ms' % (od_m - ev_m))
+
     print('OK: all selftest checks passed' if ok_all else 'FAILED: see FAIL lines above')
     return 0 if ok_all else 1
 
@@ -682,16 +1092,48 @@ def main():
     ap.add_argument('--json', action='store_true', help='print JSON instead of the table')
     ap.add_argument('--xcheck', action='store_true', help='also run ffmpeg ebur128 on the same window')
     ap.add_argument('--selftest', action='store_true', help='run synthetic checks of the measures and exit')
+    ap.add_argument('--layout', choices=['auto', 'archive', 'v3'], default='auto',
+                    help='section table for --section: auto reads the sidecar song (v3 or archive)')
+    ap.add_argument('--v3', action='store_true',
+                    help='V3 report: per-window delta table (render minus reference) for every measure, one run')
+    ap.add_argument('--onsets', action='store_true', help='per-16th onset offsets of the render (and the reference)')
+    ap.add_argument('--onset-band', default='350-1000', help='band for --onsets, Hz lo-hi (default 350-1000, E2)')
+    ap.add_argument('--onset-method', choices=['slope', 'rise'], default='slope', help='onset rule for --onsets')
     args = ap.parse_args()
     if args.selftest:
         sys.exit(selftest())
     if not args.render and not args.ref:
         ap.error('a render WAV or --ref is required')
+    if args.v3 and not (args.render and args.ref):
+        ap.error('--v3 needs a render WAV and --ref')
     side = None
     if args.render:
         if not os.path.isfile(args.render):
             die('no such file ' + args.render)
         side = load_sidecar(args.render)
+    if args.v3:
+        render_tr = load_track(args.render, side, True)
+        ref_tr = load_track(args.ref, None, False)
+        print('V3 report: render %s (layout %s, latency %s samples), reference %s' % (
+            os.path.relpath(os.path.abspath(args.render), REPO), layout_of(args, side),
+            side.get('latencySamples', 'n/a') if side else 'n/a', os.path.abspath(args.ref)))
+        res = v3_report(args, render_tr, ref_tr, side)
+        if args.json:
+            print(json.dumps(res, indent=1, default=json_default))
+        else:
+            print_v3(res, True)
+            print('largest |render - reference| deltas in the table:')
+            for mag, label, d in top_deltas(res):
+                print('  %+9.2f  %s' % (d, label))
+        return
+    if args.onsets:
+        if not args.render:
+            ap.error('--onsets needs a render WAV')
+        lo, hi = (float(v) for v in args.onset_band.split('-'))
+        render_tr = load_track(args.render, side, True)
+        ref_tr = load_track(args.ref, None, False) if args.ref else None
+        onsets_report(args, render_tr, ref_tr, (lo, hi), args.onset_method)
+        return
     win = window_bars(args, side)
     tracks = []
     if args.render:

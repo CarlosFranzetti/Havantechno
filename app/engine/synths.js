@@ -167,32 +167,61 @@
   // Pitch: tau 0 keeps the log-linear ramp over `sweep`; tau > 0 is a first-order approach, punch -> tune with
   // time constant tau (setTargetAtTime; the reference reads 264 Hz -> 51 Hz, tau 0.024 s).
   // Amplitude: hold 0 keeps the single exponential over `decay`; hold > 0 holds full level for `hold`, then decays.
+  // kick amplitude. The defaults (attack 0.0015, swell 0, hold 0) call envDecay / envHold exactly as before.
+  // attack: linear rise to full over `attack`; swell > 0: the level first jumps to -swell dB within 1.5 ms, then rises
+  // to full at `attack` (E1 final: swell 2 dB, attack 0.02 s).
+  function kickEnv(g, t, vel, attack, swell, hold, dec) {
+    if (!(swell > 0) && !(attack > 0.0015)) return hold > 0 ? envHold(g, t, vel, 0.0015, hold, dec) : envDecay(g, t, vel, 0.0015, dec);
+    var aEnd = Math.max(attack, 0.002), h0 = t + aEnd;
+    setV(g, 0.0001, t);
+    if (swell > 0) lin(g, vel * Math.pow(10, -swell / 20), t + 0.0015);
+    lin(g, vel, t + aEnd);
+    if (hold > 0) { setV(g, vel, h0 + hold); h0 += hold; }
+    expo(g, 0.0001, h0 + dec);
+    return h0 + dec + 0.03;
+  }
+
   BUILD.kick = {
     spec: { tune: { min: 30, max: 90, value: 45, unit: 'Hz' }, punch: { min: 80, max: 400, value: 170, unit: 'Hz' },
             sweep: { min: 0.01, max: 0.3, value: 0.06, unit: 's' }, decay: { min: 0.05, max: 1.2, value: 0.34, unit: 's' },
             tau: { min: 0, max: 0.1, value: 0, unit: 's' }, hold: { min: 0, max: 0.3, value: 0, unit: 's' },
+            attack: { min: 0.0005, max: 0.2, value: 0.0015, unit: 's' }, swell: { min: 0, max: 12, value: 0, unit: 'dB' },
+            harmonic: { min: 0, max: 1, value: 0 }, length: { min: 0, max: 1, value: 0, unit: 's' },
+            clickDecay: { min: 0.0005, max: 0.05, value: 0.012, unit: 's' },
             click: { min: 0, max: 1, value: 0.4 }, drive: { min: 0, max: 1, value: 0.35 }, level: { min: 0, max: 1.5, value: 1 } },
     build: function (inst) {
       var ctx = inst.ctx, P = inst.params;
       inst.trigger = function (t, ev) {
         var g = vel(ev), v = voice(ctx, inst);
-        var body = v.osc('sine', P.punch, t, t + P.hold + P.decay + 0.1);
+        var stop = t + P.hold + P.decay + 0.1 + (P.attack > 0.0015 ? P.attack : 0);
+        var body = v.osc('sine', P.punch, t, stop);
         if (P.tau > 0) K.target(body.frequency, P.tune, t, P.tau);
         else expo(body.frequency, P.tune, t + P.sweep);
         var bg = v.gain(0);
-        if (P.hold > 0) envHold(bg.gain, t, g, 0.0015, P.hold, P.decay);
-        else envDecay(bg.gain, t, g, 0.0015, P.decay);
-        body.connect(bg); bg.connect(inst.pre);
+        kickEnv(bg.gain, t, g, P.attack, P.swell, P.hold, P.decay);
+        body.connect(bg);
+        // length > 0: a 3 ms fade that ends the body at `length` (E1: cut below -40 dB at 197 to 198 ms)
+        var out = bg;
+        if (P.length > 0) { out = v.gain(1); setV(out.gain, 1, t + P.length - 0.003); lin(out.gain, 0.0001, t + P.length); bg.connect(out); }
+        out.connect(inst.pre);
+        // harmonic > 0: a 2f sine on the same pitch curve and envelope (the record's distortion is even-order)
+        if (P.harmonic > 0) {
+          var h = v.osc('sine', 2 * P.punch, t, stop), hg = v.gain(0);
+          if (P.tau > 0) K.target(h.frequency, 2 * P.tune, t, P.tau);
+          else expo(h.frequency, 2 * P.tune, t + P.sweep);
+          kickEnv(hg.gain, t, g * P.harmonic, P.attack, P.swell, P.hold, P.decay);
+          h.connect(hg); hg.connect(out);
+        }
         if (P.click > 0) {
           var n = v.noise(t, t + 0.03);
           if (n) {
             var hp = v.filter('highpass', 1800, 0.7), ng = v.gain(0);
-            envDecay(ng.gain, t, g * P.click * 0.5, 0.0005, 0.012);
+            envDecay(ng.gain, t, g * P.click * 0.5, 0.0005, P.clickDecay);
             series([n, hp, ng, inst.pre]);
           }
           var kn = v.osc('triangle', 520, t, t + 0.04), kg = v.gain(0);
           expo(kn.frequency, 90, t + 0.018);
-          envDecay(kg.gain, t, g * P.click * 0.45, 0.0005, 0.022);
+          envDecay(kg.gain, t, g * P.click * 0.45, 0.0005, 0.022 * (P.clickDecay / 0.012));   // the knock scales with clickDecay
           kn.connect(kg); kg.connect(inst.pre);
         }
       };
@@ -203,14 +232,67 @@
   // mode 'drone': one continuous sine per trigger, sustained for ev.dur (whole bar on a gate-16 note track) with a
   // short attack and release; a new note glides from the previous one over `glide`. Drone triggers must not overlap
   // more than one per bar (a pattern of one hit per bar), or the voices stack.
+  // run 1 (with mode 'drone'): one voice that lives across triggers. A trigger sets the pitch (with glide) and the
+  // level; the phase is not reset, so the drone's own pulse free-runs. panic() ends the running voice.
+  // beat / beat3 (Hz below the carrier) with beatLevel / beat3Level (dB re the carrier): the drone's two partial lines
+  // that make its 1.2027 Hz pulse (E1). beat 0 = no line (today). The record's second line also has a phase
+  // (-126 deg re the carrier); that is not built (the start phase of a running voice is free-running, E1).
   BUILD.sub = {
     spec: { decay: { min: 0.05, max: 2, value: 0.4, unit: 's' }, attack: { min: 0.001, max: 0.1, value: 0.005, unit: 's' },
             harmonic: { min: 0, max: 1, value: 0.12 }, glide: { min: 0, max: 0.3, value: 0, unit: 's' },
-            level: { min: 0, max: 1.5, value: 1 }, mode: { value: 'pluck' }, release: { min: 0.005, max: 1, value: 0.03, unit: 's' } },
+            level: { min: 0, max: 1.5, value: 1 }, mode: { value: 'pluck' }, release: { min: 0.005, max: 1, value: 0.03, unit: 's' },
+            run: { min: 0, max: 1, value: 0 }, beat: { min: 0, max: 20, value: 0, unit: 'Hz' },
+            beatLevel: { min: -60, max: 0, value: -2.6, unit: 'dB' }, beat3: { min: 0, max: 20, value: 0, unit: 'Hz' },
+            beat3Level: { min: -60, max: 0, value: -5.8, unit: 'dB' } },
     build: function (inst) {
       var ctx = inst.ctx, P = inst.params;
+      var basePanic = inst.panic;
+      inst.panic = function () { inst._run = null; basePanic(); };
+      // the partial lines of the drone: [{off Hz below the carrier, gain}]; none at the defaults
+      function lines() {
+        var out = [];
+        if (P.beat > 0) out.push({ off: P.beat, gain: Math.pow(10, P.beatLevel / 20) });
+        if (P.beat3 > 0) out.push({ off: P.beat3, gain: Math.pow(10, P.beat3Level / 20) });
+        return out;
+      }
+      function retarget(p, from, to, t) {
+        if (P.glide > 0) { setV(p, from, t); expo(p, to, t + P.glide); } else setV(p, to, t);
+      }
+      // one running voice: created once, then pitch-only changes
+      function runDrone(t, g, f) {
+        var R = inst._run;
+        if (!R || R.v.done) {
+          var v = voice(ctx, inst), og = v.gain(0), o = v.osc('sine', f, t, null);
+          o.connect(og);
+          R = inst._run = { v: v, og: og, f: f, nodes: [] };
+          R.nodes.push({ node: o, mult: 1, off: 0 });
+          if (P.harmonic > 0) {
+            var h = v.osc('sine', 2 * f, t, null), hg = v.gain(P.harmonic);
+            h.connect(hg); hg.connect(og);
+            R.nodes.push({ node: h, mult: 2, off: 0 });
+          }
+          var ls = lines();
+          for (var i = 0; i < ls.length; i++) {
+            var pa = v.gain(ls[i].gain), p = v.osc('sine', f - ls[i].off, t, null);
+            p.connect(pa); pa.connect(og);
+            R.nodes.push({ node: p, mult: 1, off: ls[i].off });
+          }
+          setV(og.gain, 0.0001, t); lin(og.gain, g, t + P.attack);
+          return;
+        }
+        if (f !== R.f) {
+          for (var k = 0; k < R.nodes.length; k++) {
+            var nd = R.nodes[k];
+            retarget(nd.node.frequency, nd.mult * R.f - nd.off, nd.mult * f - nd.off, t);
+          }
+          R.f = f;
+        }
+        K.target(R.og.gain, g, t, 0.005);
+      }
       inst.trigger = function (t, ev) {
-        var g = vel(ev), v = voice(ctx, inst), f = mtof(notesOf(ev, 35)[0]);
+        var g = vel(ev), f = mtof(notesOf(ev, 35)[0]);
+        if (P.mode === 'drone' && P.run > 0) { runDrone(t, g, f); return; }   // no voice of its own: the running one
+        var v = voice(ctx, inst);
         if (P.mode === 'drone') {
           var hold = ev.dur || 1, dend = t + P.attack + hold + P.release + 0.05;
           var df0 = (P.glide > 0 && inst._lastF) ? inst._lastF : f;
@@ -220,6 +302,12 @@
           var dg = v.gain(0);
           envAHR(dg.gain, t, g, P.attack, hold, P.release);
           dO.connect(dg); dg.connect(inst.pre);
+          var dls = lines();
+          for (var j = 0; j < dls.length; j++) {
+            var dpa = v.gain(dls[j].gain), dp = v.osc('sine', df0 - dls[j].off, t, dend);
+            if (df0 !== f) expo(dp.frequency, f - dls[j].off, t + P.glide);
+            dp.connect(dpa); dpa.connect(dg);
+          }
           if (P.harmonic > 0) {
             var dh = v.osc('sine', f * 2, t, dend), dhg = v.gain(0);
             envAHR(dhg.gain, t, g * P.harmonic, P.attack, hold, P.release);
@@ -317,7 +405,7 @@
     spec: { tone: { min: 400, max: 6000, value: 1900, unit: 'Hz' }, q: { min: 0.2, max: 6, value: 0.8 },
             decay: { min: 0.03, max: 0.6, value: 0.16, unit: 's' }, flam: { min: 0.004, max: 0.03, value: 0.011, unit: 's' },
             flams: { min: 0, max: 6, value: 3 }, tail: { min: 0, max: 1, value: 0.3 }, tailDecay: { min: 0.05, max: 1.5, value: 0.35, unit: 's' },
-            level: { min: 0, max: 1.5, value: 1 } },
+            level: { min: 0, max: 1.5, value: 1 }, first: { min: 0, max: 2, value: 0 } },
     build: function (inst) {
       var ctx = inst.ctx, P = inst.params;
       inst.trigger = function (t, ev) {
@@ -325,9 +413,14 @@
         var tb = t + nf * P.flam, n = v.noise(t, tb + P.decay + 0.05);
         if (!n) return;
         var bp = v.filter('bandpass', P.tone, P.q), ng = v.gain(0);
+        // first > 0: the first burst peaks at first x g and every later burst (flams and main) is at 0.33 of today's level
+        var k = P.first > 0 ? 0.33 : 1, late = P.first > 0 ? g * 0.33 : g * 0.7;
         setV(ng.gain, 0.0001, t);
-        for (i = 0; i < nf; i++) { setV(ng.gain, g * 0.7, t + i * P.flam); expo(ng.gain, g * 0.12, t + (i + 1) * P.flam - 0.001); }
-        setV(ng.gain, g, tb); expo(ng.gain, 0.0001, tb + P.decay);
+        for (i = 0; i < nf; i++) {
+          var pk = i === 0 ? (P.first > 0 ? g * P.first : g * 0.7) : late;
+          setV(ng.gain, pk, t + i * P.flam); expo(ng.gain, g * 0.12 * k, t + (i + 1) * P.flam - 0.001);
+        }
+        setV(ng.gain, g * k, tb); expo(ng.gain, 0.0001, tb + P.decay);
         series([n, bp, ng, inst.pre]);
         if (P.tail > 0) {
           var n2 = v.noise(tb, tb + P.tailDecay + 0.05), lp = v.filter('lowpass', 4500, 0.7), tg = v.gain(0);
@@ -371,14 +464,16 @@
   BUILD.shaker = {
     spec: { tone: { min: 1000, max: 12000, value: 6500, unit: 'Hz' }, q: { min: 0.2, max: 6, value: 1.2 },
             attack: { min: 0.001, max: 0.05, value: 0.006, unit: 's' }, decay: { min: 0.01, max: 0.5, value: 0.07, unit: 's' },
-            level: { min: 0, max: 1.5, value: 1 } },
+            level: { min: 0, max: 1.5, value: 1 }, hold: { min: 0, max: 0.6, value: 0, unit: 's' } },
     build: function (inst) {
       var ctx = inst.ctx, P = inst.params;
       inst.trigger = function (t, ev) {
-        var g = vel(ev), v = voice(ctx, inst), n = v.noise(t, t + P.attack + P.decay + 0.05);
+        var g = vel(ev), v = voice(ctx, inst), n = v.noise(t, t + P.attack + P.hold + P.decay + 0.05);
         if (!n) return;
         var bp = v.filter('bandpass', P.tone, P.q), ng = v.gain(0);
-        envDecay(ng.gain, t, g * 0.5, P.attack, P.decay);
+        // hold > 0: flat at the peak for `hold` before the decay (the burst's sustain, the on-beat layer's gate)
+        if (P.hold > 0) envHold(ng.gain, t, g * 0.5, P.attack, P.hold, P.decay);
+        else envDecay(ng.gain, t, g * 0.5, P.attack, P.decay);
         series([n, bp, ng, inst.pre]);
       };
     }
@@ -463,21 +558,24 @@
   // RISER: noise with a rising bandpass and level over ev.dur seconds, plus a rising saw drone.
   BUILD.riser = {
     spec: { from: { min: 50, max: 5000, value: 300, unit: 'Hz' }, to: { min: 500, max: 16000, value: 7000, unit: 'Hz' },
-            q: { min: 0.2, max: 8, value: 1.5 }, tone: { min: 0, max: 1, value: 0.25 }, level: { min: 0, max: 1.5, value: 1 } },
+            q: { min: 0.2, max: 8, value: 1.5 }, tone: { min: 0, max: 1, value: 0.25 }, level: { min: 0, max: 1.5, value: 1 },
+            floor: { min: 0.0001, max: 1, value: 0.0001 }, hold: { min: 0, max: 120, value: 0, unit: 's' } },
     build: function (inst) {
       var ctx = inst.ctx, P = inst.params;
       inst.trigger = function (t, ev) {
-        var g = vel(ev), v = voice(ctx, inst), d = ev.dur || 4, n = v.noise(t, t + d + 0.1);
+        var g = vel(ev), v = voice(ctx, inst), d = ev.dur || 4, n = v.noise(t, t + d + P.hold + 0.1);
         if (n) {
           var bp = v.filter('bandpass', P.from, P.q), ng = v.gain(0);
+          // floor > 0.0001: the rise starts at floor x the plateau (E3: 0.04, about 28 dB); the default starts at 0.0001
+          var r0 = P.floor > 0.0001 ? g * 0.6 * P.floor : 0.0001;
           expo(bp.frequency, P.to, t + d);
-          setV(ng.gain, 0.0001, t); expo(ng.gain, g * 0.6, t + d); setV(ng.gain, g * 0.6, t + d); lin(ng.gain, 0.0001, t + d + 0.03);
+          setV(ng.gain, r0, t); expo(ng.gain, g * 0.6, t + d); setV(ng.gain, g * 0.6, t + d + P.hold); lin(ng.gain, 0.0001, t + d + P.hold + 0.03);
           series([n, bp, ng, inst.pre]);
         }
         if (P.tone > 0) {
-          var o = v.osc('sawtooth', 55, t, t + d + 0.1), lp = v.filter('lowpass', 200, 2), og = v.gain(0);
+          var o = v.osc('sawtooth', 55, t, t + d + P.hold + 0.1), lp = v.filter('lowpass', 200, 2), og = v.gain(0);
           expo(o.frequency, 110, t + d); expo(lp.frequency, 3000, t + d);
-          setV(og.gain, 0.0001, t); expo(og.gain, g * P.tone * 0.4, t + d); lin(og.gain, 0.0001, t + d + 0.03);
+          setV(og.gain, 0.0001, t); expo(og.gain, g * P.tone * 0.4, t + d); lin(og.gain, 0.0001, t + d + P.hold + 0.03);
           series([o, lp, og, inst.pre]);
         }
       };
