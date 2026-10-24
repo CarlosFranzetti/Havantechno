@@ -13,7 +13,8 @@
  * send:<name>, master:<unit>. meter('master') reads the final output.
  * Events: 'step' {step, bar, section, name, time}, 'section' {section, name}, 'play', 'stop',
  *         'document' {reason: 'start'|'load'|'commit', rebuilt}, 'param' {path, value, source: 'ui'|'arrangement'},
- *         'audio' {id, status: 'loaded'|'missing'|'unloaded'}.
+ *         'audio' {id, status: 'loaded'|'missing'|'unloaded'}, 'bypass' {id, on}.
+ * Undo: every host.hold(path) (the start of a knob gesture) and host.bypass take one undo snapshot of the document.
  * Audio (sampler, CONTRACT "Sampler"): host.loadAudio(File|Blob|URL|ArrayBuffer, {id, name, src}) -> Promise<bufferId>,
  *   host.audio(), host.buffer(id), host.unloadAudio(id), host.reloadAudio({shell, base}), host.audioReady(),
  *   host.addSampler(source, {name, family, pattern}) -> Promise<trackName>. doc.audio holds references, never bytes.
@@ -79,7 +80,7 @@
   function applyMaster(seq, doc) {
     var m = doc && doc.master;
     if (!m || typeof m !== 'object') return;
-    for (var u in m) if (has(m, u) && m[u] && typeof m[u] === 'object') for (var p in m[u]) if (has(m[u], p)) seq.setParam('master.' + u + '.' + p, m[u][p]);
+    for (var u in m) if (has(m, u) && m[u] && typeof m[u] === 'object') for (var p in m[u]) if (has(m[u], p) && p !== 'bypass') seq.setParam('master.' + u + '.' + p, m[u][p]);
   }
 
   // Editor operations the views asked for (A5) that songdoc.js does not have yet. They live here, on the editor the
@@ -131,6 +132,23 @@
       return true;
     };
     return ed;
+  }
+
+  // bypass flags stored in the document: `bypass: true` on a chain entry, a track's sidechain, a send, a master unit
+  function applyBypass(seq, doc) {
+    var i, j, k, t, tr, n;
+    for (i = 0; i < doc.tracks.length; i++) {
+      t = doc.tracks[i]; tr = seq.tracks[t.name];
+      if (!tr) continue;
+      if (t.chain) for (j = 0, k = 0; j < t.chain.length; j++) {
+        if (entryName(t.chain[j]) == null) continue;
+        var pr = tr.chain.procs[k++], e = t.chain[j];
+        if (pr && e && typeof e === 'object' && !isArr(e) && e.bypass) pr.bypass(true);
+      }
+      if (t.sidechain && t.sidechain.bypass && tr.sc) tr.sc.bypass(true);
+    }
+    for (n in (doc.sends || {})) if (has(doc.sends, n) && doc.sends[n] && doc.sends[n].bypass && seq.sends[n]) seq.sends[n].bypass(true);
+    for (n in (doc.master || {})) if (has(doc.master, n) && doc.master[n] && doc.master[n].bypass && seq.master.get(n)) seq.master.get(n).bypass(true);
   }
 
   function create(opts) {
@@ -202,6 +220,7 @@
       }
       Song.build(s, def);
       applyMaster(s, doc);
+      applyBypass(s, doc);
     }
     function capture(s) {
       var st = { step: s._step, playing: !!s.playing, loop: s.loopSection, held: {}, mute: {}, solo: {}, seed: s.seed }, k;
@@ -404,17 +423,19 @@
         if (!ok) return false;
         var value = host.getParam(path);
         if (!mutePath(parts)) persist(path, parts, value === undefined ? v : value);
+        if (has(seq._base, path)) seq._base[path] = value === undefined ? v : value;   // the pre-arrangement value is now this
         emit('param', { path: path, value: value === undefined ? v : value, source: 'ui' });
         return true;
       } catch (e) { return false; }
     };
     // the arranged value of a path at the current position: the latest section `set` at or before it
+    // the arranged value of a path at the current position (section sets and ramps, see seq.arranged)
     function arrangedValue(path) {
-      var bar = Math.floor(seq._step / STEPS), sec = seq.sectionAt(bar);
-      for (var i = sec ? sec.index : -1; i >= 0; i--) { var s = seq.sections[i]; if (s.set && has(s.set, path)) return { value: s.set[path] }; }
-      return null;
+      var a = seq.arranged(seq._step);
+      return has(a.values, path) ? { value: a.values[path] } : null;
     }
-    host.hold = function (path) { seq.hold(path); return host; };
+    // a knob gesture starts with hold(path) (A11's audit: once per drag, before the first value): one undo step each
+    host.hold = function (path) { snapshot(ed); seq.hold(path); return host; };
     // re-enable arranged: the path follows the arrangement again, from now (ramps resume on the next step)
     host.release = function (path) {
       path = String(path);
@@ -432,6 +453,39 @@
     };
     host.heldCount = function () { return seq.heldCount(); };
     host.isHeld = function (path) { return !!seq.held[String(path)]; };
+
+    // ---------------------------------------------------------- bypass (inserts, sidechains, sends, master units)
+    function bypassEntry(d) {
+      var doc = ed.doc, t, j;
+      if (d.kind === 'insert') {
+        t = docTrack(doc, d.track); if (!t || !t.chain) return null;
+        for (j = 0; j < t.chain.length; j++) if (entryName(t.chain[j]) === d.name) return entryObject(t, j);
+        return null;
+      }
+      if (d.kind === 'sidechain') { t = docTrack(doc, d.track); if (!t) return null; return (t.sidechain = t.sidechain || {}); }
+      if (d.kind === 'send') {
+        if (!doc.sends || doc.sends[d.name] == null) return null;
+        if (typeof doc.sends[d.name] === 'string') doc.sends[d.name] = { type: doc.sends[d.name] };
+        return doc.sends[d.name];
+      }
+      if (d.kind === 'master') { doc.master = doc.master || {}; return (doc.master[d.name] = doc.master[d.name] || {}); }
+      return null;
+    }
+    // bypass a processor device: live, stored in the document (rebuild, save, export keep it), one undo step
+    host.bypass = function (id, on) {
+      var d = host.device(id);
+      if (!d || !d.ref || typeof d.ref.bypass !== 'function' || d.kind === 'instrument' || d.kind === 'channel') return false;
+      on = !!on;
+      var clean = structKey(ed.doc) === builtKey;
+      snapshot(ed);
+      d.ref.bypass(on);
+      var e = bypassEntry(d);
+      if (e) { if (on) e.bypass = true; else delete e.bypass; }
+      if (clean) builtKey = structKey(ed.doc);
+      emit('bypass', { id: id, on: on });
+      return true;
+    };
+    host.isBypassed = function (id) { var d = host.device(id); return !!(d && d.ref && d.ref._bypassed); };
     host.mute = function (track, b) { var r = seq.mute(track, b); if (r !== undefined) emit('param', { path: track + '.mute', value: r, source: 'ui' }); return r; };
     host.solo = function (track, b) { var r = seq.solo(track, b); if (r !== undefined) emit('param', { path: track + '.solo', value: r, source: 'ui' }); return r; };
 
@@ -757,6 +811,7 @@
         var k;
         for (k in st.mute) if (has(st.mute, k) && s.tracks[k]) s.mute(k, true);
         for (k in st.solo) if (has(st.solo, k) && s.tracks[k]) s.solo(k, true);
+        for (k in st.held) if (has(st.held, k)) s.hold(k);     // export keeps what the user is holding, like playback
         s.seed = st.seed;
       }, { from: from || 0, to: to, sampleRate: o.sampleRate || (ctx && ctx.sampleRate) || 44100, tail: o.tail });
     };

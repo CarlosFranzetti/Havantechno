@@ -85,7 +85,7 @@
       ctx: ctx || null, tracks: {}, order: [], sends: {}, sendOrder: [], sections: [], totalBars: 0, progression: ['C'],
       playing: false, loopSection: null, loopAll: true, master: null, out: null, analyser: null,
       _bpm: opts.bpm || 120, _swing: clamp(opts.swing || 0, 0, 1), _lookahead: opts.lookahead || 0.12, _interval: opts.interval || 25,
-      seed: opts.seed || 1, held: {},
+      seed: opts.seed || 1, held: {}, _base: {},
       _step: 0, _next: 0, _timer: null, _events: [], _listeners: {}, _hitCount: {}, _pendingSet: [], _soloed: 0, _counted: 0
     };
     var live = !!ctx;
@@ -288,17 +288,64 @@
       var prog = (sec && sec.progression) || seq.progression;
       return prog[(bar - (sec ? sec.start : 0)) % prog.length];
     }
+    function rampValue(r, u) {
+      if (r.curve === 'expo' && r.from > 0 && r.to > 0) return r.from * Math.pow(r.to / r.from, u);
+      return r.from + (r.to - r.from) * u;
+    }
+    // the value a path had before the arrangement first wrote it (restored when a jump goes back before any write)
+    function readParam(p) {
+      if (p === 'bpm') return seq._bpm;
+      if (p === 'swing') return seq._swing;
+      var parts = String(p).split('.');
+      if (parts.length === 3 && parts[1] === 'send' && seq.tracks[parts[0]]) return seq.sendLevel(parts[0], parts[2]);
+      return seq.getParam(p);
+    }
+    function noteBase(p) { if (!seq._base.hasOwnProperty(p)) { var v = readParam(p); if (v !== undefined) seq._base[p] = v; } }
     function ramps(sec, bar, st, t) {
       for (var i = 0; i < sec.ramp.length; i++) {
         var r = sec.ramp[i], a = r.bars ? r.bars[0] : 0, b = r.bars ? r.bars[1] : sec.bars;
         if (seq.held[r.param]) continue;
         var pos = (bar - sec.start) + st / STEPS;
         if (pos < a || pos > b) continue;
-        var u = b > a ? clamp((pos - a) / (b - a), 0, 1) : 1, v;
-        if (r.curve === 'expo' && r.from > 0 && r.to > 0) v = r.from * Math.pow(r.to / r.from, u); else v = r.from + (r.to - r.from) * u;
-        seq.setParam(r.param, v, { at: t });
+        var u = b > a ? clamp((pos - a) / (b - a), 0, 1) : 1;
+        noteBase(r.param);
+        seq.setParam(r.param, rampValue(r, u), { at: t });
       }
     }
+    // The arrangement's state at an absolute step: every section `set` up to the section playing there (later wins),
+    // each finished ramp's end value and the running ramps' current value; paths the arrangement writes only later go
+    // back to their value before the arrangement. Returns {values: {path: v}, order: [paths]}.
+    seq.arranged = function (absStep) {
+      var bar = Math.floor(absStep / STEPS), st = absStep % STEPS, tgt = seq.sectionAt(bar), vals = {}, order = [], all = {}, i, j, p;
+      function put(q, v) { if (!vals.hasOwnProperty(q)) order.push(q); vals[q] = v; }
+      for (i = 0; i < seq.sections.length; i++) {
+        var sec = seq.sections[i];
+        for (p in sec.set) if (sec.set.hasOwnProperty(p)) all[p] = 1;
+        for (j = 0; j < sec.ramp.length; j++) all[sec.ramp[j].param] = 1;
+        if (!tgt || i > tgt.index) continue;
+        for (p in sec.set) if (sec.set.hasOwnProperty(p)) put(p, sec.set[p]);
+        for (j = 0; j < sec.ramp.length; j++) {
+          var r = sec.ramp[j], a = r.bars ? r.bars[0] : 0, b = r.bars ? r.bars[1] : sec.bars, u;
+          if (i < tgt.index) u = 1;
+          else { var pos = (bar - sec.start) + st / STEPS; if (pos < a) continue; u = b > a ? clamp((pos - a) / (b - a), 0, 1) : 1; }
+          put(r.param, rampValue(r, u));
+        }
+      }
+      for (p in all) if (all.hasOwnProperty(p) && !vals.hasOwnProperty(p) && seq._base.hasOwnProperty(p)) put(p, seq._base[p]);
+      return { values: vals, order: order };
+    };
+    // apply the arrangement's state at absStep (jump, stop, loop, a render from mid-song), skipping held paths
+    seq.chase = function (absStep, t) {
+      if (t == null) t = live ? ctx.currentTime : 0;
+      var a = seq.arranged(absStep), n = 0;
+      for (var i = 0; i < a.order.length; i++) {
+        var p = a.order[i];
+        if (seq.held[p]) continue;
+        noteBase(p);
+        if (seq.setParam(p, a.values[p], { at: t })) n++;
+      }
+      return n;
+    };
     // deterministic per (track, absolute step, variant, seed): export equals playback
     function hash32(s) { var h = 2166136261 >>> 0; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h; }
     function chance(name, absStep, variation) { return hash32(name + ':' + absStep + ':' + variation + ':' + seq.seed) / 4294967296; }
@@ -333,7 +380,7 @@
       var sd = seq.stepSec(), ts = t + ((st % 2) ? seq._swing * sd * 0.33 : 0), i, n, tr;
       var tFloor = live ? ctx.currentTime : 0;      // a negative nudge cannot land in the past
       if (st === 0 && bar === sec.start) {
-        for (var p in sec.set) if (sec.set.hasOwnProperty(p) && !seq.held[p]) seq.setParam(p, sec.set[p], { at: t });
+        for (var p in sec.set) if (sec.set.hasOwnProperty(p) && !seq.held[p]) { noteBase(p); seq.setParam(p, sec.set[p], { at: t }); }
         if (!quiet) seq._events.push({ time: t, type: 'section', section: sec.index, name: sec.name });
       }
       if (sec.ramp.length) ramps(sec, bar, st, t);
@@ -413,9 +460,9 @@
           var bar = Math.floor(seq._step / STEPS), sec = seq.sectionAt(bar);
           if (seq.loopSection != null) {
             var ls = seq.section(seq.loopSection);
-            if (ls && (bar < ls.start || bar >= ls.start + ls.bars)) seq._step = ls.start * STEPS;
+            if (ls && (bar < ls.start || bar >= ls.start + ls.bars)) { seq._step = ls.start * STEPS; seq.chase(seq._step, seq._next); }
           } else if (bar >= seq.totalBars || !sec) {
-            if (seq.loopAll && seq.totalBars > 0) seq._step = 0; else { seq._stopAt = seq._next + 2; seq.playing = false; seq._events.push({ time: seq._next + 2, type: 'stop' }); return; }
+            if (seq.loopAll && seq.totalBars > 0) { seq._step = 0; seq.chase(0, seq._next); } else { seq._stopAt = seq._next + 2; seq.playing = false; seq._events.push({ time: seq._next + 2, type: 'stop' }); return; }
           }
           schedule(seq._step, seq._next, false);
           seq._step++;
@@ -441,15 +488,17 @@
       var sec = seq.sectionAt(Math.floor(seq._step / STEPS));
       seq.pause();
       seq._step = sec ? sec.start * STEPS : 0;
+      seq.chase(seq._step);
       emit('step', { type: 'step', step: 0, bar: Math.floor(seq._step / STEPS), section: sec ? sec.index : 0, time: live ? ctx.currentTime : 0 });
     };
-    seq.rewind = function () { seq.pause(); seq._step = 0; };
+    seq.rewind = function () { seq.pause(); seq._step = 0; seq.chase(0); };
     seq.toggle = function () { if (seq.playing) seq.pause(); else seq.play(); return seq.playing; };
     seq.jump = function (ref) {
       var sec = typeof ref === 'number' && ref >= seq.sections.length ? seq.sectionAt(ref) : seq.section(ref);
       if (!sec) return false;
       if (seq.playing) { panicAll(); seq._events.length = 0; seq._next = ctx.currentTime + 0.05; }
       seq._step = sec.start * STEPS;
+      seq.chase(seq._step, seq.playing ? seq._next : null);
       return true;
     };
     seq.loop = function (ref) { seq.loopSection = (ref == null) ? null : (seq.section(ref) ? seq.section(ref).name : null); return seq.loopSection; };
@@ -471,7 +520,11 @@
   }
 
   // ---------------------------------------------------------- offline rendering
-  // buildFn(seq) adds sends/tracks/arrangement. opts: {sampleRate, from (bar), to (bar), tail (s)}
+  // buildFn(seq) adds sends/tracks/arrangement. opts: {sampleRate, from (bar), to (bar), tail (s), chunked}
+  // A render from mid-song starts from the arrangement's state there (seq.chase). Steps are scheduled two bars ahead of
+  // the render position through OfflineAudioContext.suspend, so finished voices leave the graph (rendering the whole
+  // range up front kept every voice connected: about quadratic in the length). chunked: false, or a context without
+  // suspend, schedules everything up front as before.
   function render(buildFn, opts) {
     opts = opts || {};
     return new Promise(function (resolve, reject) {
@@ -486,7 +539,25 @@
         var octx = new OAC(2, Math.ceil(sr * seconds), sr);
         var seq = create(octx, { bpm: dry.bpm, swing: dry.swing });
         buildFn(seq);
-        seq.scheduleAll(from, to, 0.05);
+        var t0 = 0.05, a = from * STEPS, b = to * STEPS, sd = seq.stepSec(), chunk = seq.barSec();
+        if (from > 0) seq.chase(a, t0);
+        if (typeof octx.suspend !== 'function' || opts.chunked === false || to - from <= 2) seq.scheduleAll(from, to, t0);
+        else {
+          var next = a, tNext = t0;                       // the same time accumulation as scheduleAll
+          var ahead = function (until) {
+            while (next < b && tNext < until) {
+              if (!seq.scheduleStep(next, tNext, true)) { next = b; break; }
+              next++; tNext += sd;
+            }
+          };
+          ahead(t0 + 2 * chunk);
+          for (var k = 1; k <= to - from - 2 && k * chunk < seconds - 0.01; k++) {
+            (function (k) {
+              octx.suspend(k * chunk).then(function () { ahead(t0 + (k + 2) * chunk); octx.resume(); },
+                                           function () { ahead(Infinity); });
+            })(k);
+          }
+        }
         var p = octx.startRendering();
         if (p && p.then) p.then(resolve, reject);
         else { octx.oncomplete = function (e) { resolve(e.renderedBuffer); }; }

@@ -91,12 +91,13 @@
       r.readAsText(file);
     });
   }
-  function webPick() {
+  // a hidden <input type=file>: resolves the file's text (asText) or the File itself, null on cancel
+  function webPick(accept, asFile) {
     return new Promise(function (resolve, reject) {
       var d = root.document;
       if (!d || !d.createElement) { reject(new Error('Project: no way to open a file here')); return; }
       var input = d.createElement('input'), done = false;
-      input.type = 'file'; input.accept = '.json,application/json'; input.style.display = 'none';
+      input.type = 'file'; input.accept = accept || '.json,application/json'; input.style.display = 'none';
       function finish(v, err) {
         if (done) return; done = true;
         try { if (input.parentNode) input.parentNode.removeChild(input); } catch (e) {}
@@ -105,6 +106,7 @@
       input.addEventListener('change', function () {
         var f = input.files && input.files[0];
         if (!f) { finish(null); return; }
+        if (asFile) { finish(f); return; }
         readFile(f).then(function (text) { finish(text); }, function (e) { finish(null, e); });
       });
       input.addEventListener('cancel', function () { finish(null); });
@@ -138,6 +140,20 @@
       var ready = typeof host.audioReady === 'function' ? host.audioReady() : Promise.resolve(null);
       return ready.then(function () { return host.document(); }, function () { return host.document(); });
     });
+  }
+
+  // pick one audio file (a sampler's sample, or re-adding a missing one): the web gives a File, Electron the shell's
+  // {name, path, bytes} (a path that reloads with the project). host.loadAudio and host.addSampler take either.
+  var AUDIO_EXT = ['wav', 'wave', 'mp3', 'ogg', 'oga', 'opus', 'flac', 'm4a', 'aac', 'aif', 'aiff', 'webm'];
+  function pickAudio(o) {
+    o = o || {};
+    var sh = shellOf(o);
+    if (fn(sh, 'openFile')) {
+      return asPromise(sh.openFile({ binary: true, title: o.title, filters: [{ name: 'Audio', extensions: AUDIO_EXT }] })).then(function (r) {
+        return (r == null || r === false || (r && r.canceled)) ? null : r;
+      });
+    }
+    try { return webPick('audio/*,' + AUDIO_EXT.map(function (e) { return '.' + e; }).join(','), true); } catch (e) { return Promise.reject(e); }
   }
 
   // ------------------------------------------------------------ autosave
@@ -178,7 +194,7 @@
     try { return asPromise(sh.appDataPath()).then(function (p) { return p || null; }, function () { return null; }); } catch (e) { return Promise.resolve(null); }
   }
 
-  root.Project = { serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, autosave: autosave, restore: restore,
+  root.Project = { serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, autosave: autosave, restore: restore,
                    restoreAsync: restoreAsync, clearAutosave: clearAutosave, appDataPath: appDataPath, fileName: fileName,
                    EXT: EXT, AUTOSAVE_KEY: AUTOSAVE_KEY, FORMAT: FORMAT };
 })();

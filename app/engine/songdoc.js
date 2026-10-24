@@ -252,10 +252,10 @@
     };
     ed.setStep = function (track, variant, index, patch) {
       var tr = ed.track(track); if (!tr) return null;
-      snap();
       var v = tr.variants[variant];
+      if (!(index >= 0 && index < (v ? v.cells.length : STEPS))) return null;   // refused: no undo entry
+      snap();
       if (!v) { v = tr.variants[variant] = emptyVariant(1); }
-      if (index < 0 || index >= v.cells.length) return null;
       if (patch === null) { v.cells[index] = null; return null; }
       var cell = v.cells[index] ? clone(v.cells[index]) : {}, k;
       for (k in patch) if (has(patch, k)) {
@@ -268,8 +268,11 @@
     };
     ed.forkVariant = function (track, from) {
       var tr = ed.track(track); if (!tr || !tr.variants[from]) return null;
-      var letter = null;
-      for (var i = 0; i < LETTERS.length; i++) if (!has(tr.variants, LETTERS.charAt(i))) { letter = LETTERS.charAt(i); break; }
+      // a free letter: not a variant of the track, and not named by any section for it (a section may name a missing
+      // variant and play A by fallback; a fork with that letter would silently change it)
+      var letter = null, named = {};
+      for (var s = 0; s < ed.doc.sections.length; s++) { var pl = ed.doc.sections[s].play && ed.doc.sections[s].play[track]; if (typeof pl === 'string') named[pl] = true; }
+      for (var i = 0; i < LETTERS.length; i++) if (!has(tr.variants, LETTERS.charAt(i)) && !named[LETTERS.charAt(i)]) { letter = LETTERS.charAt(i); break; }
       if (!letter) return null;
       snap();
       var copy = clone(tr.variants[from]); copy.from = from;

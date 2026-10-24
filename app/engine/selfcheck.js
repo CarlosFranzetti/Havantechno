@@ -624,7 +624,168 @@ function section6() {
   });
 }
 
-section5.then(section6).then(function () {
+// ------------------------------------------------------------------ 7. wave-2 review fixes (A1): chase, chunked render,
+// undo per hold, bypass, held export, fork letters, refused setStep, Project.pickAudio
+function FakeOffline(ch, len, sr) { FakeContext.call(this, sr); this.length = len; this._susp = []; this.resumes = 0; }
+FakeOffline.prototype = Object.create(FakeContext.prototype);
+FakeOffline.prototype.suspend = function (t) {
+  var self = this;
+  return new Promise(function (res, rej) {
+    if (!(t < self.length / self.sampleRate) || self._susp.some(function (s) { return s.t === t; })) { rej(new Error('InvalidStateError')); return; }
+    self._susp.push({ t: t, res: res });
+  });
+};
+FakeOffline.prototype.resume = function () { this.resumes++; return Promise.resolve(); };
+// "render": advance the clock to each suspend in order, let the handler run, then finish
+FakeOffline.prototype.startRendering = function () {
+  var self = this, chain = Promise.resolve();
+  self._susp.sort(function (a, b) { return a.t - b.t; }).forEach(function (s) {
+    chain = chain.then(function () { self.currentTime = s.t; s.res(); return new Promise(function (r) { setTimeout(r, 0); }); });
+  });
+  return chain.then(function () { self.currentTime = self.length / self.sampleRate; return self.createBuffer(2, 1, self.sampleRate); });
+};
+function section7() {
+  console.log('7. review fixes: chase, chunked render, undo per hold, bypass, held export, forks, pickAudio');
+  var sb = sandbox(); load(sb); loadHost(sb);
+  var H = sb.Host, P = sb.Project, SDoc = sb.SongDoc;
+  var host = H.create(), pev = [];
+  host.on('param', function (e) { if (e.source === 'arrangement') pev.push(e.path); });
+  function g(p) { return host.getParam(p); }
+  function near(a, b) { return Math.abs(a - b) < 1e-6; }
+
+  // 7a. jumps chase the arrangement (A11 E3, T2)
+  host.transport.jump('break');
+  ok(g('kick.level') === 0.6 && g('clap.level') === 0.6 && g('stab.cutoff') === 900, 'jump to break applies its sets (kick 0.6, clap 0.6, stab 900)');
+  pev.length = 0;
+  host.transport.jump('mainA2');
+  ok(g('kick.level') === 1 && g('clap.level') === 1 && g('stab.cutoff') === 1500 && g('master.hp.cutoff') === 24, 'jump from break to mainA2 gives the arranged state (kick 1, clap 1, stab 1500), not the break values');
+  ok(pev.indexOf('kick.level') >= 0 && pev.indexOf('stab.cutoff') >= 0, "the chase reports its writes as 'param' events with source 'arrangement'");
+  host.transport.jump('intro2');
+  ok(near(g('stab.cutoff'), 400) && g('clap.level') === 1, 'jump to intro2: its ramp starts at 400; clap.level, first set in build, returns to its value before the arrangement');
+  host.transport.jump('outro'); host.engine().scheduleAll(192, 200, 0);
+  ok(g('master.lp.cutoff') < 1300, 'the outro ramps master.lp down (' + Math.round(g('master.lp.cutoff')) + ' Hz)');
+  host.transport.jump('mainB');
+  ok(g('master.lp.cutoff') === 20000 && g('kick.level') === 1, 'jump back to mainB: the finished outro ramp is undone (lp 20000 from the intro set)');
+  host.transport.jump('breakEnd');
+  ok(near(g('master.hp.cutoff'), 24) && near(g('stab.cutoff'), 900) && g('kick.level') === 0.6, 'jump to breakEnd: ramps at their start values, break sets in force');
+  host.engine().scheduleAll(132, 133, 0);
+  ok(g('master.hp.cutoff') > 100, 'breakEnd ramp halfway (' + Math.round(g('master.hp.cutoff')) + ' Hz)');
+  host.transport.stop();
+  ok(near(g('master.hp.cutoff'), 24) && host.transport.pos().bar === 128, 'stop returns to the section start and to its arranged state');
+  host.setParam('kick.level', 0.3); host.hold('kick.level');
+  host.transport.jump('mainA');
+  ok(g('kick.level') === 0.3 && g('stab.cutoff') === 1500, 'a held path is skipped by the chase');
+  host.release('kick.level');
+  ok(g('kick.level') === 1, 'release returns it to the arranged value');
+  host.transport.jump('build'); host.engine().scheduleAll(28, 32, 0); host.engine()._step = 32 * 16;   // the playhead at bar 32 (8 bars into build)
+  host.hold('stab.cutoff'); host.release('stab.cutoff');
+  ok(near(g('stab.cutoff'), 900 * Math.pow(2400 / 900, 0.5)), 'release mid-ramp returns to the ramp value at the playhead (' + Math.round(g('stab.cutoff')) + ')');
+  host.transport.rewind();
+  ok(g('stab.cutoff') === 500 && g('kick.level') === 1 && host.transport.pos().bar === 0, 'rewind chases bar 0 (intro sets)');
+
+  // 7b. chunked render on a fake OfflineAudioContext with suspend; identical schedule to the up-front path
+  var song = sb.Song.document(), made = [];
+  function recBuild(s) {
+    sb.Song.build(s, song); made.push(s);
+    var log = [];
+    s.order.forEach(function (name) {
+      var tr = s.tracks[name], orig = tr.inst.trigger;
+      tr.inst.trigger = function (t, e) { log.push([name, +t.toFixed(9), e.vel, e.midi == null ? null : e.midi, +(e.dur).toFixed(9), (e.notes || []).join('/'), s.ctx ? s.ctx.currentTime : -1, tr.inst.params.level]); return orig(t, e); };
+    });
+    s._log = log;
+  }
+  sb.OfflineAudioContext = FakeOffline;
+  var S = sb.Sequencer;
+  return S.render(recBuild, { from: 0, to: 12, chunked: false }).then(function () {
+    var up = made[made.length - 1];
+    return S.render(recBuild, { from: 0, to: 12 }).then(function () { return up; });
+  }).then(function (up) {
+    var ch = made[made.length - 1], sp = 60 / 126 * 4;
+    var strip = function (l) { return JSON.stringify(l.map(function (r) { return r.slice(0, 6); })); };
+    ok(up._log.length > 100 && strip(up._log) === strip(ch._log), 'chunked render schedules exactly the up-front triggers (' + ch._log.length + ' over 12 bars)');
+    ok(ch.ctx._susp.length === 10 && ch.ctx.resumes === 10 && up.ctx._susp.length === 0, 'one suspend per bar after the first (10 for 12 bars), each resumed; none up front');
+    var lead = ch._log.map(function (r) { return r[1] - r[6]; });
+    ok(Math.max.apply(null, lead) <= 2 * sp + 0.06 && Math.min.apply(null, lead) >= 0, 'every trigger is scheduled at most two bars ahead of the render position and never in the past (max ' + Math.max.apply(null, lead).toFixed(2) + ' s)');
+    ok(Math.max.apply(null, up._log.map(function (r) { return r[1] - r[6]; })) > 20, 'the up-front path schedules everything at time 0 (the old behaviour, kept for chunked: false)');
+    // a render from mid-song starts from the arranged state there (A11 T10)
+    return S.render(recBuild, { from: 128, to: 131 });
+  }).then(function () {
+    var s = made[made.length - 1], k = s._log.filter(function (r) { return r[0] === 'kick'; });
+    ok(k.length && k[0][7] === 0.6 && s._log[0][1] > 0.04, 'a render from breakEnd starts with the break state (kick level 0.6 at its first hit)');
+    return S.render(recBuild, { from: 72, to: 74 });
+  }).then(function () {
+    var s = made[made.length - 1];
+    ok(s.getParam('kick.level') === 1 && s.getParam('stab.cutoff') === 1500 && s.getParam('clap.level') === 1, 'a render from mainA2 starts from kick 1, clap 1, stab 1500');
+    // Host.render keeps held values and bypass (E5, E6): catch the render sequencer through Song.build
+    var caught = [], ob = sb.Song.build;
+    sb.Song.build = function (s, d) { caught.push(s); return ob.call(this, s, d); };
+    host.transport.jump('mainA');
+    host.setParam('stab.cutoff', 3000); host.hold('stab.cutoff');
+    ok(host.bypass('track:bass:eq', true), 'bypass an insert');
+    return host.render({ from: 'mainA', to: 41 }).then(function () {
+      sb.Song.build = ob;
+      var rs = caught[caught.length - 1];
+      ok(rs.ctx instanceof FakeOffline && rs.getParam('stab.cutoff') === 3000 && rs.held['stab.cutoff'], 'export keeps a held value (stab 3000 through mainA, whose set is 1500)');
+      ok(rs.tracks.bass.chain.get('eq')._bypassed === true, 'export honours bypass');
+      host.release('stab.cutoff');
+    });
+  }).then(function () {
+    delete sb.OfflineAudioContext;
+
+    // 7c. undo per hold (A11 E4, T4; coordinator: a snapshot on every hold call)
+    var ed = host.editor(), n0 = ed._undo.length;
+    ed.setStepInSection('intro', 'kick', 2, { vel: 1 }); host.commit();
+    host.hold('kick.tune'); host.setParam('kick.tune', 60);
+    ok(ed._undo.length === n0 + 4 && g('kick.tune') === 60, 'a knob gesture takes one undo snapshot at hold (fork, setPlay, setStep, hold = 4)');
+    host.hold('kick.tune'); ok(ed._undo.length === n0 + 5, 'every hold call is a new undo step, even on a path already held');
+    ed.undo(); ed.undo(); host.commit();
+    ok(g('kick.tune') === 44 && ed.section('intro').play.kick !== 'A' && host.engine().tracks.kick.variants[ed.section('intro').play.kick].cells[2].vel === 1, 'undo reverts the knob gesture and keeps the step edit made before it (A11 T4)');
+    ed.redo(); ed.redo(); host.commit();
+    ok(g('kick.tune') === 60, 'redo brings the knob value back');
+    ed.undo(); ed.undo(); ed.undo(); ed.undo(); ed.undo(); host.commit();
+    ok(g('kick.tune') === 44 && ed.section('intro').play.kick === 'A', 'undo all the way: the song before the step edit');
+    host.releaseAll();
+
+    // 7d. bypass in the document, rebuild, save and load, undo
+    var b0 = host.document().tracks[2].chain[0].bypass;
+    ok(b0 === true && host.isBypassed('track:bass:eq'), 'bypass is stored on the chain entry');
+    ok(host.bypass('send:reverb', true) && host.bypass('master:sat', true) && host.bypass('track:bass:sc', true) && host.document().sends.reverb.bypass === true && host.document().master.sat.bypass === true && host.document().tracks[2].sidechain.bypass === true, 'sends, master units and sidechains bypass too, stored in the document');
+    ok(host.bypass('track:kick', true) === false && host.bypass('track:kick:channel', true) === false && host.bypass('nope', true) === false, 'instruments, channels and unknown ids cannot be bypassed');
+    host.editor().setTrackParam('bass', 'cutoff', 300);
+    ok(host.commit() === true && host.isBypassed('track:bass:eq') && host.isBypassed('send:reverb') && host.isBypassed('master:sat') && host.isBypassed('track:bass:sc'), 'a rebuild keeps every bypass');
+    host.loadDocument(P.parse(P.serialize(host.document())));
+    ok(host.isBypassed('track:bass:eq') && host.isBypassed('master:sat') && host.getParam('master.sat.drive') === 0.12, 'save and load keep bypass (and the bypass flag is not sent as a parameter)');
+    var ed2 = host.editor();
+    ok(host.bypass('track:bass:eq', false) && !host.isBypassed('track:bass:eq') && host.document().tracks[2].chain[0].bypass === undefined, 'bypass off removes the flag');
+    ed2.undo(); host.commit();
+    ok(host.isBypassed('track:bass:eq'), 'undo brings a bypass back');
+
+    // 7e. fork letters and refused setStep (A11 E7, E8)
+    var e3 = SDoc.createEditor(SDoc.load(SDoc.save(sb.Song.document())));
+    e3.setPlay('intro2', 'kick', 'B');                  // names a missing variant: plays A by fallback
+    var fl = e3.forkVariant('kick', 'A');
+    ok(fl === 'C' && e3.section('intro2').play.kick === 'B' && !e3.track('kick').variants.B, 'a fork skips a letter a section already names (B -> ' + fl + ')');
+    var u = e3._undo.length;
+    ok(e3.setStep('kick', 'A', 999, { vel: 1 }) === null && e3.setStep('kick', 'A', -1, { vel: 1 }) === null && e3.setStep('kick', 'Z', 16, { vel: 1 }) === null && e3.setStep('nope', 'A', 0, { vel: 1 }) === null && e3._undo.length === u && !e3.track('kick').variants.Z, 'a refused setStep adds no undo entry and creates no variant');
+    ok(e3.setStep('kick', 'Z', 3, { vel: 1 }) && e3.track('kick').variants.Z.cells[3].vel === 1 && e3._undo.length === u + 1, 'setStep on a new variant still creates it');
+
+    // 7f. Project.pickAudio
+    var calls = [];
+    var shell = { openFile: function (o) { calls.push(o); return Promise.resolve({ name: 'Hit.wav', path: '/s/Hit.wav', bytes: new Uint8Array(4) }); } };
+    var cancel = { openFile: function () { return Promise.resolve(null); } };
+    var input = null, fakeFile = { name: 'Drop.wav' };
+    sb.document = { body: { appendChild: function (n) { n.parentNode = this; }, removeChild: function () {} },
+      createElement: function () { input = { style: {}, ls: {}, addEventListener: function (t, f) { this.ls[t] = f; }, click: function () { var me = this; setTimeout(function () { me.files = [fakeFile]; me.ls.change(); }, 0); } }; return input; } };
+    return Promise.all([P.pickAudio({ shell: shell }), P.pickAudio({ shell: cancel }), P.pickAudio({})]).then(function (r) {
+      delete sb.document;
+      ok(r[0] && r[0].path === '/s/Hit.wav' && calls[0].binary === true && calls[0].filters[0].extensions.indexOf('wav') >= 0, 'pickAudio in Electron: openFile({binary: true, audio filters}) -> {name, path, bytes}');
+      ok(r[1] === null, 'a cancelled pick resolves null');
+      ok(r[2] === fakeFile && /audio\/\*/.test(input.accept), 'pickAudio on the web resolves the File from an <input type=file accept=audio/*> (fake DOM)');
+    });
+  });
+}
+
+section5.then(section6).then(section7).then(function () {
   console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
   process.exit(fails ? 1 : 0);
 }, function (e) {
