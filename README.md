@@ -37,12 +37,12 @@ python3 -m http.server 8000
 - Studio: <http://localhost:8000/olde%20Havantechno%20dub%20studio/>. Press **Play**, then click a section to jump to it.
 - Self-check, no browser needed: `node "olde Havantechno dub studio/selfcheck.js"`
 
-The new app needs COOP/COEP headers, so it has its own server:
+The app has not been listened to end to end: every statement about its sound is a measurement (see `docs/research/2026-10-23-build-crew/REPORT.md`, section 5). The new app needs COOP/COEP headers, so it has its own server:
 
 ```bash
 node tools/serve.js            # then open http://localhost:8000/app/
 cd app && npm install && npm start   # the Electron desktop app
-node app/engine/selfcheck.js   # engine self-check, 263 checks
+node app/engine/selfcheck.js   # engine self-check, 337 checks
 node tools/browser-check.js    # opens the app in headless Chromium, 26 checks
 ```
 
@@ -82,7 +82,7 @@ writes every finding to a transcript, reads each other's work, argues in writing
 |-------|----------|--------|
 | Gear Crew | What gear could recreate a source track, and what runs where? | `docs/research/2026-10-23-plugin-gear/REPORT.md`. The reference was re-measured and parts of the original spec overturned; a gear list by licence; a 15-step build order; an Electron-first desktop recommendation. |
 | Faceplate | How should the DAW be laid out, and how does each device get its own look? Ableton Live and Logic Pro as references. | `docs/research/2026-10-23-faceplate-layout/REPORT.md`. Strip Bench won the vote and became the System Editor; a round-5 follow-up covers floating windows, the Step View and the desktop shell. Mockups: https://claude.ai/artifact/Wy3gZLnLoShp6uzxrNVfP7 (private until shared). |
-| Build Crew | Build it: ten agents coding to one contract (`app/CONTRACT.md`), talking through the coordinator, each verifying its own module. | `docs/research/2026-10-23-build-crew/`: brief, one log per agent, the coordinator's log, `DISCUSSION.md` (the compiled conversation) and, after wave 2, `REPORT.md`. Wave 1 shipped `app/` with every check green; wave 2 (integration review, fixes, the sampler) is running. |
+| Build Crew | Build it: ten agents coding to one contract (`app/CONTRACT.md`), talking through the coordinator, each verifying its own module. | `docs/research/2026-10-23-build-crew/`: brief, one log per agent, the coordinator's log, `DISCUSSION.md` (the compiled conversation) and, after wave 2, `REPORT.md`. Wave 1 shipped `app/` with every check green; wave 2 (an Opus integration review, owner fixes, the sampler, a render that is 8× faster, a master ceiling) is complete; `REPORT.md` is written. |
 
 Each group's folder holds its brief, every agent's transcript per round, and the report; Faceplate also has
 `DISCUSSION.md` and `VOTE.md`. The transcripts state their own verification limits: page fetches often failed from

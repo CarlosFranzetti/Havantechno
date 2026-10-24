@@ -2,7 +2,7 @@
 
 Dumps of the working context, each with a UTC date and time stamp. A new dump is written every 7 to 8 user updates, then the context window is compacted. New dumps are appended under the marker at the bottom; older dumps stay as they are.
 
-Cadence tracker: last dump at 2026-10-23 23:23:16 UTC. Updates since: 0. Next dump due at update 7.
+Cadence tracker: last dump at 2026-10-24 00:26:40 UTC. Updates since: 0. Next dump due at update 7. (Dump 3 was written at a milestone, not at the count: wave 2 closed with no user message in between.)
 
 Earlier dumps from before this file existed: `context.md` (2026-10-21) and `memory.md` (2026-10-21 and 2026-10-23).
 
@@ -90,5 +90,31 @@ Covers the owner's updates 1 to 7 after Dump 1: "can I see what the agents have 
 - Confirm AGPL-3.0-or-later (GPL-3.0 is the alternative if the app must stay usable in closed network services).
 - A stray cloud session `session_01YQ55qJkgnsfKmjr7VmKc1y` was opened by an agent by mistake; it has no task and can be archived.
 - The stale model-name attribution on commit `546a2c6` is still in history.
+
+## Dump 3 at 2026-10-24 00:26:40 UTC (milestone dump: Build Crew wave 2 complete)
+
+No user message since Dump 2; this dump exists because the Build Crew ran to completion in between and the session is long. The owner's standing asks that drove it: build web and desktop, agents research/code/talk with Fable coordinating, transcript saved, licence allowing GPL/AGPL code (AGPL-3.0-or-later in place), sample-based elements stay samples.
+
+### State of the repo (`CarlosFranzetti/Havantechno`, branch `claude/song-synths-sequencer-processors-e79zyb`)
+
+- Head after this dump's commit: see `git log`. All checks green on one tree: selfcheck 337, synths 74, processors 62, widgets 157, faces 1167, system-editor 76, step-view 72, browser-check 26, score selftest OK. Every count was run by the coordinator with the exit code read directly.
+- `app/` is the DAW: engine (songdoc, sequencer with chunked render, host, project, synths with sampler, processors with master ceiling), ui (widgets with gesture phases, faces at four densities incl. window = hero + controls, system-editor with sampler drop target and + track menu, step-view following the playhead and deferring during drags, windows with Electron child windows), shell (main.js, preload.js with readFile and pathForFile), `CONTRACT.md` (Host extras and Sampler section), `README.md` (A10's wave-2 rewrite).
+- `tools/`: serve.js, browser-check.js, render.js (--solo), score.py, per-module checks, README.
+- Research: `docs/research/2026-10-23-build-crew/` has BRIEF, logs A1–A11 + coordinator, `DISCUSSION.md` (wave 1; the scribe is adding wave 2 now), `REPORT.md` (complete). README, CLAUDE.md, plan, future.md, research README updated to the wave-2 state. Screenshots `docs/screenshots/app-*.png`.
+
+### Wave 2 in one paragraph
+
+A11 (Opus) reviewed the whole program and found the render's quadratic cost (whole-range scheduling; fixed by A1 with two-bars-ahead `suspend`: 48 bars 115 s → 13 s, full song 89 s), mid-song jumps skipping earlier settings (ruling: jumps apply the arrangement; fixed), undo reverting knob moves (ruling: snapshot per `hold`; fixed), bypass unsaved (fixed), instrument level at t=0 (A7 fixed; A9 confirmed in a render), 21 undo entries per drag (A2 phases, A4 commit on release), the window showing hero only (A3 fixed), Electron retarget id (A6 fixed). Sampler added end to end (A7 instrument, A1 Host/document/Project, A3 face, A4 entry point, A6 re-add). A8 gave the master a real ceiling: full render −10.75 LUFS / −3.77 dBTP (was −6.82 / +0.88); reproduced here on 16 bars.
+
+### Rulings taken (all in log-coordinator.md)
+
+B0 bar stays a TODO; sub attack reading right; lowpass restore at 136; choke with the sampler; Step View follows by default; window owns the title bar; hero ≤ 45 % of face height; sampler uses common `level` and `ev.midi`; mute/solo never held; gestures end only via Re-enable arranged; jumps apply the arrangement.
+
+### Open with the owner
+
+- Listen to the app; nobody has.
+- Loudness: master stage alone (done) or rebalance the mix; the intro's mid excess (synth level vs EQ match).
+- Confirm the offline Python front end for milestone 6; confirm AGPL-3.0-or-later.
+- Stray cloud session `session_01YQ55qJkgnsfKmjr7VmKc1y` can be archived; model-name attribution on `546a2c6` remains in history.
 
 <!-- next dump goes here -->

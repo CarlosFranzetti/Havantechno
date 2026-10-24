@@ -54,21 +54,18 @@ Owner decisions before step 1: does version 1 edit the song or only play it; rep
 - **Remix pipeline (PRD D3).** Source song → stems → MIDI → recreation. Depends on the stem-separation and transcription findings in the research report.
 - **Gear list (PRD D4).** Decide which plugins or open-source engines to adopt, port or reimplement, from the research report's recommendations.
 
-## Build Crew wave 2 backlog (2026-10-23, after wave 1 shipped)
+## After Build Crew wave 2 (2026-10-24)
 
-From the wave-1 hand-backs (each item names its log in `docs/research/2026-10-23-build-crew/transcripts/`):
+Wave 2 closed these from the earlier backlog: undo per knob gesture, the contract additions, the window Editor tab (hero plus controls), the render speed (200 bars in 89 s), the level-timing bug, the sampler (instrument, Host loading, document audio map, face, drop target and menu, re-add of missing files), the master ceiling and loudness. `docs/research/2026-10-23-build-crew/REPORT.md` has the detail. What remains, with owner logs:
 
-- **Undo for knob gestures** (A1): one snapshot per gesture on the first `hold(path)`; gated on the hold/release audit A11 is running over A3, A4 and A5's controls. Until then knob moves are not undoable.
-- **Contract additions to write down** (A1): `host.mute`/`solo`, `transport.loopSection`, `meter('master')`, channel send levels, `setParam` writing into the document.
-- **Device window Editor tab** (A3, A6): shows only the hero graph; the window density should carry the section controls under the hero as the round-5 mockup does.
-- **Offline render speed**: about 1 s per mainA bar, 3 to 4 minutes for the song (A9), so Export WAV times out on the web (A6). A11 is measuring; suspects are the Freeverb node count, the seeded IR build, per-step node creation, the scheduler's cell lookup.
-- **Sound** (A7, A9): the V2 sub duck is 14 to 15 dB too deep at 100 to 150 ms; the baseline intro is about 14 dB hot in the mids; nothing from A8's processor changes has been heard or rendered.
-- **Processors not done** (A8): sidechain offset (S1), the exponential IR envelope and the IR buffer-swap click (S2), Dattorro; Freeverb is an approximation (biquad damping, no gain match to the IR).
-- **Measurement questions** (A9): band levels read 1 to 2 dB above O1's table in every section; stab-step correlation not reproduced; the kick-glide fit is unreliable on renders; the build section's tempo reads 63 BPM.
-- **Faces** (A3): hero numbers are a reading of the engine, not measured; hero end points are not draggable; live meters only seen as zeros without audio.
-- **Shell** (A6): native open and save dialogs, window bounds across launches, macOS and Windows untested; Mixer, A/B and preset menus are placeholders.
-- **The sampler** (milestone 5b): `sampler` instrument (A7), `Host.loadAudio` and the document's `audio` map (A1), sampler track UI in both views (A4, A5). First use: vocal samples from a provided track.
-- **After wave 2**: `REPORT.md` for the Build Crew; `DISCUSSION.md` is being compiled from the logs now.
+- **Listen.** Nobody has heard the app end to end; everything about its sound is a measurement.
+- **Sound** (A7, A9): V2 sub duck 14 to 15 dB too deep at 100 to 150 ms; the baseline intro about 14 dB hot in the mids (synth level or EQ match: owner's call); mainA about 1 LU under its reference section while the full song is on target.
+- **Processors** (A8): the AudioWorklet true-peak limiter (the clip is a safety net), sidechain offset, exponential IR envelope and IR swap click, Dattorro; the saturator not yet measured as a peak source.
+- **Measurement** (A9): band-level method offset against O1, stab-step correlation, kick-glide fit on renders, build-section tempo octave.
+- **Shell** (A6): native dialogs, bounds across launches, macOS and Windows, packaging; Mixer, A/B and preset menus.
+- **Editors** (A4, A5): overview-box drag, right-click variant cycling, chord-progression editing; paint-drag, length-drag, marquee, copy and paste, 2-bar view.
+- **Accessibility** (A2, A3): contrast and colour-blind checks, screen-reader pass, touch.
+- **Milestone 6**: `SongDoc.sliceToTrack`, the offline Python front end (Demucs, Basic Pitch, drum transcription), the bundle import, A/B with level match, the load/modify/create rule.
 
 ## Ideas
 
