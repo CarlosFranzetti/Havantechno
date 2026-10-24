@@ -394,5 +394,117 @@ console.log('8. level and stab hp: a write with {at: t} lands at t, not at curre
   ok(scalls.length >= 2, 'the stab highpass has a scheduled write per section (' + scalls.length + ')');
 })();
 
+// ------------------------------------------------------------------ 9. Ear Crew (V3): new spec entries and GUIDANCE_V3
+console.log('9. Ear Crew V3: kick attack, swell, length, harmonic, clickDecay; sub partials and the running drone; clap first; shaker hold; riser floor and hold; m11f; GUIDANCE_V3');
+(function () {
+  var sb = appSandbox(), ctx, oscs, gains, bufs, pars;
+  function fresh() { ctx = new FakeContext(44100); oscs = recordCreated(ctx, 'createOscillator'); gains = recordCreated(ctx, 'createGain'); return ctx; }
+  var BAR = 4 * 60 / 126;
+  // kick: the envelope with swell and attack
+  fresh();
+  var k1 = sb.Synths.create(ctx, 'kick', { attack: 0.02, swell: 2, click: 0, length: 0, decay: 0.45, hold: 0.045, tau: 0.022, tune: 53, punch: 265 });
+  k1.trigger(2, { vel: 1 });
+  var env = gainWith(gains, 'linearRampToValueAtTime', Math.pow(10, -2 / 20), 2.0015);
+  ok(env && hasCall(env.gain, 'linearRampToValueAtTime', 1, 2.02), 'kick swell 2 dB: a jump to -2 dB within 1.5 ms, then the rise to full at attack 20 ms');
+  ok(env && hasCall(env.gain, 'setValueAtTime', 1, 2.02 + 0.045) && hasCall(env.gain, 'exponentialRampToValueAtTime', 0.0001, 2.02 + 0.045 + 0.45), 'kick: full level to attack + hold, then decay (0.45 s) to -80 dB');
+  // length: a 3 ms fade ends the body at length
+  fresh();
+  var k2 = sb.Synths.create(ctx, 'kick', { length: 0.197, click: 0, harmonic: 0 }); k2.trigger(2, { vel: 1 });
+  var lg = gainWith(gains, 'linearRampToValueAtTime', 0.0001, 2 + 0.197);
+  ok(lg && hasCall(lg.gain, 'setValueAtTime', 1, 2 + 0.197 - 0.003), 'kick length 0.197 s: a 3 ms fade to 0 that ends at 197 ms');
+  fresh(); sb.Synths.create(ctx, 'kick', { click: 0 }).trigger(2, { vel: 1 });
+  ok(!gains.some(function (g) { return g.gain.calls.some(function (c) { return c[0] === 'linearRampToValueAtTime' && near(c[2], 2 + 0.197, 1e-6); }); }), 'length 0 (default) adds no fade');
+  // harmonic: a second sine at 2f on the same pitch curve
+  fresh();
+  var k3 = sb.Synths.create(ctx, 'kick', { harmonic: 0.1, click: 0, tune: 53, punch: 265, tau: 0.022 }); k3.trigger(2, { vel: 1 });
+  var h2 = oscs.filter(function (o) { return hasCall(o.frequency, 'setValueAtTime', 530, 2); });
+  ok(oscs.length === 2 && h2.length === 1 && hasCall(h2[0].frequency, 'setTargetAtTime', 106, 2, 0.022), 'kick harmonic 0.1: a second sine starts at 2 x punch and approaches 2 x tune (' + oscs.length + ' oscillators)');
+  fresh(); sb.Synths.create(ctx, 'kick', { click: 0 }).trigger(2, { vel: 1 });
+  ok(oscs.length === 1, 'harmonic 0 (default) adds no second oscillator');
+  // clickDecay: the noise click decays in clickDecay, the knock scales with it
+  fresh();
+  var k4 = sb.Synths.create(ctx, 'kick', { click: 0.4, clickDecay: 0.0015 }); k4.trigger(2, { vel: 1 });
+  var cg = gainWith(gains, 'linearRampToValueAtTime', 0.4 * 0.5, 2.0005);
+  ok(cg && hasCall(cg.gain, 'exponentialRampToValueAtTime', 0.0001, 2 + 0.0005 + 0.0015), 'clickDecay 1.5 ms: the noise click is -80 dB within 2 ms');
+  ok(gains.some(function (g) { return hasCall(g.gain, 'exponentialRampToValueAtTime', 0.0001, 2 + 0.0005 + 0.022 * (0.0015 / 0.012)); }), 'the knock decays with clickDecay (22 ms x 0.125)');
+  // sub partials: beat lines below the carrier at the carrier's envelope level
+  fresh();
+  var sp = sb.Synths.create(ctx, 'sub', { mode: 'drone', beat: 1.2027, beatLevel: -2.6, beat3: 3.608, beat3Level: -5.8, harmonic: 0 });
+  sp.trigger(1, { midi: 25, vel: 0.8, dur: BAR * 16 / 4 * 4 });
+  var f0 = sb.Kit.mtof(25);
+  ok(oscs.some(function (o) { return hasCall(o.frequency, 'setValueAtTime', f0 - 1.2027, 1); }), 'the first partial line sits 1.2027 Hz under the carrier');
+  ok(oscs.some(function (o) { return hasCall(o.frequency, 'setValueAtTime', f0 - 3.608, 1); }), 'the second partial line sits 3.608 Hz under the carrier');
+  ok(gains.some(function (g) { return near(g.gain.value, Math.pow(10, -2.6 / 20), 1e-9); }), 'the first line is at -2.6 dB re the carrier (its gain node holds 0.741)');
+  fresh(); sb.Synths.create(ctx, 'sub', { mode: 'drone', harmonic: 0 }).trigger(1, { midi: 25, vel: 0.8, dur: 1.9 });
+  ok(oscs.length === 1, 'beat 0 (default): no partial lines');
+  // sub run: one voice across triggers; pitch changes glide; panic ends it
+  fresh();
+  var run = sb.Synths.create(ctx, 'sub', { mode: 'drone', run: 1, harmonic: 0, glide: 0.03 });
+  run.trigger(1, { midi: 25, vel: 0.8, dur: 1.9 });
+  var n1 = oscs.length, s1 = ctx.srcs.length;
+  run.trigger(1 + 1.9, { midi: 25, vel: 0.8, dur: 1.9 });
+  run.trigger(1 + 3.8, { midi: 25, vel: 0.8, dur: 1.9 });
+  ok(oscs.length === n1 && ctx.srcs.length === s1 && run._live.length === 1, 'run 1: later triggers reuse the one running voice (oscillators ' + oscs.length + ', voices ' + run._live.length + ')');
+  ok(run._live[0].srcs[0].stopAt == null, 'the running voice has no stop time (it runs until panic)');
+  run.trigger(1 + 5.7, { midi: 35, vel: 0.8, dur: 1.9 });
+  var carrier = oscs[0];
+  ok(hasCall(carrier.frequency, 'exponentialRampToValueAtTime', sb.Kit.mtof(35), 1 + 5.7 + 0.03), 'a new note glides to B1 over glide (0.03 s) without a new voice');
+  run.panic();
+  ok(run._run === null, 'panic() ends the running voice');
+  run.trigger(20, { midi: 25, vel: 0.8, dur: 1.9 });
+  ok(oscs.length === n1 + 1 || oscs.length > n1, 'the next trigger after panic starts a new running voice');
+  // clap first
+  fresh();
+  var c1 = sb.Synths.create(ctx, 'clap', { first: 1, flams: 3, flam: 0.011, decay: 0.12 }); c1.trigger(4, { vel: 0.85 });
+  var cg1 = gainWith(gains, 'setValueAtTime', 0.85, 4);
+  ok(cg1 && hasCall(cg1.gain, 'setValueAtTime', 0.85 * 1, 4) && hasCall(cg1.gain, 'setValueAtTime', 0.85 * 0.33, 4 + 0.011) && hasCall(cg1.gain, 'setValueAtTime', 0.85 * 0.33, 4 + 3 * 0.011),
+     'clap first 1: burst 0 at g x 1, the later bursts and the main burst at g x 0.33 (-9.5 dB)');
+  fresh(); sb.Synths.create(ctx, 'clap', { flams: 3, flam: 0.011 }).trigger(4, { vel: 0.85 });
+  var cg2 = gainWith(gains, 'setValueAtTime', 0.85 * 0.7, 4 + 0.011 * 0 + 0);
+  ok(cg2 && hasCall(cg2.gain, 'setValueAtTime', 0.85 * 0.7, 4) && hasCall(cg2.gain, 'setValueAtTime', 0.85, 4 + 3 * 0.011), 'clap first 0 (default): burst 0 at 0.7 g, main burst at g (today)');
+  // shaker hold
+  fresh();
+  var sh = sb.Synths.create(ctx, 'shaker', { hold: 0.1, attack: 0.028, decay: 0.07 }); sh.trigger(3, { vel: 1 });
+  var shg = gainWith(gains, 'linearRampToValueAtTime', 0.5, 3 + 0.028);
+  ok(shg && hasCall(shg.gain, 'setValueAtTime', 0.5, 3 + 0.028 + 0.1) && hasCall(shg.gain, 'exponentialRampToValueAtTime', 0.0001, 3 + 0.028 + 0.1 + 0.07), 'shaker hold 0.1 s: flat at the peak, then the decay');
+  // riser: floor and plateau hold
+  fresh();
+  var rs = sb.Synths.create(ctx, 'riser', { tone: 0, from: 5000, to: 16000, q: 0.3, floor: 0.04, hold: 2 });
+  rs.trigger(10, { vel: 1, dur: 4 });
+  var rg = gainWith(gains, 'expo', 0, 0); 
+  var rgain = gains.filter(function (g) { return hasCall(g.gain, 'setValueAtTime', 0.024, 10); })[0];
+  ok(rgain && hasCall(rgain.gain, 'exponentialRampToValueAtTime', 0.6, 14) && hasCall(rgain.gain, 'setValueAtTime', 0.6, 16) && hasCall(rgain.gain, 'linearRampToValueAtTime', 0.0001, 16.03),
+     'riser floor 0.04 starts at 0.024 (28 dB under the plateau 0.6), rises over the dur, holds 2 s, ends 30 ms later');
+  fresh(); sb.Synths.create(ctx, 'riser', { tone: 0 }).trigger(10, { vel: 1, dur: 4 });
+  ok(gains.some(function (g) { return hasCall(g.gain, 'setValueAtTime', 0.0001, 10) && hasCall(g.gain, 'exponentialRampToValueAtTime', 0.6, 14); }), 'riser floor 0.0001 (default): the rise starts at 0.0001, as before');
+  // chord and song
+  ok(sb.Kit.chordNotes('G#m11f', 3).map(sb.Kit.mton).join(' ') === 'G#3 B3 D#4 F#4 A#4 C#5', "chord 'G#m11f' at octave 3 is G#3 B3 D#4 F#4 A#4 C#5 (" + sb.Kit.chordNotes('G#m11f', 3).map(sb.Kit.mton).join(' ') + ')');
+  var V = sb.Song.GUIDANCE_V3, nb = 0;
+  V.sections.forEach(function (s) { nb += s.bars; });
+  ok(V.sections.length === 15 && nb === 200, 'GUIDANCE_V3: 15 sections, 200 bars');
+  ok(V.sections.map(function (s) { return s.name; }).join() === 'intro,intro2,build,mainA,mainA_b,mainA2,mainA3,break,breakLate,breakEnd,gap,mainB,mainB_b,mainB_c,outro', 'GUIDANCE_V3 section order (E4 table, amended)');
+  ok(V.swing === 0.40 && V.progression.join() === 'G#m11f' && V.tracks.every(function (t) { return t.name !== 'lead' && t.name !== 'riser' && t.name !== 'impact' && t.name !== 'perc'; }), 'swing 0.40, one chord, no lead, riser, impact or perc');
+  ok(V.sections.every(function (s) { return !s.fx || s.fx.every(function (f) { return f.track !== 'impact' && f.track !== 'riser'; }); }), 'no riser or impact fx in V3');
+  var G0 = sb.Song.GUIDANCE;
+  ok(G0.sections.length === 9 && G0.sections[5].bars === 24 && G0.tracks[0].duck.length === 4 && G0.tracks[1].note === 'B1' && G0.tracks[1].sidechain.depth === 0,
+     'GUIDANCE is unchanged (9 sections, break 24 bars, kick duck 4, sub not ducked, B1 pluck)');
+  var seqV = sb.Sequencer.create(null); sb.Song.build(seqV, V); seqV.scheduleAll(0, null, 0); var hv = seqV.hits();
+  ok(seqV.totalBars === 200 && hv.kick === 799 && hv.sub === 200 && hv.bass > 0 && hv.bed === 1, 'GUIDANCE_V3 schedules 200 bars (kick ' + hv.kick + ', sub ' + hv.sub + ', bed ' + hv.bed + ')');
+  var doc = sb.Song.documentV3(), seqD = sb.Sequencer.create(null); sb.Song.build(seqD, doc); seqD.scheduleAll(0, null, 0);
+  ok(JSON.stringify(seqD.hits()) === JSON.stringify(hv), 'documentV3 schedules the same hits as GUIDANCE_V3');
+  var bassD = doc.tracks.filter(function (t) { return t.name === 'bass'; })[0];
+  ok(bassD.variants.D.bars === 2 && near(bassD.variants.D.cells[6].nudge, 2 / 24, 1e-9) && bassD.variants.D.cells[1].vel === 0.5 && bassD.variants.D.cells[27].acc === true, 'bass D is a two-bar variant with the +2/24 nudge on bar 1 step 6 and the accent on bar 2 step 11');
+  ok(doc.swing === 0.40 && doc.master.limiter.clip === -0.55 && doc.master.glue.bypass === true, 'documentV3 carries swing 0.40 and the master (limiter -1.5 / 0 / clip -0.55, glue and saturator bypassed)');
+  // the Host opens the document (Node, no audio)
+  var hostFile = path.join(ENGINE, 'host.js');
+  if (fs.existsSync(hostFile)) {
+    vm.runInContext(fs.readFileSync(hostFile, 'utf8'), sb, { filename: 'host.js' });
+    var H = sb.Host.create({ doc: sb.Song.documentV3() });
+    var ids = H.devices().filter(function (d) { return d.kind === 'instrument'; }).map(function (d) { return d.track; });
+    ok(ids.indexOf('bed') >= 0 && ids.indexOf('tick') >= 0 && ids.indexOf('burst_r') >= 0 && H.sections().length === 15, 'Host.create({doc: Song.documentV3()}) opens the 15-section V3 with its tracks (' + ids.length + ' instruments)');
+    ok(H.getParam('master.limiter.clipOn') === true && H.isBypassed('master:glue') === true, 'the Host applies the V3 master (clipOn, glue bypassed)');
+  }
+})();
+
 console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
 process.exit(fails ? 1 : 0);
