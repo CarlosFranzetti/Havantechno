@@ -28,7 +28,7 @@ Every file is an IIFE that reads `root = window` and publishes one global. Style
 | A3 faces | `app/ui/faces.js`, `app/ui/facedefs.js` |
 | A4 system editor | `app/ui/system-editor.js` |
 | A5 step view | `app/ui/step-view.js` |
-| A6 windows and shell | `app/ui/windows.js`, `app/ui/app.js`, `app/index.html`, `app/shell/main.js`, `app/shell/preload.js`, `app/package.json`, `tools/serve.js` |
+| A6 windows and shell | `app/ui/windows.js`, `app/ui/app.js`, `app/index.html`, `app/shell/main.js`, `app/shell/preload.js`, `app/package.json`, `tools/serve.js` (serves the repo root with COOP/COEP headers; the app is at `/app/`) |
 | A7 audio fixes, instruments | `app/engine/synths.js`, `app/engine/song.js` (add `GUIDANCE_V2`; never change `GUIDANCE`) |
 | A8 audio fixes, processors | `app/engine/processors.js` |
 | A9 scoring loop | `tools/render.js`, `tools/score.py`, `tools/README.md` |

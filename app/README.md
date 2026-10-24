@@ -64,10 +64,10 @@ Run each command directly and read the exit code. Do not pipe them through `tail
 |---|---|---|---|
 | `node app/engine/selfcheck.js` | `OK: 337 checks passed` | 0 | Engine in Node with a fake AudioContext: schedule equivalence with the archived studio, string round trip, save and load, audio map, sampler track, Host and Project, chase on jump, undo per gesture, bypass, offline render chunks |
 | `node tools/synths-check.js` | `OK: 74 checks passed` | 0 | Instruments, including the sampler (no own gain; `level` and stab `hp` at the event time) |
-| `node tools/processors-check.js` | `OK: 54 checks passed` | 0 | Processors, with automation of the pre-existing parameters identical to the archive |
+| `node tools/processors-check.js` | `OK: 62 checks passed` (coordinator's run, 2026-10-24, after A8's master ceiling) | 0 | Processors, with automation of the pre-existing parameters identical to the archive |
 | `node tools/widgets-check.js` | `OK: 157 checks passed` | 0 | Widgets on a fake DOM, including gesture phases start, move, end |
 | `node tools/faces-check.js` | `OK: 1167 checks passed` | 0 | Faces: 25 definitions at four densities, `Faces.lint`, knob home values, the jump ruling |
-| `node tools/system-editor-check.js` | `OK: 50 checks passed` | 0 | System Editor on the real Host and widgets, one undo entry per drag |
+| `node tools/system-editor-check.js` | `OK: 76 checks passed` (coordinator's run, 2026-10-24, after A4's sampler entry point) | 0 | System Editor on the real Host and widgets, one undo entry per drag |
 | `node tools/step-view-check.js` | `OK: 72 checks passed` | 0 | Step View on the real Host, follow, deferral during gestures, fx and pattern length |
 | `node tools/browser-check.js` | `RESULT: PASS (26 checks)` | 0 | Headless Chromium on `app/index.html`: globals, Start audio, Play, transport advances, Step View, device window from its title (`Windows.open` called), a step toggled, Save, no page or console errors |
 | `python3 tools/score.py --selftest` | `OK: all selftest checks passed` | 0 | Synthetic checks of the scoring measures |
@@ -79,7 +79,7 @@ These checks use fake DOMs and fake audio contexts where stated in their logs. T
 
 A sampler track plays one audio file (a buffer) from the song's document, with the same step, lock, probability and condition behaviour as any other track. The contract is `app/CONTRACT.md`, "Sampler" section; the implementation is log-A1.md (parts 1 and 2) and log-A7.md (wave 2).
 
-**How to add a sample track.** The UI has no entry point for this yet: the drop target and the track menu in the contract are not built (log-A6.md, wave 2 part 3; log-A4.md). Today a sample track is added through the Host, after Start audio:
+**How to add a sample track.** Drop one or more audio files on the track list in the System Editor, or use the "+ track" menu ("Sampler track from file…"); "Remove track" is in the same menu and on a sampler row's context menu (A4, log-A4.md wave 2 task 2; added after A10 wrote this page, so the coordinator edited this paragraph). A new sampler track is silent until its first step is toggled. From code, after Start audio:
 
 ```js
 // in the browser console, or a script, after Start audio
@@ -166,7 +166,7 @@ Every row is "shipped" (the module is in the repo, its check passes on 55f205d, 
 | `engine/song.js` | A7 | shipped, with gaps | sub B0 bar unmeasured (kept at C#1 with a TODO); lowpass restore kept at bar 136, bars 128 to 135 unmeasured | log-A7.md; log-coordinator 23:43 rulings |
 | `engine/synths.js` | A7 | shipped, with gaps | sub per-bar notes not added; `choke` on hats not added (ruled later, with the sampler); V2 drone glide off; kick `drive` 0 vs 0.45 not rendered; sampler `reverse` accepted and does nothing; choke fade reads `gain.value`, so it may differ from the audible level by one render quantum; no real `AudioBuffer` in the unit checks | log-A7.md, "Not done", wave 2 and the follow-up |
 | `engine/processors.js` | A8 | shipped, with gaps | exponential IR envelope not done; buffer swap on `'ir'` size, decay and hp changes may click (`'freeverb'` avoids it); Freeverb is a biquad-damped approximation, not gain-matched to the IR; offline acceptance tests (RT60, tail slope, correlation) not run; sidechain `offset` and Dattorro not done; widener `monoBelow` stays 0 until the song sets it; Freeverb CPU not measured; nothing has been listened to | log-A8.md, "Not done" |
-| `engine/host.js` | A1 | shipped, with gaps | Electron paths and a real file input in a browser are not verified by A1; the drop target and track menu that would call `addSampler` are not built | log-A1.md parts 1 and 2; log-A6.md wave 2 part 3 |
+| `engine/host.js` | A1 | shipped, with gaps | Electron paths and a real file input in a browser are not verified by A1 | log-A1.md parts 1 and 2; log-A6.md wave 2 part 3 |
 | `engine/project.js` | A1 | shipped, with gaps | native dialogs and `pickAudio` in Electron not run (A6 traced them); the web file input was run in Chromium by A6 | log-A1.md part 2; log-A6.md wave 2 part 4 |
 | `engine/selfcheck.js` | A1 | shipped | none stated (337 checks pass) | log-A1.md part 2; my run |
 | `ui/widgets.js`, `ui/theme.css` | A2 | shipped, with gaps | contrast of the neutral marker against each family wash not checked; held ring and some step cells smaller than 24 px; track-colour muted palette not implemented; knob rounding without `step`; no real-browser touch test | log-A2.md, "Unfinished" and wave 2 |

@@ -185,3 +185,23 @@ Two findings for A8 (owner of processors.js, master chain): the full-song render
 Run here, exit codes read directly: `node tools/processors-check.js` OK: 62 (was 54); `node app/engine/selfcheck.js` OK: 337; `node tools/render.js --page app --sections mainA --bars 16` exit 0; `python3 tools/score.py tools/out/app-mainA-0-16.wav --json` exit 0 with lufs_integrated −11.25, true_peak_dbtp −4.21, sample_peak_dbfs −5.19. A8 reported −11.25 LUFS and −4.21 dBTP for the same window: reproduced. A8's full-song numbers (−10.75 LUFS, −3.77 dBTP; before −6.82 and +0.88) are A8's run. Change: master limiter gains `clipOn`/`clip` (4× oversampled hard clip, default off); the master's settings move to threshold −6, ceiling −4.2 (output trim), clip on at −0.5 dBFS; the clipper did not engage on the full render. Committed. Every wave-2 item is in and verified; REPORT.md section 7 written; the scribe is extending DISCUSSION.md with wave 2.
 
 Final counts on one tree: selfcheck 337, synths 74, processors 62, widgets 157, faces 1167, system-editor 76, step-view 72, browser-check 26, score selftest OK.
+
+## 2026-10-24 00:34:05 UTC — DISCUSSION.md wave 2 compiled; last corrections and rulings
+
+The scribe extended `DISCUSSION.md` to 39 threads and listed what the logs still leave open. Records untouched; answers here.
+
+- **A11 S2** (System Editor edits read the transport's bar at click time, one-frame window): accepted as minor, backlog for A4; not fixed in wave 2.
+- **A11 D1**: the contract's "release via Re-enable arranged, not on drag end" stands; the audit criterion in my brief to A11 was mine and wrong, and the ruling of 2026-10-23 (gestures end only through Re-enable arranged for the held meaning) already says so.
+- **A11 D2**: correct; `tools/serve.js` serves the repo root and the app is at `/app/`. CONTRACT.md wording fixed now.
+- **A11's three Electron suspicions**: traced, not run, by A11 and by A6 for the two it fixed (retarget id, window naming); the rest stay in future.md's shell list.
+- **A7's V2 sub duck (14 to 15 dB too deep at 100 to 150 ms)**: not addressed in wave 2 by anyone; it is in future.md and REPORT.md section 5 as open. Owner A7.
+- **Bare knob click and undo** (A1 against A2): A1 describes `hold()`'s behaviour (every call snapshots); A2 describes when faces call it (only on the first actual value change). Together there is no no-op undo step from a bare click. Not run by anyone.
+- **BPM and swing undo**: A6 added `hold('bpm')`/`hold('swing')` after A1 wrote that they had none; with A1's snapshot-per-hold, a BPM edit is one undo step. Nobody has run that undo. Unverified.
+- **Kick drop through the master after A8's retune**: not re-measured; A9's −4.40 dB with the master bypassed is the engine-level fact, and the master-on figure (−0.5 dB before the retune) will differ now. Open for A9.
+- **Full-song Export WAV button**: `render.js --page app` goes through `Host.render`, the same path as the button minus the download; 200 bars took 88.8 s in A9's run. The button itself on the full song has not been clicked by anyone. Still listed as unverified.
+- **Window head at window density**: A3's log does not say it, but the coordinator's screenshot after A3's change (`docs/screenshots/app-device-window.png`, 2026-10-24 00:07, commit 55f205d) shows the window with one title bar, the hero and the knobs. Verified by inspection here.
+- **A10's README stale lines**: fixed by the coordinator in commit 4fb00f0 (plan milestone 1 and 5b, CONTRACT Sampler UI line, CLAUDE.md counts); that commit's log entry did not list them, hence the scribe's note. The README's own stale counts (system-editor 50, processors 54) and its "no entry point" paragraph were written before A4's and A8's last hand-backs; fixed now by the coordinator, marked as such in the file.
+- **A4's pointer fallback / A2's "write on end only if velocity differs"**: A4's check passes with A2's phases on the current tree (76); whether a bare click on a lit cell writes a no-op is not checked. Backlog, A4.
+- **Wave-1 leftovers** (F-S4 section 6 reference text, the 3.5 kHz hat default, the ffmpeg path; A5's ruler; A4's 43 → 40): recorded as open wording items; none changes behaviour.
+
+Committed DISCUSSION.md, the README and CONTRACT edits, and this entry. The Build Crew is closed; what remains is in future.md and REPORT.md sections 8 and 10.
