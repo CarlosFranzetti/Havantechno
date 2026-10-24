@@ -11,3 +11,7 @@ First measurements, before any brief, are in BRIEF.md: loudness-matched band del
 E1 (Opus) low end, E2 mids, E3 drums top, E4 arrangement and samples, E5 mix and master (Sonnet) were dispatched at about 01:16 UTC. All five were stopped by the account's session limit within minutes ("resets 3:50am UTC"); their partial transcripts were committed as WIP and all five were resumed at 04:28 UTC.
 
 Demucs (4.1.0) and torch (2.14.1, CUDA build from PyPI since the CPU index is blocked) installed, but the htdemucs weights download from dl.fbaipublicfiles.com is refused by the sandbox proxy (403 on the tunnel), as is huggingface.co directly. So there are no stems. The analysts work from the mixed reference, its cut windows, and the app's solo renders (which are exact stems of the recreation). If the owner can provide separated stems of the original, or the weights file, the per-stem comparison becomes possible; otherwise the inventory rests on mixed-signal analysis, which the transcripts must say.
+
+## 2026-10-24 00:31 EDT (04:31 UTC) — times now in Eastern; usage status
+
+Owner's instruction: report times in Eastern Time. From here, log entries carry ET with UTC in parentheses (CLAUDE.md updated). The session limit hit at about 9:17 PM EDT on 23 October and reset at 11:50 PM EDT; the five analysts were resumed at 12:28 AM EDT and are writing at 12:30 AM with no new limit errors in their outputs. The coordinator cannot read the account's remaining allowance; it only sees the refusals when they come.
