@@ -264,6 +264,7 @@ devices.forEach(function (d) {
   f.dispose();
   // a section's set value wins over the document value
   var st = Faces.render(byType.stab, 'face', host), cut = all(st.el, function (x) { return x.getAttribute('aria-label') === 'cutoff'; })[0];
+  host.setParam('kick.mute', false); host.setParam('stab.cutoff', 900); st.update();   // a jump already applies the section's 500, so move the knob off it first
   writes.length = 0; fire(cut, 'keydown', { key: 'Delete' });
   eq(writes.length === 1 ? writes[0][1] : null, 500, 'Delete returns stab.cutoff to the intro section value (500)');
   host.releaseAll(); st.dispose();
@@ -343,7 +344,7 @@ devices.forEach(function (d) {
   sh.hold = function (p) { sholds.push(p); };
   sh.audio = function () { return [{ id: 'b1', name: 'loop.wav', duration: 2 }, { id: 'b2', name: 'hit.wav', duration: 0.4 }]; };
   var data = new Float32Array(48000); for (var i = 0; i < data.length; i++) data[i] = Math.sin(i / 40) * (1 - i / data.length);
-  sh.getBuffer = function (id) { return id === 'b1' ? { duration: 2, getChannelData: function () { return data; } } : null; };
+  sh.buffer = function (id) { return id === 'b1' ? { duration: 2, getChannelData: function () { return data; } } : null; };
   created.length = 0;
   var f = Faces.render(d, 'window', sh); f.update(); f.resize(700, 600);
   eq(f.error(), null, 'sampler hero draws a waveform');

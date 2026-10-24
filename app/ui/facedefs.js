@@ -427,20 +427,16 @@
   }
 
   // ------------------------------------------------------------------ sampler
-  // The buffer comes from the Host (CONTRACT Sampler section). The Host's accessor name is not fixed in the contract, so a few
-  // are tried; with none, the hero shows a flat line and "no sample" (the handles and the controls still work).
+  // The buffer comes from host.buffer(id) and the list from host.audio() (an array of {id, name, duration}); with no buffer, the hero shows a flat line and "no sample" (the handles and the controls still work).
   function bufferOf(d, host, id) {
     if (!id) return null;
-    var names = ['getBuffer', 'buffer', 'audioBuffer'], i, b;
-    for (i = 0; i < names.length; i++) if (host && typeof host[names[i]] === 'function') { b = safe(function () { return host[names[i]](id); }, null); if (b && b.getChannelData) return b; }
-    if (d.ref && typeof d.ref.getBuffer === 'function') { b = safe(function () { return d.ref.getBuffer(id); }, null); if (b && b.getChannelData) return b; }
-    return null;
+    var b = (host && typeof host.buffer === 'function') ? safe(function () { return host.buffer(id); }, null) : null;
+    return (b && b.getChannelData) ? b : null;
   }
   function audioList(host) {
     var a = safe(function () { return host.audio(); }, null), out = [], k;
-    if (!a) return out;
-    if (Object.prototype.toString.call(a) === '[object Array]') { for (k = 0; k < a.length; k++) out.push({ id: a[k].id != null ? a[k].id : a[k].bufferId, name: a[k].name, duration: a[k].duration }); }
-    else for (k in a) if (Object.prototype.hasOwnProperty.call(a, k)) out.push({ id: k, name: a[k] && a[k].name, duration: a[k] && a[k].duration });
+    if (!a || !a.length) return out;
+    for (k = 0; k < a.length; k++) out.push({ id: a[k].id, name: a[k].name, duration: a[k].duration });
     return out;
   }
   function audioInfo(host, id) { var l = audioList(host), i; for (i = 0; i < l.length; i++) if (l[i].id === id) return l[i]; return null; }
