@@ -165,3 +165,7 @@ A1's timings in Chromium: 48 bars 115.0 s → 13.1–13.4 s; 16 bars 4.6 → 2.4
 ## 2026-10-24 00:05:30 UTC — A3 check fix verified
 
 `node tools/faces-check.js` OK: 1167, exit 0. The jump-ruling step moves the stab cutoff to 900 before Delete and asserts the write of 500, which also shows the section's set value winning over the document value. The sampler hero reads only `host.buffer(id)` and `host.audio()`. Every module check is green again on one tree. Committed A3; A6 (bypass wiring) and A9 (re-score) still writing, their files snapshotted as WIP.
+
+## 2026-10-24 00:07:07 UTC — A6 part 4 verified; wave-2 code complete
+
+Syntax on windows.js, app.js, main.js, preload.js; `node tools/browser-check.js` PASS (26), exit 0. windows.js uses `host.bypass`/`isBypassed` and redraws on the `'bypass'` and `'audio'` events; the bridge forwards them; a sampler window and the Open/restore toasts offer "Re-add sample" through `Project.pickAudio` and `host.loadAudio`. A6's Chromium and Xvfb runs are A6's. Code was in snapshot c534c1a. With this, every wave-2 code item is in and verified by its check here; A9's re-score is the only hand-back outstanding. A10 is asked to refresh app/README.md from the logs and the current counts.
