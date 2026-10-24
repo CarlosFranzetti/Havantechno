@@ -214,10 +214,10 @@ Method: band-pass (4th order Butterworth, zero phase) the mid signal, mean squar
 | bar | 4-8 kHz | 8-12 kHz | 12-16 kHz | note |
 |---|---|---|---|---|
 | 0-2 | -66 to -64 | -81 to -79 | -82 to -81 | intro floor (about -71 dB mean in 6-12 kHz) |
-| 3, 7, 11, 15 | -63, -60, -59, -57.5 | -75.5, -73, -72.5, -71 | -78, -77, -75, -73 | +7 to +10 dB over their neighbours: the 4-bar noise sweeps |
+| 3, 7, 11, 15 | -63, -60, -59, -57.5 | -75.5, -73, -72.5, -71 | -78, -77, -75, -73 | +2 to +7 dB over their neighbours in 4-16 kHz, +10 dB in 1-4 kHz (bar 3: -38.3 against -48.7 at bar 2): the 4-bar noise sweeps at each phrase end |
 | 16 | -58.4 | -72.5 | -73.3 | start of intro2 |
 | 20, 23 | -52.2, -47.8 | -66.6, -62.2 | -71.6, -70.3 | rising 1.5 dB per bar over bars 16-23 |
-| 24 | -43.7 | -48.9 | -55.9 | step of +4 to +13 dB at the start of build |
+| 24 | -43.7 | -48.9 | -55.9 | step of +4 (4-8 kHz), +13 (8-12) and +14 dB (12-16) at the start of build |
 | 32, 39 | -36.5, -33.0 | -40.1, -35.0 | -47.5, -42.8 | rising about 0.75 dB per bar over bars 24-39 |
 | 40-71 (mainA) | -32.5 | -34.7 | -42.0 | flat to 0.1 dB for 32 bars |
 | 136-183 (mainB) | -32.4 | -34.7 | -42.0 | the same values as mainA |
