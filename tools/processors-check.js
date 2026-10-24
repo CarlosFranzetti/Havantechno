@@ -270,6 +270,70 @@ console.log('8. limiter: safety clip (clipOn, clip) and the master output stage'
   ok(lim.params.threshold === -6 && lim.params.ceiling === -4.2, 'master: limiter threshold -6 dB, output trim -4.2 dB (see log-A8)');
 })();
 
+// ------------------------------------------------------------------ 9. V3 master, bypass, lc insert, decorrelate, end tail
+console.log('9. V3: master from song data, bypass without makeup, lc insert, stereo decorrelate, 6.5 s tail');
+(function () {
+  var c = new Fake(44100);
+  // bypass at construction: the wet path is at 0 at once, the dry path at 1, so no makeup reaches the output
+  var gb = P.create(c, 'compressor', { bypass: true }), g0 = P.create(c, 'compressor');
+  ok(gb._bypassed === true && gb._wet.gain.value === 0 && gb._dryBypass.gain.value === 1, 'compressor created bypassed: wet gain 0, dry 1 (no makeup from the unit)');
+  ok(g0._bypassed === false && g0._wet.gain.value === 1 && g0._dryBypass.gain.value === 0, 'compressor default: wet 1, dry 0 (unchanged)');
+  // a chain spec carries the flag per unit; parameters still apply
+  var ch = P.chain(c, [{ type: 'compressor', name: 'glue', bypass: true, threshold: -14, ratio: 2.5 }]);
+  ok(ch.get('glue')._bypassed === true && ch.get('glue').params.threshold === -14, 'chain entry bypass: true, threshold kept');
+  // the V3 master set from song data: hp 24, lp 20000, eq unchanged, glue and sat bypassed, limiter -1.5 / 0 / 0.08 / clip -0.55
+  var m = P.master(c);
+  m.get('limiter').set('threshold', -1.5); m.get('limiter').set('ceiling', 0); m.get('limiter').set('release', 0.08);
+  m.get('limiter').set('clipOn', true); m.get('limiter').set('clip', -0.55);
+  m.get('glue').bypass(true); m.get('sat').bypass(true);
+  var lim = m.get('limiter').params;
+  ok(m.get('hp').params.cutoff === 24 && m.get('lp').params.cutoff === 20000, 'V3 master: hp 24 Hz, lp 20000 Hz (already the defaults)');
+  ok(m.get('eq').params.low === 1.5 && m.get('eq').params.mid === -1 && m.get('eq').params.high === 1, 'V3 master: eq unchanged');
+  ok(lim.threshold === -1.5 && lim.ceiling === 0 && lim.release === 0.08 && lim.clipOn === true && lim.clip === -0.55, 'V3 master: limiter -1.5 / ceiling 0 / release 0.08 / clipOn / clip -0.55');
+  ok(m.get('glue')._bypassed === true && m.get('sat')._bypassed === true, 'V3 master: glue and sat bypassed');
+  ok(m.get('glue')._wet.gain.value === 1 || callsOf(m.get('glue')._wet.gain, 'setTargetAtTime').some(function (x) { return x[1] === 0; }), 'V3 master: glue wet path driven to 0 (the bypass fade)');
+  // lc: a per-track eq3 insert named lc, low shelf at 90 Hz, flat until its low gain is set (per section, ramp or set)
+  var lc = P.chain(new Fake(44100), [{ type: 'eq3', name: 'lc', low: 0, lowFreq: 90, mid: 0, high: 0 }]);
+  var eq = lc.get('lc'), shelf = nodesOf(eq, 'biquad').filter(function (n) { return n.type === 'lowshelf'; })[0];
+  ok(shelf && callsOf(shelf.frequency, 'setTargetAtTime').some(function (x) { return near(x[1], 90); }) && eq.params.low === 0, 'lc: low shelf at 90 Hz (lowFreq option, applied on the shelf), 0 dB (transparent)');
+  lc.set('lc.low', -7);
+  ok(callsOf(shelf.gain, 'setTargetAtTime').some(function (x) { return x[1] === -7; }) && eq.params.low === -7, 'lc: kick.lc.low-style path sets -7 dB (set)');
+  lc.set('lc.low', -4.5, { at: 2, ramp: 1 });
+  ok(callsOf(shelf.gain, 'linearRampToValueAtTime').some(function (x) { return x[1] === -4.5; }), 'lc: a ramp to -4.5 dB is a linear ramp on the shelf gain');
+  // decorrelate: mono in, stereo out (left = input, right = input delayed 11 ms)
+  var d = P.create(new Fake(44100), 'decorrelate');
+  var dR = nodesOf(d, 'delay')[0], mgD = nodesOf(d, 'merger')[0];
+  ok(dR && near(dR.delayTime.value, 0.011) && d.params.time === 0.011, 'decorrelate: right line delayed 11 ms by default');
+  ok(mgD && mgD.connections.indexOf(d._wet) >= 0 && reaches(d.input, mgD, { noDelay: true }), 'decorrelate: input reaches the stereo merger directly (left) and through the delay (right)');
+  ok(reaches(d.input, dR) && !reaches(d.input, mgD, { noDelay: true }) === false, 'decorrelate: the input reaches the delay line');
+  var dSet = P.create(new Fake(44100), 'decorrelate', { time: 0.02 });
+  ok(callsOf(nodesOf(dSet, 'delay')[0].delayTime, 'setTargetAtTime').some(function (x) { return near(x[1], 0.02); }), 'decorrelate: time 0.02 s is automatable');
+  // 6.5 s end tail: Freeverb comb loop gain for RT60 = size, and the damped decay at a few frequencies (model)
+  var rv = P.create(new Fake(44100), 'reverb', { algo: 'freeverb', size: 6.5, damp: 5000 });
+  var T0 = 1116 / 44100, gExp = Math.pow(10, -3 * T0 / 6.5);
+  ok(nodesOf(rv, 'gain').some(function (n) { return callsOf(n.gain, 'setTargetAtTime').some(function (x) { return near(x[1], gExp, 1e-12); }); }),
+     'size 6.5 s: comb loop gain ' + gExp.toFixed(6) + ' (RT60 6.5 s for the undamped loop)');
+  ok(near(Math.pow(gExp, 6.5 / T0), 1e-3, 1e-9), 'size 6.5 s: after 6.5 s the comb has fallen 60 dB');
+  function lpMag(f, fc, Q, fs) {
+    var w0 = 2 * Math.PI * fc / fs, cw = Math.cos(w0), al = Math.sin(w0) / (2 * Q);
+    var b0 = (1 - cw) / 2, b1 = 1 - cw, b2 = b0, a0 = 1 + al, a1 = -2 * cw, a2 = 1 - al;
+    var w = 2 * Math.PI * f / fs, c1 = Math.cos(w), s1 = Math.sin(w), c2 = Math.cos(2 * w), s2 = Math.sin(2 * w);
+    var nr = b0 + b1 * c1 + b2 * c2, ni = -(b1 * s1 + b2 * s2), dr = a0 + a1 * c1 + a2 * c2, di = -(a1 * s1 + a2 * s2);
+    return Math.sqrt(nr * nr + ni * ni) / Math.sqrt(dr * dr + di * di);
+  }
+  // RT60(f) = 60 / (60/size + loss per second); loss per loop from the comb lowpass (damp 5000 Hz, Q -3 dB = 0.708)
+  function rt60At(f) { var loss = -20 * Math.log(lpMag(f, 5000, 0.708, 44100)) / Math.LN10; return 60 / (60 / 6.5 + loss / T0); }
+  var r313 = rt60At(313), r2k = rt60At(2000), r4k = rt60At(4000);
+  ok(r313 > 6.2, 'model: RT60 at 313 Hz ' + r313.toFixed(2) + ' s (spec 6.5 s)');
+  ok(r2k > 4.2 && r2k < 4.9, 'model: RT60 at 2 kHz ' + r2k.toFixed(2) + ' s (spec 4.6 s at 1 to 2.5 kHz)');
+  console.log('  info model RT60 at 4 kHz ' + r4k.toFixed(2) + ' s (spec 5.1 s at 2.5 to 6 kHz; not asserted)');
+  // informational: small-signal gain of the saturator at the master's setting (drive 0.12, mix 0.5), model only
+  var sat = P.create(new Fake(44100), 'saturator', { drive: 0.12, mix: 0.5 });
+  var shN = nodesOf(sat, 'shaper')[0], cv = shN.curve, n = cv.length, idx = Math.round((0.01 + 1) / 2 * (n - 1));
+  var slope = (cv[idx] - cv[Math.round((-0.01 + 1) / 2 * (n - 1))]) / 0.02;
+  console.log('  info saturator small-signal gain (model): wet slope ' + slope.toFixed(2) + ', with mix 0.5 total ' + (0.5 * slope + 0.5).toFixed(2) + ' (' + (20 * Math.log(0.5 * slope + 0.5) / Math.LN10).toFixed(1) + ' dB); not asserted');
+})();
+
 // ------------------------------------------------------------------ result
 console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
 process.exit(fails ? 1 : 0);
