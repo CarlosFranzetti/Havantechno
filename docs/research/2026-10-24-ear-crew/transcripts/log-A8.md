@@ -91,3 +91,51 @@ Nothing was added to `Processors.master()`. Its defaults are the wave-2 values (
 - Flag (A7): `lc` in the kick chain; `decorrelate` on the burst; the reverb send as `algo: 'freeverb'`, `size: 6.5`.
 - Flag (A9): render with `--tail 6.5`; measure the glue and limiter makeup (not visible to the fake).
 - No change needed in A1's or A9's files for any of the four tasks.
+
+## 2026-10-24 02:31 EDT (06:31 UTC): clip overshoot, makeup documented, makeup trim (A9 section 7 items)
+
+Read: `log-A9.md` section 7 (7.1 table; 7.3; the table of A8 items: glue +4.18, limiter +0.69, saturator +10.44 / +4.44 / +15.27; the clip overshoot -1.0025 at bar 127, R channel, against a clip level of 0.9386 (-0.55 dBFS), 3,336 samples at or over the clip level in bars 122 to 137).
+
+### 1. Clip overshoot: fixed (processors.js, `BUILD.limiter`)
+
+- **Mechanism (my reading; A9 did not isolate it):** the clip stage is a WaveShaperNode at 4x oversampling. The downsampler after the shaper is a filter, and it rings near the clip level, so the output can come back above the curve's level. The curve itself never exceeds the clip level, which is why A9's unit test of the shaper alone did not show the overshoot.
+- **Fix:** a second WaveShaperNode, same curve, oversample `none`, after the first. It is memoryless and its curve ends at +/- the clip level with linear interpolation between points, so no output sample can exceed the clip level. Chain: compressor → ceiling trim → clip (4x) → clamp (none) → wet. With clipOn off, both curves are null, so both are identities.
+- **Check (section 10):** steps containing 0.9973, -1.0025, 1.0025, 1.01, -1.2 are fed through the clamp's curve (emulated: input clamped to [-1, 1], linear interpolation, as the spec defines `none`): every output is at or below the clip level; 1.0025 maps to exactly the clip level. Before the clamp the raw worst value is above the level (asserted), so the case does exercise the bug. A 1000-point sweep stays under the level and is an identity below it.
+- **Not verified in Chromium:** the bar-127 sample. Only A9's render can show that the overshoot is gone. Ask A9 to re-measure bar 127 and the clipped-sample count.
+
+### 2. Makeup and level dependence: documented (processors.js comments; not in V3-SPEC)
+
+Documented next to the specs as comments in `BUILD.compressor`, `BUILD.limiter` and `BUILD.saturator` (the spec objects have no note field; V3-SPEC.md is the coordinator's file and was not edited). Values from A9 (Chromium, V3 settings):
+
+| unit | at small signal | level dependence | compensation |
+|---|---|---|---|
+| glue (compressor, threshold -14, ratio 2.5, knee 8, attack 0.02, release 0.25) | automatic makeup +3.68 dB, plus the explicit `makeup` 0.5 dB = +4.18 dB | the automatic part is fixed by the node's settings (not measured at other levels) | `autoTrim` (new, see 3) |
+| limiter (threshold -1.5, ratio 20, attack 1 ms) | +0.69 dB, even below threshold | not measured | lower `ceiling` by the same amount (ceiling is the output trim) |
+| saturator (drive 0.12, mix 0.5) | +10.44 dB at -40 dBFS, +4.44 dB at -6 dBFS | falls with level (tanh curve); mix 1.0 gives +15.27 dB at small signal, mix 0 gives 0 dB | none fixed; no fixed trim makes it unity at every level |
+
+- **Settles my earlier flag:** my arithmetic gave about +11 dB at small signal, and A9's +10.44 dB agrees. Spec 4.1's "adds 1 dB rms" and "+1.3 dB" do not hold for this setting on quiet material. The V3 master bypasses the saturator, so V3 is unaffected; the default (wave-2) master still uses it.
+- Bypassing a unit removes all of the above (A9: bypassed glue 0.00 dB, exact).
+
+### 3. Makeup compensation option (off by default)
+
+- **`autoTrim`** on `compressor` (dB, -12 to 0, default **0** = unity): a gain after the explicit `makeup`. Its value is the negative of the automatic makeup: `-3.68` for the V3 glue (net +0.5 dB from the explicit makeup), or `-4.18` for unity at small signal. Valid only for the settings it was measured at; the comment says so. With the default 0 the output is unchanged (checked: the trim gain is 1, and the `makeup` and threshold automation are untouched).
+- **Limiter:** no new parameter. `ceiling` is already the output trim after the compressor, so `ceiling -0.69` compensates the +0.69 dB. Setting that is a V3 song decision (the V3 spec has ceiling 0).
+- **Saturator:** no option (the error is level dependent, a fixed trim cannot fix it).
+- Requested for A7 (V3 song data, `doc.master.glue`): `autoTrim: -3.68` if the explicit glue makeup 0.5 stays, or `-4.18` with makeup 0 for unity. A9 should check the glue's small-signal level on the V3 render after the choice.
+
+### Automation
+
+- All existing parameters keep their automation: the regression in section 1 of processors-check (every existing parameter, every archived type) passes. The limiter's new clamp and the compressor's new trim node are not connected to any existing parameter's automation; the trim is at unity by default.
+
+### Checks (exit codes read directly, run in /home/user/havantechno)
+
+- `node --check app/engine/processors.js`: exit 0.
+- `node --check tools/processors-check.js`: exit 0.
+- `node tools/processors-check.js`: exit 0, `OK: 92 checks passed` (section 10 adds 10 checks: the clamp wiring and curve, the overshoot step through the clamp, the sweep, the identity default, the autoTrim default and -3.68 setting, p.node still exposed).
+- `node app/engine/selfcheck.js`: exit 0, `OK: 340 checks passed`.
+
+### Not done / open
+
+- Chromium check of the bar-127 sample and the clipped-sample count (A9).
+- The glue's automatic makeup at other levels or settings (A9 measured at one setting).
+- The coordinator may want the V3-SPEC note lines: glue `autoTrim -3.68` (or -4.18), limiter ceiling note (`-0.69` if the level matters), saturator "level dependent: do not use for V3". I did not edit V3-SPEC.md.

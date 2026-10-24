@@ -133,6 +133,10 @@
     }
   };
 
+  // Level: the curve is tanh(k x)/tanh(k), k = 1 + 40 drive, so the wet path's gain is about k/tanh(k) at small signal and
+  // falls as the signal grows. With mix m the total gain is (1-m) + m x wet slope, which is level dependent: at drive 0.12,
+  // mix 0.5 A9 measured +10.44 dB at -40 dBFS and +4.44 dB at -6 dBFS (mix 1.0: +15.27 dB at small signal; mix 0: 0 dB).
+  // No fixed trim makes it unity at every level. The V3 master bypasses it for this reason.
   BUILD.saturator = {
     spec: { drive: { min: 0, max: 1, value: 0.3 }, mix: { min: 0, max: 1, value: 1 }, tone: { min: 500, max: 20000, value: 12000, unit: 'Hz' },
             trim: { min: 0, max: 2, value: 1 } },
@@ -335,17 +339,26 @@
     }
   };
 
+  // The DynamicsCompressorNode adds its own automatic makeup gain (measured in Chromium by A9, V3 settings:
+  // threshold -14, ratio 2.5, knee 8, attack 0.02, release 0.25: +3.68 dB at small signal, +4.18 dB with the 0.5 dB
+  // `makeup` below). It cannot be switched off. `autoTrim` is a gain after `makeup` that cancels it. Its value is the
+  // negative of the automatic part only (V3 glue: -3.68, leaving the explicit makeup 0.5 dB: net +0.5 dB at small
+  // signal), or -4.18 to cancel the whole 4.18 dB including that makeup (unity at small signal). It is valid only for
+  // the settings it was measured at.
+  // Default 0 dB = unity, so the output is unchanged. A bypassed unit (wet gain 0) adds no level at all.
   BUILD.compressor = {
     spec: { threshold: { min: -60, max: 0, value: -18, unit: 'dB' }, ratio: { min: 1, max: 20, value: 3 }, attack: { min: 0, max: 1, value: 0.01, unit: 's' },
-            release: { min: 0.01, max: 1, value: 0.2, unit: 's' }, knee: { min: 0, max: 40, value: 6, unit: 'dB' }, makeup: { min: -12, max: 24, value: 0, unit: 'dB' } },
+            release: { min: 0.01, max: 1, value: 0.2, unit: 's' }, knee: { min: 0, max: 40, value: 6, unit: 'dB' }, makeup: { min: -12, max: 24, value: 0, unit: 'dB' },
+            autoTrim: { min: -12, max: 0, value: 0, unit: 'dB' } },
     build: function (p) {
-      var ctx = p.ctx, P = p.params, c = p.track(ctx.createDynamicsCompressor()), mk = p.track(ctx.createGain());
+      var ctx = p.ctx, P = p.params, c = p.track(ctx.createDynamicsCompressor()), mk = p.track(ctx.createGain()), tr = p.track(ctx.createGain());
       val(c.threshold, P.threshold); val(c.ratio, P.ratio); val(c.attack, P.attack); val(c.release, P.release); val(c.knee, P.knee);
-      val(mk.gain, K.dbToGain(P.makeup));
-      p.input.connect(c); c.connect(mk); mk.connect(p._wet);
+      val(mk.gain, K.dbToGain(P.makeup)); val(tr.gain, K.dbToGain(P.autoTrim));
+      p.input.connect(c); c.connect(mk); mk.connect(tr); tr.connect(p._wet);
       p.node = c;
       p.onParam = function (n, v, o) {
         if (n === 'makeup') auto(ctx, mk.gain, K.dbToGain(v), o);
+        else if (n === 'autoTrim') auto(ctx, tr.gain, K.dbToGain(v), o);
         else if (c[n]) auto(ctx, c[n], v, o);
       };
     }
@@ -354,7 +367,12 @@
   // limiter: a compressor (ratio 20, 1 ms attack; it has no true-peak control, so it overshoots on fast transients),
   // then `ceiling` as an output trim (dB, the level stage as before), then a safety clipper.
   // The clipper is off by default (no curve, no oversampling: exact pass-through). With clipOn it hard-clips at `clip` dBFS
-  // (4x oversampled), which is the real ceiling. Keep the compressor threshold below clip - ceiling so the clipper rarely acts.
+  // in two stages: a 4x oversampled shaper, then a sample-rate clamp (oversample none, same curve). The oversampled
+  // shaper's output is filtered by the downsampler and can ring a little above the clip level (A9 measured -1.0025 against
+  // a clip of 0.9386 at V3 bar 127); the clamp is memoryless, so no sample leaves the clip level. Keep the compressor
+  // threshold below clip - ceiling so the clipper rarely acts.
+  // Makeup: the compressor's automatic makeup is +0.69 dB at small signal (A9, V3 settings), so an active limiter sits
+  // that much above `ceiling`. Compensate with `ceiling` (e.g. -0.69) if the level matters; ceiling is the output trim.
   function clipCurve(level) {
     var n = 4096, out = new Float32Array(n), i, x;
     for (i = 0; i < n; i++) {
@@ -368,13 +386,17 @@
             clipOn: { value: false }, clip: { min: -12, max: 0, value: -0.5, unit: 'dBFS' } },
     build: function (p) {
       var ctx = p.ctx, P = p.params, c = p.track(ctx.createDynamicsCompressor()), out = p.track(ctx.createGain());
-      var sh = p.track(ctx.createWaveShaper());
+      var sh = p.track(ctx.createWaveShaper()), cl = p.track(ctx.createWaveShaper());   // oversampled clip, then the sample-rate clamp
       val(c.threshold, P.threshold); val(c.ratio, 20); val(c.attack, 0.001); val(c.release, P.release); val(c.knee, 1);
       val(out.gain, K.dbToGain(P.ceiling));
-      p.input.connect(c); c.connect(out); out.connect(sh); sh.connect(p._wet);
+      p.input.connect(c); c.connect(out); out.connect(sh); sh.connect(cl); cl.connect(p._wet);
       p.node = c;
       function setClip() {
-        try { sh.curve = P.clipOn ? clipCurve(K.dbToGain(P.clip)) : null; sh.oversample = P.clipOn ? '4x' : 'none'; } catch (e) {}
+        try {
+          var cv = P.clipOn ? clipCurve(K.dbToGain(P.clip)) : null;
+          sh.curve = cv; sh.oversample = P.clipOn ? '4x' : 'none';
+          cl.curve = cv; cl.oversample = 'none';
+        } catch (e) {}
       }
       setClip();
       p.onParam = function (n, v, o) {
