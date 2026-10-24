@@ -29,7 +29,7 @@ The app in `app/` runs in a browser (`node tools/serve.js`, then `http://localho
 | Offline render and WAV export, 200 bars in about 89 s | A9's run (`log-A9.md`, wave 2); the coordinator timed 16 bars at 5.9 s |
 | Render-versus-reference scoring: loudness, true peak, band levels, kick glide, sub duck, tempo | `python3 tools/score.py --selftest`, exit 0; A9's comparisons in `log-A9.md` |
 
-Every number in the table was produced by a check run by the coordinator on one tree at commit `735b5a8` or later, except where a log is named.
+Every number in the table was produced by a check run by the coordinator on one tree at the final wave-2 commit, except where a log is named. The final counts: selfcheck 337, synths 74, processors 62, widgets 157, faces 1167, system-editor 76, step-view 72, browser-check 26, score selftest OK.
 
 ## 4. What the integration review found, and what happened to it
 
@@ -53,7 +53,7 @@ A11 also asked three questions the coordinator answered (`log-coordinator.md`, 2
 The build has been measured more than heard. What is known, from `log-A9.md`:
 
 - The scoring loop reproduces O1's loudness within 0.05 LU on all seven sections of the reference and its true peak within 0.01 dB (wave 1).
-- After the chunked render, the full 200-bar render measures −6.82 LUFS against the reference's −10.65 (+3.8 LU) and a true peak of +0.88 dBTP, above full scale: the master limiter is not holding a ceiling. This is independent of chunking. It was sent to A8; the outcome is in section 7.
+- After the chunked render, the full 200-bar render measures −6.82 LUFS against the reference's −10.65 (+3.8 LU) and a true peak of +0.88 dBTP, above full scale: the master limiter is not holding a ceiling. This is independent of chunking. A8 fixed it; section 7.
 - The V2 song's sub duck matches the reference for 0 to 60 ms and is 14 to 15 dB too deep at 100 to 150 ms (A7's item). The baseline intro is about 14 dB hot in the mids (owner undecided: synth level or EQ).
 - A9's open measurement questions: band levels read 1 to 2 dB above O1's table in every section (method difference, not identified); O1's stab-step correlation is not reproduced; the kick-glide fit is unreliable on renders though fine on the reference; the build section's tempo reads 63 BPM (a two-beat pick).
 - Nobody has heard A8's processor changes (delay loop filters and modulation, Freeverb, seeded IR, chorus base/invert, widener monoBelow, sidechain curve). Their automation is identical to the archived engine for every pre-existing parameter (`tools/processors-check.js`, 54).
@@ -62,9 +62,9 @@ The build has been measured more than heard. What is known, from `log-A9.md`:
 
 The owner's clarification (a provided track's sample-based elements stay samples) became PRD D8 and milestone 5b. What exists now: a `sampler` instrument (A7) with buffer, start, end, pitch, attack, release, loop and choke groups, driven like any instrument so steps, locks, probability, conditions and repeats apply unchanged; `host.loadAudio`, `audio()`, `buffer(id)`, `unloadAudio`, `addSampler` and an `'audio'` event, with decoding through an OfflineAudioContext before Start (A1); the document's `audio` map as references only, never bytes (A1); `Project.open` reloading samples through the shell's `readFile` with the project folder as base, listing the rest as missing (A1, A6); `Project.pickAudio` and `pathForFile` (A1, A6); a sampler face with the waveform and draggable start and end handles as its hero (A3); a drop target and a "+ track" menu in the System Editor (A4); "Re-add sample" in a window and in the Open toast (A6). Not built: `SongDoc.sliceToTrack` (cutting a stem at section and step boundaries), which is milestone 6's first step. Not verified by anyone: a real OS file drag, the Electron native dialogs, and the whole path on macOS or Windows.
 
-## 7. A8's master chain fix
+## 7. The master chain fix
 
-_Pending A8's hand-back; this section is replaced when it lands._
+A8 reproduced A9's full-song numbers exactly (−6.82 LUFS, +0.88 dBTP, sample peak −0.34 dBFS) and found why: the master limiter's `ceiling` was only a fixed output gain after a compressor with a −2 dB threshold and 1 ms attack, so nothing limited the output and fast transients overshot by about 3.5 dB (A8's arithmetic from the measured true peak). The fix, all in the master limiter unit (`log-A8.md`, wave 2): a new `clipOn`/`clip` pair, off by default so existing songs are unchanged; on, it is a 4× oversampled hard clip at `clip` dBFS, the real ceiling. The master's own settings changed to threshold −6 dB, ceiling (output trim) −4.2 dB, `clipOn` true, `clip` −0.5 dBFS. On the full render the clipper never engaged (sample peak −4.76 dBFS). Results, `tools/score.py --json` on A8's full 200-bar render: −10.75 LUFS against the reference's −10.65, true peak −3.77 dBTP. The coordinator reproduced the 16-bar mainA window: −11.25 LUFS and −4.21 dBTP here against A8's −11.25 and −4.21. `tools/processors-check.js` grew to 62 and the automation of every pre-existing parameter is still identical to the archived engine. Limits A8 states: this is a safety net, not the AudioWorklet true-peak limiter from the Gear Crew order of work; the saturator was not measured as a peak source; nothing was listened to; mainA reads about 1 LU under its reference section while the full song is on target, measured on different windows.
 
 ## 8. What is not verified
 

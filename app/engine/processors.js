@@ -568,7 +568,7 @@
       { type: 'filter', name: 'lp', cutoff: 20000, q: 0.7 },
       { type: 'compressor', name: 'glue', threshold: -14, ratio: 2.5, attack: 0.02, release: 0.25, knee: 8, makeup: 0.5 },
       { type: 'saturator', name: 'sat', drive: 0.12, mix: 0.5, tone: 16000 },
-      { type: 'limiter', name: 'limiter', threshold: -6, release: 0.08, ceiling: -3.3, clipOn: true, clip: -0.5 }
+      { type: 'limiter', name: 'limiter', threshold: -6, release: 0.08, ceiling: -4.2, clipOn: true, clip: -0.5 }
     ]);
     if (opts) for (var k in opts) if (opts.hasOwnProperty(k)) ch.set(k, opts[k]);
     return ch;

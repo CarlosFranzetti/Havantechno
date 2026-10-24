@@ -248,6 +248,28 @@ function hasCall(calls, method, v, t) {
   ok(dd.params.curve === 'lin', 'default curve lin');
 })();
 
+// ------------------------------------------------------------------ 8. limiter: safety clip and the master chain
+console.log('8. limiter: safety clip (clipOn, clip) and the master output stage');
+(function () {
+  var c = new Fake(44100), l = P.create(c, 'limiter');
+  var sh0 = nodesOf(l, 'shaper')[0];
+  ok(sh0 && sh0.curve === null && sh0.oversample === 'none', 'limiter default: clipper is an identity (no curve, no oversampling)');
+  var l1 = P.create(c, 'limiter', { clipOn: true, clip: -0.5 }), sh1 = nodesOf(l1, 'shaper')[0];
+  var lvl = Math.pow(10, -0.5 / 20);
+  ok(sh1.curve && sh1.curve.length === 4096 && near(sh1.curve[4095], lvl, 1e-6) && near(sh1.curve[0], -lvl, 1e-6), 'clipOn at -0.5 dBFS: curve runs to +/-' + lvl.toFixed(4));
+  ok(near(sh1.curve[2048], 0, 1e-3) && sh1.oversample === '4x', 'clipOn: linear through zero, 4x oversampled');
+  var mid = sh1.curve[3072];   // x = 0.5 is below the clip level: passes unchanged
+  ok(near(mid, 0.5, 1e-3), 'clipOn: a sample of 0.5 passes unchanged (below the clip level)');
+  l1.set('clipOn', false);
+  ok(sh1.curve === null && sh1.oversample === 'none', 'clipOn switched off: identity again');
+  l1.set('clip', -3); var lvl3 = Math.pow(10, -3 / 20);
+  l1.set('clipOn', true);
+  ok(near(sh1.curve[4095], lvl3, 1e-6), 'clip -3 dBFS sets the curve level');
+  var m = P.master(new Fake(44100)), lim = m.get('limiter');
+  ok(m.procs.length === 6 && lim.params.clipOn === true && lim.params.clip === -0.5, 'master: six units, limiter clipper on at -0.5 dBFS');
+  ok(lim.params.threshold === -6 && lim.params.ceiling === -4.2, 'master: limiter threshold -6 dB, output trim -4.2 dB (see log-A8)');
+})();
+
 // ------------------------------------------------------------------ result
 console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
 process.exit(fails ? 1 : 0);

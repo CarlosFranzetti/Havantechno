@@ -140,3 +140,53 @@ Owner: A8 (Haiku 5.5). Files: `app/engine/processors.js` (only), `tools/processo
 - `app/engine/processors.js` (rewritten, behaviour of defaults unchanged, verified by the regression above)
 - `tools/processors-check.js` (new)
 - `docs/research/2026-10-23-build-crew/transcripts/log-A8.md` (this file)
+
+## Wave 2: master output stage (coordinator task, from A9's full-song score)
+
+Task: the app's 200-bar render measured -6.82 LUFS against the reference's -10.65 (+3.8 LU), with a true peak of +0.88 dBTP. Give the master a real ceiling, and bring the full render to about -10.7 LUFS by changing the output stage, not the mix.
+
+### Diagnosis (processors.js, `BUILD.limiter` as it was)
+
+- The limiter's `ceiling` was a fixed output gain (-0.6 dB) after a DynamicsCompressorNode (threshold -2, ratio 20, attack 1 ms, knee 1). Nothing limited the output to the ceiling. The compressor only lowers level above its threshold, and its 1 ms attack lets fast transients (kick, clap) through above it.
+- Arithmetic from the measured numbers (my arithmetic, not a measurement of the compressor): -2 dB threshold + overshoot + (-0.6 dB) = +0.88 dBTP, so the overshoot was about 3.5 dB.
+- The saturator (drive 0.12, mix 0.5, normalised tanh) was not measured as a peak source. It is not ruled out.
+- The loudness excess (+3.8 LU) is the output level: the master sits about 3.8 dB too hot against the reference. The output trim is the lever for that.
+
+### Changes
+
+1. **`BUILD.limiter` (processors.js):** a safety clipper after the output trim. New parameters: `clipOn` (boolean, default **false**) and `clip` (dBFS, -12 to 0, default -0.5). Off: the curve is null and oversampling is 'none', which is an identity (exact pass-through), so the default sound is unchanged. On: a 4096-point hard clip at `clip` dBFS, 4x oversampled. The `ceiling` param keeps its existing meaning (output trim, its automation unchanged). It is not a ceiling; `clip` is. The name is kept for compatibility.
+2. **`Processors.master` (the limiter unit):** `threshold` -2 -> **-6** dB, `ceiling` (output trim) -0.6 -> **-4.2** dB, `clipOn` **true**, `clip` **-0.5** dBFS. Release 0.08 and the other units are unchanged. The chain keeps six units.
+
+Why these values: the threshold is lowered so the compressor's overshoot (about 3.5 dB at -2) stays below the clip level, so the clipper rarely engages. The output trim sets the level. Trial 1 (threshold -6, trim -0.6) gave -7.65 LUFS with +0.36 -> -0.61 dBTP, so the threshold change alone barely moves loudness and the trim does the work. Trial 2 (trim -3.3 dB) read -10.35 LUFS on mainA and -9.85 LUFS / -2.87 dBTP on the full song, which is inside the 1 LU window but at its edge. The trim was then moved to -4.2 dB to centre the full song near -10.7 (final run below).
+
+### Measurements (app page, `tools/render.js --page app`, `tools/score.py --json`, read directly)
+
+| Render | Settings | Integrated LUFS | True peak (dBTP) | Sample peak (dBFS) |
+|---|---|---|---|---|
+| full 0:200, before | threshold -2, trim -0.6, no clipper | **-6.82** | **+0.88** | -0.34 |
+| full 0:200, trial 2 | threshold -6, trim -3.3, clip -0.5 on | -9.85 | -2.87 | -3.86 |
+| full 0:200, after (final) | threshold -6, trim -4.2, clip -0.5 on | **-10.75** | **-3.77** | -4.76 |
+| mainA 16 bars, before | as above | -7.09 | +0.36 | -0.62 |
+| mainA 16 bars, trial 1 | threshold -6, trim -0.6 | -7.65 | -0.61 | -1.59 |
+| mainA 16 bars, trial 2 | threshold -6, trim -3.3 | -10.35 | -3.31 | -4.29 |
+| mainA 16 bars, final | threshold -6, trim -4.2 | -11.25 | -4.21 | -5.19 |
+
+- The "before" full-song figures reproduce A9's -6.82 / +0.88 exactly. I restored the original master line for that render and put the final line back afterwards; the restored file is byte-identical to the final one (`diff -q` against a saved copy).
+- Reference: full song -10.65 LUFS (A9); mainA window about -10.24 (A9). The full render is at -10.75, within 0.1 LU of the target. The mainA window is 1.0 LU below its reference section. Section and song levels are measured on different windows; the coordinator's target is the full song.
+- The sample peak of the full song is -4.76 dBFS, below the clip level of -0.5 dBFS. The clipper never engaged on this render, so the -3.77 dBTP is the compressor and output stage alone.
+- Intersample overshoot after the clipper is not separately bounded. The true peak (4x oversampled, approximate, from `score.py`) is -3.77 dBTP, which is the margin we have.
+
+### Checks
+
+- `node --check app/engine/processors.js`, `node --check tools/processors-check.js`: exit 0.
+- `node app/engine/selfcheck.js`: exit 0, `OK: 337 checks passed`.
+- `node tools/processors-check.js`: exit 0, `OK: 62 checks passed`. New section 8: default clipper is an identity; clipOn sets the curve to +/-0.944 at -0.5 dBFS, linear through zero, 4x oversampled, and passes 0.5 unchanged; off restores identity; clip -3 sets the curve level; the master has six units with the clipper on. Section 1 (automation identical to the archived processors.js for every existing parameter) still passes; the `ceiling` automation is unchanged.
+- A tool mutation test is not repeated for this task.
+
+### Not done / limits
+
+- The AudioWorklet true-peak limiter (Gear Crew report) is not built; the clipper is the interim safety stage the coordinator allowed.
+- The clipper is a hard clip at -0.5 dBFS. It is a safety net, not a limiter; if the threshold is raised it will engage and distort. The processors-check does not cover that.
+- The saturator was not measured as a peak source.
+- Nothing was listened to. No sound was judged, only the measured levels.
+- Full-song integrated loudness moved by about 4 dB. Whether the perceived balance (intro, break, drums) is still right is unverified.
