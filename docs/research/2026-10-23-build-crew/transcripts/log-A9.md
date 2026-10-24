@@ -157,3 +157,96 @@ $ node tools/render.js --sections intro --bars 2 --song v2               -> EXIT
 $ python3 tools/score.py tools/out/app-intro-0-16.wav --ref <MP3>        -> EXIT 0
 $ python3 tools/score.py tools/out/mainA-0-2.wav --ref <MP3> --xcheck    -> EXIT 0
 ```
+
+## Wave 2 (2026-10-24): A1's chunked render, A7's scheduled kick level
+
+Coordinator's request: (1) re-render on the app page with the same seed and time it; (2) score the new mainA 16 against wave 1 and the reference, and say whether anything moved beyond noise; (3) a 48-bar window and a full song if feasible, with song loudness against O1's -10.7 LUFS; (4) check whether the break's kick-level change shows across bars 100 to 112. Read directly: every exit code is listed below.
+
+Context: A1's commit bb698db (chunked render: `Sequencer.render` schedules two bars ahead with `OfflineAudioContext.suspend`; `opts.chunked === false` gives the old single schedule). A7's fix: `synths.js` applies `level` as `K.target(out.gain, v, at, 0.01)` at the scheduled time. Wave-1 app renders were copied to the scratchpad (`.../scratchpad/wave1/`) before the re-renders, so nothing was compared against an overwritten file.
+
+### (1) Timing, app page, seed 1
+
+| Render | Bars | Render time | Per bar | Wave 1 per bar |
+|---|---|---|---|---|
+| intro | 16 | 2.39 s | 0.15 s | 0.22 to 0.27 s |
+| mainA | 16 | 6.31 s | 0.39 s | 1.05 to 1.08 s |
+| 40:88 (mainA, mainA2) | 48 | 19.94 s | 0.42 s | not measured |
+| 100:112 (mainA2, break) | 12 | 5.90 s | 0.49 s | not measured |
+| full song 0:200 | 200 | 88.79 s | 0.44 s | not measured |
+
+Process wall times (including Chromium start): intro+mainA 16 bars 3.4 s and 7.4 s (the two sections in separate runs); full song 92.1 s.
+
+Commands and exit codes, read directly:
+```
+$ node tools/render.js --page app --sections intro --bars 16     -> EXIT 0 (2.39 s)
+$ node tools/render.js --page app --sections mainA --bars 16     -> EXIT 0 (6.31 s)
+$ node tools/render.js --page app --bars 40:88                   -> EXIT 0 (19.94 s, 94.03 s incl. tail, page errors: none)
+$ node tools/render.js --page app --bars 100:112                 -> EXIT 0 (5.90 s, page errors: none)
+$ node tools/render.js --page app --bars 0:200                   -> EXIT 0 (88.79 s, 383.55 s incl. tail, page errors: none)
+```
+
+### (2) New mainA 16 against wave 1 and the reference
+
+`python3 tools/score.py tools/out/app-mainA-0-16.wav --ref <MP3> --json` -> EXIT 0 (wave-1 copy scored the same way, EXIT 0).
+
+| Measure | wave 1 | wave 2 | diff |
+|---|---|---|---|
+| tempo (BPM) | 125.7004 | 125.7004 | 0.0000 |
+| R (dB) | -7.6674 | -7.6674 | 0.0000 |
+| 1-4 kHz (dB) | -11.5545 | -11.5544 | -0.0001 |
+| 4-16 kHz (dB) | -18.7211 | -18.7211 | 0.0000 |
+| A abs 300 Hz-1 kHz (dB) | -13.4516 | -13.4516 | 0.0000 |
+| LUFS | -7.0887 | -7.0887 | 0.0000 |
+| sample peak (dBFS) | -0.6156 | -0.6156 | 0.0000 |
+| true peak (dBTP) | 0.3634 | 0.3633 | -0.0001 |
+| correlation, all bands (onset and tail) | identical to 4 decimals | | 0.0000 |
+| sub duck, 0 to 200 ms | identical to 2 decimals | | 0.00 |
+| kick glide f0 (coherent) | 188.892 | 188.892 | 0.0001 Hz |
+
+Sample level: 1,314,188 of 2,917,320 samples differ; maximum difference 39 LSB; rms difference 1.21 LSB against a signal rms of 12,804 LSB (about -80 dB). The intro shows the same pattern (maximum 53 LSB, rms 1.0 LSB). So the renders are not bit-identical to wave 1, although every measure is. The likely cause is that the chunked scheduler draws `Math.random` in a different order (not verified). **Answer: no measure moved by more than the stated noise.** The largest change is 0.0085 BPM in the intro tempo estimate, and that is the flux autocorrelation reacting to sample-level changes.
+
+Reference-relative values are unchanged from wave 1: mainA 16 bars R -7.67 vs -13.77, 1-4 kHz -11.55 vs -19.20, LUFS -7.09 vs -10.3.
+
+### (3) Full song
+
+`node tools/render.js --page app --bars 0:200` -> EXIT 0, 88.79 s, 67.7 MB WAV. `python3 tools/score.py tools/out/app-bars-0-200.wav --ref <MP3>` -> EXIT 0, 68.8 s.
+
+- Reference, whole 200 bars (no tail): integrated -10.65 LUFS. O1 M9 gives -10.7 LUFS for the whole file (387.95 s, with a 6 s tail), so they agree to 0.05 LU. (`python3 tools/score.py --ref <MP3>` -> EXIT 0.)
+- Render, 200 bars: integrated **-6.82 LUFS** (+3.8 LU against the reference); sample peak -0.34 dBFS; **true peak +0.88 dBTP** (above full scale; the master chain is not holding the ceiling on this mix). R -5.17 vs -11.29; 1-4 kHz -9.27 vs -18.70; 4-16 kHz -18.54 vs -19.06; tempo 125.99 vs 125.98.
+- Correlation 300 Hz-2 kHz, all steps: onset 0.93 (reference 0.47), tail 0.81 (reference 0.25).
+
+### (4) Kick level change at bar 104
+
+The break sets `kick.level: 0.6` at its first bar (104); mainB restores 1.0. Measurement: kick peak per bar (50 to 150 Hz band peak per beat, median of four beats, then the mean over bars) for bars 100 to 111.
+
+- Kick solo (`--solo kick`, `tools/render.js` option added in this wave), 50 to 150 Hz: bars 100-103 mean -1.14 dB, bars 104-111 mean -1.26 dB, step -0.12 dB. Expected step -4.44 dB.
+- Full mix, same measure: step -1.15 dB (contaminated by bass and sub in 50 to 150 Hz; not a clean measure).
+- Scratch test (`.../scratchpad/kick2.js`, a self-contained Playwright page with its own static server; not in the repo), kick solo, raw peak per beat over 60 ms:
+  - master chain on, chunked render: -0.54 dB step. Single-schedule (`chunked: false`): -0.52 dB.
+  - master units bypassed, chunked render: **-4.44 dB** step. Single-schedule: **-4.40 dB**.
+- Conclusion: **the instrument level now changes at the scheduled bar, on both render paths**, and the step matches the setting (20 log10 0.6 = -4.44 dB) to 0.04 dB when the master units are bypassed. With the master chain on, the glue compressor, saturator and limiter absorb most of the change at the output (about -0.5 dB). That is the engine's master behaviour and bears on the +3.8 LU and +0.88 dBTP finding above.
+
+Commands and exit codes:
+```
+$ node --check tools/render.js                                   -> EXIT 0
+$ node tools/render.js --page app --bars 100:112 --solo kick     -> EXIT 0 (5.78 s, page errors: none)
+$ node $S/kick2.js  (scratch, self-contained server)              -> EXIT 0 (page errors: none)
+```
+Two earlier attempts exited 144, both from my own shell: a `pkill -f`/`ps | grep` pattern matched the command text that contained `http.server 8765`, and killed the shell. No test was run in those attempts. Removed the background server and reran with a self-contained server in the scratch script.
+
+### Tool changes this wave
+
+- `tools/render.js`: `--solo name[,name]` (app page only), applied through `Host.solo` before render; the name gets `-solo-<name>`. `node --check` exit 0.
+- `tools/README.md`: to be updated with `--solo` and the wave-2 timings.
+
+### Findings for owners
+
+- **To A7:** the kick level now applies at the scheduled bar (-4.40 to -4.44 dB at bar 104, master bypassed). Good.
+- **To A1 / coordinator:** full-song loudness +3.8 LU above the reference and true peak +0.88 dBTP on the app render. The master limiter is not holding a -1 dBTP ceiling on this mix. Not investigated further (owner decides).
+- **To A1:** chunked render is not bit-identical to the single-schedule output at sample level (not measured here; the single-schedule path was checked only for the kick, where the step matched to 0.04 dB).
+
+### Open (carried from wave 1)
+
+Band-level method vs O1 M9 (R +1.1 to +2.0 dB); O1 stab-step correlation not reproduced; kick glide on renders UNRELIABLE; build-section tempo octave (63 BPM).
+
+No commits.

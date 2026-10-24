@@ -28,7 +28,8 @@ relative to each section start (absolute song bars without `--sections`); a sing
 `--song baseline|v2` picks the preset (`Song.GUIDANCE_V2` on the archived page, `Song.documentV2()` in the
 app; V2 files get a `-v2` suffix). `--seed` (default 1) seeds `Math.random` in the page. `--tail` is the
 seconds rendered after the last bar (default 2.5, the archived default). The app's files get an `app-`
-prefix so they never overwrite archived renders.
+prefix so they never overwrite archived renders. `--solo kick[,name]` (app page only) solos tracks through
+`Host.solo` before the render, for isolating one track's level; the file gets a `-solo-<names>` suffix.
 
 `score.py` options: `--section name` (the archived arrangement, see `SECTIONS`), `--bars a:b` (relative to
 the section, or absolute), `--tail s` (appended to the window, default 0), `--json`, `--xcheck` (ffmpeg's
@@ -61,6 +62,10 @@ the section, or absolute), `--tail s` (appended to the window, default 0), `--js
   same 2 bars). The cause was not isolated. Every score in this file agreed between the two to three decimals.
 - Verified: archived `intro` and `mainA` (2 bars and 16 bars), and app `intro`, `mainA` (2 bars) and
   `intro` V2 (16 bars). No page or console errors in any run.
+- Wall time per bar on the app page (after A1's chunked render, wave 2): intro 0.15 s, mainA 0.39 s, a 48-bar
+  window 0.42 s, the full 200-bar song 0.44 s (88.8 s). Wave 1 (single schedule): intro 0.22 to 0.27 s,
+  mainA 1.05 to 1.08 s. The 16-bar window is the scoring length; the full song is feasible now but is
+  not needed for the per-section checks.
 
 ## score.py: input, windows and the reference grid
 

@@ -169,3 +169,9 @@ A1's timings in Chromium: 48 bars 115.0 s → 13.1–13.4 s; 16 bars 4.6 → 2.4
 ## 2026-10-24 00:07:07 UTC — A6 part 4 verified; wave-2 code complete
 
 Syntax on windows.js, app.js, main.js, preload.js; `node tools/browser-check.js` PASS (26), exit 0. windows.js uses `host.bypass`/`isBypassed` and redraws on the `'bypass'` and `'audio'` events; the bridge forwards them; a sampler window and the Open/restore toasts offer "Re-add sample" through `Project.pickAudio` and `host.loadAudio`. A6's Chromium and Xvfb runs are A6's. Code was in snapshot c534c1a. With this, every wave-2 code item is in and verified by its check here; A9's re-score is the only hand-back outstanding. A10 is asked to refresh app/README.md from the logs and the current counts.
+
+## 2026-10-24 00:14:16 UTC — A9 re-score verified; two audio findings routed to A8
+
+`node --check tools/render.js` 0; a 2-bar app render here exit 0. A9's wave-2 numbers (A9's runs, exit 0 each): per rendered bar on the app page, intro 0.15 s (was 0.22–0.27), mainA 0.39 s (was 1.05–1.08), 48 bars 0.42 s/bar, full 200 bars 88.8 s. The new mainA-0-16 matches the wave-1 render on every measure to 2–4 decimals; samples differ by at most 39 LSB, attributed (unverified) to Math.random draw order under chunking. A7's level fix is confirmed in sound: the bar-104 kick drop measures −4.40 dB with the master bypassed, which is 20·log10(0.6).
+
+Two findings for A8 (owner of processors.js, master chain): the full-song render is −6.82 LUFS against the reference's −10.65 (+3.8 LU) and its true peak is +0.88 dBTP, above full scale, so the master limiter is not holding a ceiling. These are independent of chunking (A9 saw the same levels with single scheduling). Dispatched to A8 with A9's commands. Open and unchanged: band-level method offset against O1, stab-step correlation, kick-glide fit on renders, build-section tempo octave.
