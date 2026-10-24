@@ -278,3 +278,22 @@ Slopes over bars 16-23 at the hit steps: 4-8 kHz +1.64 dB/bar, 8-12 kHz +1.50 dB
 | breakEnd 128-135 | ramp 0.12 -> 0.6 | - | at 0.2 | - | - | bed continues |
 | mainB 136-183 | A | - | A | G | plateau; loud layer from 152 | bars 147-183 |
 | outro 184-199 | off | - | A (full) | - | - | bars 187, 191, 195, 199 |
+
+## On-beat hat layer (bars 56 and 152, from E4 round 2 item 7 and the coordinator's request)
+
+Measured on bars 56-71, 152-167 against 40-55, 136-151 (full file, 6-16 kHz 2 ms envelope, script `r3a.py`; peak in 0 to +70 ms after the onset, dB abs, median).
+- Steps: 0 and 8 at -28 dB (bars 56-71: -29, -29; 152-167: -29, -29; before: -36 = the tick), and also steps 5 and 13 at -31 dB (before: -49 and -47; bars 56-71 step 5 -34, step 13 -38 in the 32 ms window because the peak comes later). So the layer is four hits per bar on 0, 5, 8, 13, steps 5 and 13 about 3 dB under 0 and 8. This is exactly the pattern of the break's soft-attack hits, and it is the same level there (break: -27/-28 dB): the "break shaker" and E4's on-beat layer are one part. Entry is sharp: bar 55 steps 0/8 -35.5, bar 56 -28.1 (+7 dB); steps 5/13 -48 -> -31 (+17 dB); bar 151 -35.7, bar 152 -27.7.
+- Extent (steps 0/8 | 5/13 peaks stay at -27..-28 | -31): constant from bar 56 through bar 106 (last sampled) and, with the break, to bar 119 (round 2 break table); 152 through 182 constant (-27.7 | -31.5); gone at bar 184 (-51). I did not sample 107-119 bar by bar here (the break window shows it at -27/-28); 120-127 is the floor (D4). Present in mainA second half, mainA2, break, mainB.
+- Envelope (6-16 kHz, on-beat steps 0 and 8, bars 56-71, dB abs): the tick click -37 at +5 ms, -32.8 at +20, peak -29.4 at +40 ms, -34.4 at +60, -40.4 at +80, -53.0 at +100, -60.6 at +120 ms. Rise about 35 ms, then a fall of 24 dB between +60 and +100 ms (a gated end near 100 ms, like the break soft hits: peak +40 to +50 ms, -20 dB by +110 ms). Bars 152-167: the same within 1 dB (-29.5 at +40 ms).
+- Spectrum (increment over the tick-only bars, 3 to 30 ms, band sums, dB): 2.5-4 kHz -38.9, 4-6.3 -38.1, 6.3-8 -41.1, 8-10 -37.5, 10-12.5 -42.6, 12.5-16 -52.0; the off-beat hat in the same bars: -24.8, -23.4, -22.3, -24.6, -25.4, -30.4. The shapes are parallel from 2.5 to 10 kHz (layer 14 to 19 dB lower in this early window because the layer's attack is slow) and the layer is 4 to 8 dB darker at 12.5-16 kHz. Same family of broadband noise, different articulation (35 ms rise against the hat's instant attack) and a different waveform: step 0 against step 0 NCC 0.93, step 0 against step 8 0.74 (a repeated sample), while the hat template gives a bimodal NCC (0.19 median, 0.83 p90, two hat waveforms), so correlation with the hat is not diagnostic here. Verdict: not the off-beat hat's voice at another level; a soft-attack noise voice, the shaker.
+- Level: peak 6-16 kHz -27.9 dB, which is 9.3 dB under the off-beat hat's -18.6 dB (E4 said -8) and 26.4 dB under the kick's 30-150 Hz peak (-1.5 dB) in the same bars; the hat is 17.1 dB under the kick.
+
+V3 row (track `shaker`, a second `shaker` track is needed besides the ghost one because the attack and decay differ):
+
+| item | value | conf. |
+|---|---|---|
+| track | `shaker_on` (inst shaker), gain so that the 6-16 kHz peak is -9.3 dB re hat_open (about 0.15 * 0.34 = 0.05 on today's scale; rescore) | M (relative level), L (gain) |
+| pattern | 'X....o..X....o..' (X = steps 0 and 8, o = steps 5 and 13 at -3 dB) | H |
+| params | tone 6000, q 0.25, attack 0.035, decay 0.06 (hold 0.03 if A7's `hold` is available; end near 100 ms) | attack M; tone M; decay L |
+| sections | mainA 56-71, mainA2 72-103, break 104-119 (same pattern at hat level), mainB 152-183 (not 136-151); off in 120-135 (E4/D4: floor and crescendo), off from 184 | H for bars 56-106 and 152-182; M for 107-119 |
+| relation to earlier rows | replaces the "shaker (break)" pattern 'x....x..x....x..' with this one (same hits), and is independent of the tick (all four beats, bars 26-55) and of the ghost shaker G ('...x...x...x...x', -13 dB) | H |
