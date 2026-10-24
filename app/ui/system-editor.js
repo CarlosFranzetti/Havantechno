@@ -31,6 +31,9 @@
                  sub: 'bass', bass: 'bass', stab: 'keys', lead: 'keys', pad: 'keys', riser: 'fx', impact: 'fx' };
   var STEPS = 16;
   var DEFAULT_VEL = 0.85;
+  var EMPTY_PATTERN = '................';
+  var AUDIO_EXT = /\.(wav|wave|mp3|ogg|oga|opus|flac|aif|aiff|m4a|aac|webm)$/i;
+  var FAM_GROUP = { drums: 0, bass: 1, keys: 2, fx: 3 };
 
   // ------------------------------------------------------------------ small helpers
   function isFn(f) { return typeof f === 'function'; }
@@ -54,7 +57,7 @@
   }
 
   var CSS = [
-    '.se{--se-left:520px;display:block;box-sizing:border-box;width:100%;height:100%;overflow:auto;background:var(--bg,#0e0f12);color:var(--fg,#e6e8ec);font:12px/1.3 system-ui,sans-serif;padding:0 0 8px}',
+    '.se{--se-left:520px;position:relative;display:block;box-sizing:border-box;width:100%;height:100%;overflow:auto;background:var(--bg,#0e0f12);color:var(--fg,#e6e8ec);font:12px/1.3 system-ui,sans-serif;padding:0 0 8px}',
     '.se *{box-sizing:border-box}',
     '.se-inner{min-width:880px;display:flex;flex-direction:column;gap:2px}',
     '.se-band{display:grid;grid-template-columns:var(--se-left) minmax(0,1fr);align-items:stretch}',
@@ -119,6 +122,16 @@
     '.se-roll>div{position:relative;background:var(--panel,#16181d)}',
     '.se-roll>div>i{position:absolute;left:0;right:0;height:4px;background:var(--fam-ink,var(--on,#e6e8ec))}',
     '.se-empty{color:var(--dim,#8a8f99);padding:6px}',
+    '.se-thead{display:grid;grid-template-columns:var(--se-left) minmax(0,1fr);align-items:center;background:var(--panel,#16181d);border-top:1px solid var(--line,#262a32);min-height:28px}',
+    '.se-thl{display:flex;align-items:center;gap:8px;padding:0 8px;min-width:0}',
+    '.se-thl .lbl{color:var(--dim,#8a8f99);font-size:10px;letter-spacing:.1em}',
+    '.se-status{color:var(--dim,#8a8f99);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}',
+    '.se-thr{padding:0 8px;color:var(--dim,#8a8f99);font-size:10px;opacity:.7}',
+    '.se-body.se-drop{outline:2px dashed var(--fam-ink,var(--on,#e6e8ec));outline-offset:-2px;background:var(--panel-raised,#1d2027)}',
+    '.se-menu{position:fixed;z-index:20;min-width:200px;display:flex;flex-direction:column;padding:4px;background:var(--panel-raised,#1d2027);border:1px solid var(--line,#262a32);border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.4)}',
+    '.se-menuitem{height:28px;padding:0 10px;border:0;background:transparent;color:var(--fg,#e6e8ec);font:inherit;text-align:left;cursor:pointer;border-radius:3px}',
+    '.se-menuitem:hover,.se-menuitem:focus{background:var(--line,#262a32)}',
+    '.se-menuitem[disabled]{opacity:.4;cursor:default}',
     '.se-fallback-steps{display:grid;grid-template-columns:repeat(16,minmax(10px,1fr));gap:2px;width:100%}',
     '.se-fallback-steps button{height:20px;min-width:10px;padding:0;border:1px solid var(--line,#262a32);background:var(--panel,#16181d);cursor:pointer}',
     '.se-fallback-steps button.on{background:var(--fam-ink,var(--on,#e6e8ec))}'
@@ -150,6 +163,8 @@
     if (p === true) return 'A';
     return p || null;
   }
+  function isSamplerTrack(t) { return !!t && (t.type === 'sampler' || t.inst === 'sampler'); }
+  function stripExt(n) { return String(n || '').replace(/\.[A-Za-z0-9]{1,5}$/, ''); }
   function famOf(name) { return FAMILY[name] || 'keys'; }
   function groupsFor(d) {
     // the four fixed groups, filtered to tracks the document has; any extra track lands in OTHER
@@ -162,7 +177,11 @@
       }
       out.push(g);
     }
-    for (i = 0; i < d.tracks.length; i++) if (!known[d.tracks[i].name]) out[2].tracks.push(d.tracks[i].name);
+    for (i = 0; i < d.tracks.length; i++) if (!known[d.tracks[i].name]) {
+      // an added track (a sampler) goes under the group of its family; samplers default to drums
+      var fam = d.tracks[i].family || (isSamplerTrack(d.tracks[i]) ? 'drums' : 'keys');
+      out[has(FAM_GROUP, fam) ? FAM_GROUP[fam] : 2].tracks.push(d.tracks[i].name);
+    }
     return out;
   }
 
@@ -176,7 +195,7 @@
       rows: {}, rowOrder: [], cells: [], secCount: 0,
       starts: [], total: 0, curSec: -1, lastPh: '', lastBodyPh: '',
       ovSegs: [], ovWin: null, ovPh: null, ruPh: null, bodyPh: null, blocks: [], brace: null, loopBtn: null,
-      dev: null, devices: [], docRev: 0, drag: null
+      dev: null, devices: [], docRev: 0, drag: null, addChain: Promise.resolve(), statusText: '', statusEl: null, menu: null, menuOff: null, menuBtn: null, dragDepth: 0
     };
 
     var rootEl = make('div', 'se');
@@ -218,12 +237,22 @@
 
     // ---------------------------------------------------------------- edits
     function editStep(name, i, patchFn) {
-      var d = document_(), p = pos_(), si = curIndex(p, d.sections), vw = viewOf(d, name, si, p);
-      if (!vw.v) return;
-      var cell = vw.cells[i], patch = patchFn(cell);
-      var ed = host.editor();
+      var d = document_(), p = pos_(), si = curIndex(p, d.sections), vw = viewOf(d, name, si, p), secName = d.sections[si].name;
+      var ed = host.editor(), start = null;
       if (!ed) return;
-      ed.setStepInSection(d.sections[si].name, name, vw.bar * STEPS + i, patch);
+      if (!vw.v) {
+        // the section does not play this track yet (a fresh sampler): the first edit makes it play its first variant here
+        var tr = findTrack(d, name), ks = tr && tr.variants ? Object.keys(tr.variants).sort() : [];
+        if (!ks.length) return;
+        start = has(tr.variants, 'A') ? 'A' : ks[0];
+        vw = { v: tr.variants[start], bar: 0, cells: tr.variants[start].cells.slice(0, STEPS) };
+      }
+      var patch = patchFn(vw.cells[i]);
+      var run = function (e) {
+        if (start) e.setPlay(secName, name, start);
+        return e.setStepInSection(secName, name, vw.bar * STEPS + i, patch);
+      };
+      if (isFn(ed.group)) ed.group(run); else run(ed);
       host.commit();
     }
     function toggleStep(name, i) {
@@ -458,6 +487,12 @@
       row.appendChild(sc);
 
       on(row, 'click', function () { select(name); });
+      on(row, 'contextmenu', function (e) {      // a sampler row: "Remove track"
+        if (!isSampler(name)) return;
+        if (e && e.preventDefault) e.preventDefault();
+        select(name);
+        openMenu([{ label: 'Remove track \u201c' + name + '\u201d', run: function () { removeSampler(name); } }], (e && e.clientX) || 0, (e && e.clientY) || 0, null);
+      });
       on(row, 'keydown', function (e) {
         if (!e) return;
         if (e.key === 'Enter' || e.key === ' ') { select(name); if (e.preventDefault) e.preventDefault(); }
@@ -610,10 +645,147 @@
       S.dev = { faces: faces, pat: pat };
     }
 
+    // ---------------------------------------------------------------- sampler tracks: drop, "+ track" menu, remove
+    function setStatus(t) {
+      S.statusText = String(t || '');
+      if (S.statusEl) S.statusEl.textContent = S.statusText;
+    }
+    function nameOfSource(src) {
+      var n = src && (src.name || (src.path && String(src.path).split(/[\\/]/).pop()));
+      return String(n || 'sample');
+    }
+    function isAudioFile(f) { return !!f && (/^audio\//.test(String(f.type || '')) || AUDIO_EXT.test(String(f.name || ''))); }
+    // add one sampler track per source (a File, or the shell's {name, path, bytes}), one after the other so the tracks
+    // keep the drop order; the Host loads the audio, adds the track, commits and (given a File in Electron) records the path
+    function addOne(src) {
+      var nm = nameOfSource(src);
+      if (!isFn(host.addSampler)) { setStatus('This host cannot add sampler tracks.'); return Promise.resolve(null); }
+      setStatus('Adding ' + nm + '...');
+      return Promise.resolve().then(function () {
+        return host.addSampler(src, { name: stripExt(nm), family: 'drums', pattern: EMPTY_PATTERN });
+      }).then(function (track) {
+        setStatus('Added sampler track ' + track + '.');
+        if (!disposed && track) select(track);
+        return track;
+      }, function (err) {
+        setStatus('Could not add ' + nm + ': ' + ((err && err.message) || err));
+        return null;
+      });
+    }
+    function addFiles(list) {
+      var out = [];
+      for (var i = 0; i < list.length; i++) (function (src) {
+        S.addChain = S.addChain.then(function () { return addOne(src); });
+        out.push(S.addChain);
+      })(list[i]);
+      return Promise.all(out);
+    }
+    function pickSampler() {
+      var P = root.Project;
+      if (!P || !isFn(P.pickAudio)) { setStatus('No file picker available.'); return Promise.resolve(); }
+      return Promise.resolve().then(function () { return P.pickAudio({ shell: root.HavantechnoShell || null }); }).then(function (src) {
+        if (src) return addFiles([src]);
+      }, function (err) { setStatus('Could not pick a file: ' + ((err && err.message) || err)); });
+    }
+    function isSampler(name) { return !!S.doc && isSamplerTrack(findTrack(S.doc, name)); }
+    function removeSampler(name) {
+      if (!isSampler(name)) return false;
+      var ed = host.editor();
+      if (!ed || !isFn(ed.removeTrack)) return false;
+      var run = function (e) { return e.removeTrack(name); };
+      var r = isFn(ed.group) ? ed.group(run) : run(ed);
+      if (!r) return false;
+      host.commit();
+      setStatus('Removed track ' + name + ' (undo brings it back).');
+      return true;
+    }
+    function closeMenu() {
+      if (!S.menu) return;
+      try { if (S.menu.parentNode) S.menu.parentNode.removeChild(S.menu); } catch (e) { /* ignore */ }
+      if (S.menuOff) S.menuOff();
+      if (S.menuBtn) attr(S.menuBtn, 'aria-expanded', false);
+      S.menu = null; S.menuOff = null; S.menuBtn = null;
+    }
+    function openMenu(items, x, y, btn) {
+      closeMenu();
+      var m = make('div', 'se-menu'); attr(m, 'role', 'menu');
+      m.style.left = Math.round(x) + 'px'; m.style.top = Math.round(y) + 'px';
+      items.forEach(function (it) {
+        var b = make('button', 'se-menuitem', it.label); attr(b, 'role', 'menuitem'); attr(b, 'type', 'button');
+        if (it.disabled) { attr(b, 'disabled', ''); b.disabled = true; }
+        on(b, 'click', function (e) { if (e && e.stopPropagation) e.stopPropagation(); if (it.disabled) return; closeMenu(); it.run(); });
+        m.appendChild(b);
+      });
+      rootEl.appendChild(m);
+      S.menu = m; S.menuBtn = btn || null;
+      if (btn) attr(btn, 'aria-expanded', true);
+      if (doc && isFn(doc.addEventListener)) {
+        var inside = function (n) { for (var k = 0; n && k < 12; k++, n = n.parentNode) if (n === m) return true; return false; };
+        var away = function (e) { if (!inside(e && e.target)) closeMenu(); };
+        var esc = function (e) { if (e && e.key === 'Escape') closeMenu(); };
+        doc.addEventListener('mousedown', away); doc.addEventListener('keydown', esc);
+        S.menuOff = function () { if (isFn(doc.removeEventListener)) { doc.removeEventListener('mousedown', away); doc.removeEventListener('keydown', esc); } };
+      }
+      var first = m.children[0]; if (first && isFn(first.focus)) safe(function () { first.focus(); });
+    }
+    function trackMenuItems() {
+      var sel = S.sel;
+      return [
+        { label: 'Sampler track from file\u2026', run: pickSampler },
+        { label: sel && isSampler(sel) ? 'Remove track \u201c' + sel + '\u201d' : 'Remove track (select a sampler row)', disabled: !(sel && isSampler(sel)), run: function () { removeSampler(sel); } }
+      ];
+    }
+    function buildTrackHeader() {
+      var band = make('div', 'se-thead'), l = make('div', 'se-thl'), r = make('div', 'se-thr', 'Drop audio files on the track list to add sampler tracks');
+      l.appendChild(make('span', 'lbl', 'TRACKS'));
+      var add = make('button', 'se-btn', '+ track'); attr(add, 'type', 'button'); attr(add, 'aria-haspopup', 'menu'); attr(add, 'aria-expanded', false);
+      attr(add, 'aria-label', 'Add or remove a track');
+      on(add, 'click', function (e) {
+        if (e && e.stopPropagation) e.stopPropagation();
+        if (S.menu) { closeMenu(); return; }
+        var rc = isFn(add.getBoundingClientRect) ? add.getBoundingClientRect() : { left: 0, bottom: 0 };
+        openMenu(trackMenuItems(), rc.left || 0, (rc.bottom || 0) + 2, add);
+      });
+      l.appendChild(add);
+      S.statusEl = make('span', 'se-status', S.statusText); attr(S.statusEl, 'role', 'status'); attr(S.statusEl, 'aria-live', 'polite');
+      l.appendChild(S.statusEl);
+      band.appendChild(l); band.appendChild(r);
+      return band;
+    }
+    function hasFiles(e) {
+      var dt = e && e.dataTransfer, t = dt && dt.types;
+      if (!t) return false;
+      for (var i = 0; i < t.length; i++) if (t[i] === 'Files') return true;
+      return false;
+    }
+    function wireDrop(body) {
+      on(body, 'dragenter', function (e) { if (!hasFiles(e)) return; if (e.preventDefault) e.preventDefault(); S.dragDepth++; toggleClass(body, 'se-drop', true); });
+      on(body, 'dragover', function (e) {
+        if (!hasFiles(e)) return;
+        if (e.preventDefault) e.preventDefault();
+        if (e.dataTransfer) safe(function () { e.dataTransfer.dropEffect = 'copy'; });
+        toggleClass(body, 'se-drop', true);
+      });
+      on(body, 'dragleave', function (e) {
+        if (!hasFiles(e)) return;
+        S.dragDepth = Math.max(0, S.dragDepth - 1);
+        if (!S.dragDepth) toggleClass(body, 'se-drop', false);
+      });
+      on(body, 'drop', function (e) {
+        if (!hasFiles(e)) return;
+        if (e.preventDefault) e.preventDefault();
+        S.dragDepth = 0; toggleClass(body, 'se-drop', false);
+        var all = Array.prototype.slice.call(e.dataTransfer.files || []), audio = all.filter(isAudioFile);
+        if (!audio.length) { setStatus('No audio files in that drop.'); return; }
+        if (audio.length < all.length) setStatus('Skipped ' + (all.length - audio.length) + ' file(s) that are not audio.');
+        addFiles(audio);
+      });
+    }
+
     // ---------------------------------------------------------------- full build (only on mount and 'document')
     function build() {
       var d = document_();
-      S.drag = null;
+      S.drag = null; S.dragDepth = 0; closeMenu();
       S.doc = d; S.structure = structureKey(d);
       S.devices = safe(function () { return host.devices(); }, []) || [];
       var ss = sectionStarts(d.sections); S.starts = ss.starts; S.total = ss.total || 1;
@@ -624,7 +796,8 @@
       clear(inner);
       inner.appendChild(buildOverview(d));
       inner.appendChild(buildRuler(d));
-      inner.appendChild(buildBody(d));
+      inner.appendChild(buildTrackHeader());
+      var bodyEl = buildBody(d); wireDrop(bodyEl); inner.appendChild(bodyEl);
       S.devRowEl = make('div', 'se-devrow'); attr(S.devRowEl, 'aria-label', 'Device row');
       inner.appendChild(S.devRowEl);
       if (!S.sel || !findTrack(d, S.sel)) S.sel = S.rowOrder[0] || (d.tracks[0] && d.tracks[0].name) || null;
@@ -752,9 +925,11 @@
     return {
       update: update,
       select: select,
+      addFiles: addFiles,
       dispose: function () {
         if (disposed) return;
         disposed = true;
+        closeMenu();
         if (isFn(host.off)) safe(function () { host.off('document', onDocument); });
         for (var n in S.rows) if (has(S.rows, n) && S.rows[n].chip && isFn(S.rows[n].chip.dispose)) safe(function () { S.rows[n].chip.dispose(); });
         disposeDev();
