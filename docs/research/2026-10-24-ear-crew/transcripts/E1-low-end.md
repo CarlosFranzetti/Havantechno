@@ -331,3 +331,215 @@ is E2's call, but from the low-end side there is no bass in the reference intro.
   155.8 Hz line is sustained. No reference bass appears below 150 Hz in the intro.
 - **E5:** the master limiter's ceiling is below the reference kick peak and flattens the kick for 140–230 ms. The
   render latency is 16.4 ms.
+
+## Round 2: agreements and disputes
+
+Read: E2-mids.md, E3-drums-top.md, E4-arrangement-samples.md, E5-mix.md and the coordinator's dispute list. New scripts
+are `scratchpad/e1/r2a.py` to `r2f.py`. All measurements are on the mixed reference (no stems).
+
+### D1 (E2): the 59.2 Hz peak, and the drone
+
+**59.2 Hz: one account, and both observations are true.** E2 is right that the long-window spectrum below 150 Hz is a
+comb of lines every 2.1 Hz. Any signal that repeats exactly every beat has a line spectrum at k × 2.1 Hz. The envelope
+over those lines is the spectrum of one hit. So the comb is the kick, seen through a long window.
+- The single-beat spectrum of the intro kick template peaks at 56.2 Hz: −0.3 dB at 54.6 Hz, −0.1 at 56.7, −2.4 at 58.8,
+  −4.6 at 60.9, re its maximum.
+- The comb's tallest lines (54.67, 56.69, 58.88 Hz) follow that envelope.
+
+The test between "kick body" and "bass f0 under the kick tail" is whether the comb changes when the bass enters. It does
+not. In 0.17 Hz bins (`r2a.py`), the lines from 52.5 to 67.1 Hz are the same within 0.3 dB in bars 40–72, 56–88, 88–104
+and 140–172, i.e. before the bass, while it fades in, and after it. Example: 56.69 Hz reads −18.1, −18.1, −18.2, −18.2
+dBFS.
+
+The bass fundamental itself was measured with a narrow band (51.5 ± 2 Hz) at 30–110 ms after each of E2's bass steps.
+- Steps 6 and 14 (238 ms after a kick, so outside the kick's tail): break −43.6 dBFS, mainB −34.6. mainA, which has no
+  bass, reads −35.2. So nothing at 51.5 Hz rises above the floor when the bass is present.
+- Steps 1 and 11 read the same as step 9, where there is no bass hit: break −33.3 / −35.8 against −33.4. That is the
+  kick's tail.
+- The bass's 2nd and 3rd harmonics are present: 103 Hz at step 11 is −26.8 against −34.3 at step 9; 154.5 Hz at steps
+  1, 6, 11, 14 is −29 to −31 against −37.6.
+
+So the bass has a missing or very weak fundamental, at least 12 dB under its 3rd harmonic. **The sub should not be
+51.5 Hz.** E2's "59 Hz coincides with the bass f0 from bar 88" is refused: the 59 Hz line exists from bar 0 at the same
+level, and the bass f0 is not detectable.
+
+**The drone: E2's 32.7 Hz fundamental is refused; 34.475 Hz stands.** The decisive method is a long-window line
+spectrum (bars 0–88, 2^24-point FFT, about 0.005 Hz bins) of the residual after the kick template is removed.
+- 34.475 Hz is at −31.6 dBFS. 32.70 Hz is at −57.1 (25 dB down), 33.60 at −61.0, 98.2 at −54.6.
+- E2's "33.6 Hz" is the 33.272 and 34.475 Hz lines blurred together by a short window: E2's gaps are 0.18 s long, so
+  the resolution is about 5.5 Hz.
+- E2's "98.2" and "162" are clusters spaced 1.2027 Hz, i.e. sums of the drone's own lines:
+  - 95.025 = 34.475 + 30.866 + 29.684;
+  - 98.634 = 2 × 34.475 + 29.684;
+  - 99.833 = 3 × 33.272;
+  - 160.387 and 163.996 Hz, 3.609 Hz apart (3 × 1.2027).
+  These are odd-order mixing products of a slightly saturated drone, at −37 to −41 dBFS, 5 to 10 dB below the drone's
+  lines. E2 was right that the drone is saturated; its fundamental is still 34.475 Hz.
+
+**Sub proposal after D1: unchanged** (C#1, 34.475 Hz). There is one refinement on how the pulse is made; see the E4
+item below.
+
+### E4's B0 bars (E4 section 5): confirmed as a measurement, refused as a note
+
+E4's list (bars 3, 10, 20, 27, 44, 52, …; 24 of 200 bars) is the same as mine from round 1. Both come from one-bar FFT
+windows.
+
+Two new tests:
+- (a) A stationary comb of the 11 measured lines with random phases (`r2b.py`) never puts a one-bar peak on B0 in 90
+  bars. So a fixed set of sines does not explain the B0 bars, and my round-1 "line beating" explanation was incomplete.
+- (b) A per-beat track with two-beat windows (`r2c.py`, bars 0–12). Energy in 29.9–31.9 Hz against 33.5–35.5 Hz swings
+  from −10 dB to +3 dB and back about every 1.75 beats, which is the 1.2027 Hz cycle. In part of every cycle the drone's
+  pitch sits near 30.4–30.9 Hz (peaks at 30.37 to 30.70 Hz), and for the rest near 34.5 Hz.
+
+So the drone is one voice whose pitch and level move together once per 831.5 ms cycle: loud near 34.5 Hz, quieter and
+lower near 30.5–31 Hz. Round 1's complex-envelope fold already showed the frequency dipping by 4 to 6.6 Hz in the
+quiet part.
+
+Why "B0 bars" recur every 7 to 8 bars: the cycle runs 2.29 times per bar. The fraction 0.29 comes back to nearly a whole
+number after 7 bars (7 × 0.29 = 2.04), so the bar window catches mostly the low phase every 7th bar, and every 8th when
+the 0.04 drift accumulates. That is E4's spacing of "7 or 8 bars, mostly".
+
+Verdict: **no B0 note on a bar grid**. The low phase of the pulse is near B0 every cycle, not one bar in eight.
+- Engine options: a sinusoidal amplitude-plus-pitch LFO fits the 12 measured lines with 2.3 dB rms error (`r2f.py`:
+  rate 1.2027 Hz, level swing 11 dB, pitch dip 6.0 Hz, pitch LFO 253° from the level LFO; estimated).
+- The three-sine partials model from round 1 gives fold depth −18.7 against −20.3 dB and the two-hump shape.
+- Either is acceptable. The partials route needs no LFO in synths.js, so it stays my first choice. E4's song.js edit
+  for B0 bars should not be made.
+
+### D3 (E3): the on-beat 1–16 kHz layer
+
+Per-hit band power from 50 ms before to 100 ms after each beat, in 5 ms bins:
+- **Intro:** the 1–2.5 kHz band jumps from −50 to −35 dBFS at the beat and is back to −44 to −45 by 15 to 20 ms. That is
+  the kick's own 2 ms click; nothing else is there.
+- **Build (bars 28–36):** the jump is to −32, back to −42 by 20 ms, then flat. Still click-like, with a slightly longer
+  tail.
+- **mainA:** the 1–2.5 kHz band jumps from −46 to −28 one bin earlier (5–10 ms before the grid; estimated ±3 ms after
+  the zero-phase filter), stays at −30 to −34 for 50 ms and decays to −41 by 100 ms. 2.5–6 kHz and 6–16 kHz behave the
+  same (−29 and −33 dBFS peaks).
+- This is not the tail of the off-beat hat running through the beat: the level rises 16 to 18 dB at the beat.
+- It does not have the shape of E3's soft-attack hit on steps 5 and 13 either. In the same windows that hit peaks 120 to
+  130 ms after those steps, i.e. on the next off-beat; E3 reports its peak 40 to 50 ms after the step.
+
+**My view:** a separate sharp-attack noise layer on the beats in the main sections. It starts a few ms before the kick,
+lasts about 100 ms and is broadband from 1 to 16 kHz. It has nothing to do with the kick's synthesis, because the kick
+sample is the same as in the intro, where the layer is absent. In engine terms it is a closed hat or tick on steps
+0, 4, 8, 12 (E3 names it and owns its level). The kick keeps only its 2 ms click in every section.
+
+### D5: swing
+
+My round-1 "10–20 ms on odd 16ths" was the absolute onset of the bass's step-11 note, and the note has a 12–15 ms attack
+(E2). The same instrument's even step is the right control, so I re-measured all four bass steps (`r2e.py`, bar fold,
+10 % and 50 % rise of 400–1000 Hz band power, which the kick does not reach):
+
+| Section | Step 1 (odd) | Step 6 (even) | Step 11 (odd) | Step 14 (even) |
+|---|---|---|---|---|
+| Break | +9.6 ms | +9.7 | +9.6 | −4.3 (earlier, cause unknown) |
+| mainB | +9.5 | +9.5 | +9.5 | −4.4 |
+
+In 140–320 Hz, steps 1, 6 and 11 rise at +10 to +12.5 ms in the break.
+
+The bass's odd and even steps land at the same offset within 0.1 ms. **The bass refuses a global swing of 20 to 30 ms.**
+My round-1 figure is withdrawn as swing evidence; it was the attack.
+- If E3's stab offsets (odd +21 to +24 ms, even −5) hold, the groove is per instrument: the stab is pushed or has a
+  per-step offset.
+- A song-wide `swing: 0.6` would put the bass's steps 1 and 11 about 24 ms late, where the record has them on the grid.
+- Recommendation: keep the global swing at 0 to 0.06 in V3 and give the stab's odd steps a per-track delay if E3's
+  numbers survive.
+
+### D6 (E2, E5): what the record has at 160–200 Hz
+
+| Window | 160 Hz beat-locked | 160 Hz residual | 200 Hz beat-locked | 200 Hz residual |
+|---|---|---|---|---|
+| Intro (only kick and drone) | −25.4 | −26.8 | −26.7 | −26.2 |
+| mainA (no bass) | −25.8 | −26.9 | −26.9 | −26.1 |
+| mainB (bass present) | −25.9 | −25.5 | −26.9 | −26.1 |
+
+Third-octave band rms in dBFS. The beat-locked part is the kick template. The residual is everything else: the kick's
+hit-to-hit variation (its noise click and limiter movement, large around the onset) plus the drone's mixing products at
+160.4 and 164.0 Hz.
+- **Up to bar 88 the record's 160–200 Hz is all kick-related.** The intro, with nothing but kick and drone, has the same
+  levels as mainA.
+- After bar 88 the bass's 3rd and 4th harmonics (154.5 and 206 Hz, −29 to −32 dBFS narrowband) add about 1.4 dB at
+  160 Hz.
+- No chord energy lands there: E2's lowest chord tones are A#3 and B3, 233 and 247 Hz.
+
+Kick single-hit third-octaves re 63 Hz:
+
+| Source | 125 Hz | 160 Hz | 200 Hz | 250 Hz |
+|---|---|---|---|---|
+| Reference | −15.5 | −24.6 | −29.7 | −36.5 |
+| V2 parameters, numpy model (source only, no master) | −18.7 | −26.9 | −36.9 | −49.5 |
+| App V2 solo render (through the master) | −25.0 | −16.6 | −31.5 | −23.0 |
+
+The render's 160 Hz figure is the limiter's 3rd harmonic of the kick (3 × 55 Hz), not body.
+
+**Split:** the app's hole at 160 Hz is mostly the master, as E5 found (−8.4 dB). The kick source is short by 2 dB at
+160 Hz, 7 dB at 200 Hz and 13 dB at 250 Hz. In the reference that energy is the kick's first 10 to 20 ms: the irregular
+195–245 Hz onset at full level, with the 150–300 Hz band peaking at 6–7 ms only 2.7 dB under the body. My round-1 onset
+(swell 6 dB) made the source worse (−33.6 at 160 Hz).
+
+Re-fit (`r2e.py` and the inline check): a smaller swell plus a 2nd-harmonic layer, swell 2 dB, attack 0.02 s,
+harmonic −20 dB.
+- Third-octaves 125 / 160 / 200 / 250 Hz: −17.7 / −24.2 / −32.2 / −40.0 dB, within 2.2, 0.4, 2.5 and 3.5 dB of the
+  reference.
+- Level error 2.5 dB rms over 5 to 185 ms, against 1.0 dB for the swell-6 fit.
+
+That is the compromise taken in the table below. The 250 Hz remainder is the onset transient; the knock (the click
+section's triangle 520 → 90 Hz) is the engine's means to add it, tuned by measurement.
+
+### Agreements
+
+- **E5:**
+  - The record's kick peaks pinned at −0.55 dBFS confirm my −1.2 dBFS half-cycle peak; the half-cycle reading sits a
+    little lower.
+  - The app is mono below 120 Hz, like the record.
+  - The break loses 40 Hz and 31.5 Hz: the drone is gone and the kick's low end is cut.
+  - The master, not the source, makes most of the 40 Hz excess and the 160 Hz hole.
+- **E4:** the drone fade-out over bars 93 to 104 and fade-in over 129 to 134, and the kick body falling 4.5 dB across the
+  build. My bars are 91 to 103 and 130 to 134, and −4.8 dB in the 45–150 Hz band. The difference is the method's
+  threshold; take E4's 93 as the start of the steep part.
+- **E4:** the app's master high-pass ramps have no counterpart.
+- **E3:** the hat starts at bar 24. In the intro, E3's "kick click at −29 dB, 6 ms" and my 2 ms click are the same event
+  in 1–2.5 kHz (E3's 6 ms is a 2 ms band peak smeared by the analysis window). The app's click is too bright: agreed
+  (+14 dB from E3, +20 against the intro from me).
+- **E2:** the record's intro has no mid bass. The chord tones are about 3 cents flat. The drone is 8.6 cents flat of
+  C#1, the bass 13. The coordinator ruled detune out of V3; agreed, so no `fine` parameter.
+
+### Final V3 table: kick, sub and sidechain
+
+Confidence: H = measured directly; M = fitted in a model or inferred from several measures; L = estimated, A9 to tune by
+measurement.
+
+| Track | Parameter | Value | Conf. | Basis |
+|---|---|---|---|---|
+| kick | tune | 53 Hz | M | Glide fit 52.0 (10–150 ms); late zero crossings 53–56 Hz |
+| kick | punch | 265 Hz | M | 52 + 210 = 262 at t = 0; model 265 |
+| kick | tau | 0.022 s | M | Fit 24.0 ms (10–150 ms), model 21.8 |
+| kick | attack (new) | 0.02 s | M | Peak at 35–45 ms; D6 compromise |
+| kick | swell (new) | 2 dB | M | D6 re-fit (round-1 value 6 dB withdrawn) |
+| kick | hold | 0.045 s | M | Within 1 dB of peak to about 70 ms |
+| kick | decay | 0.45 s | M | 0.20 dB/ms after 80 ms; model 0.448 |
+| kick | length (new) | 0.197 s | H | Cut to below −40 dB at 197–198 ms |
+| kick | harmonic (new, 2f) | 0.1 (−20 dB) | M | 2nd harmonic −23.9 dB in the plateau; D6 re-fit |
+| kick | click | about 0.05 | L | Target: 1–2.5 kHz per-hit peak 25 dB under the 150–300 Hz peak |
+| kick | clickDecay (new) | 0.0015 s | H | −10 dB within 2 ms |
+| kick | drive | 0.1 | L | 3rd harmonic −28.9 dB, even order present (no asymmetric drive in the engine) |
+| kick | gain/level | set so limiter GR ≤ 2 dB on kick peaks (about ×0.58, E5 ruling) | L | Peaks at about −0.5 dBFS with the new limiter |
+| kick | chain `lc` (eq3) | low 0, lowFreq 90 Hz | H | 90 Hz shelf fits the break cut within 0.7 dB |
+| kick | `kick.lc.low` by section | intro 0; build ramp −2 → −7 (lin); mainA 0; break/breakLate/breakEnd −9; mainB/outro 0 | H | −2.5 / −4.5 / −6.5 dB at bars 24 / 30 / 36; break −9 |
+| kick | break `kick.level` 0.6 | remove (the shelf replaces it) | H | The break's drop is spectral |
+| sub | mode | 'drone', voice running across bars (new) | H | Free-running pulse, phase continuous |
+| sub | note | C#1 | H | 34.475 Hz (−8.6 ct; detune ruled out for V3) |
+| sub | partials (new) | [−1.2027 Hz, −2.6 dB], [−3.608 Hz, −5.8 dB, phase −126°] | M | Lines measured; fold depth −18.7 against −20.3 dB |
+| sub | (alternative to partials) | LFO 1.2027 Hz, level swing 11 dB, pitch dip 6 Hz, phase 253° | L | Fits the 12 lines at 2.3 dB rms |
+| sub | harmonic | 0.1 (−20 dB) | H | 2nd harmonic −19.9 dB |
+| sub | attack / release | 0.005 / 0.03 s | L | Unchanged; the fades are automation |
+| sub | gain | about 0.07 (−18 dB from V2's 0.55, before E5's ×0.58) | M | Drone on the third 16th 15.4 dB under the kick step; plateau 20 dB under the kick peak |
+| sub | `sub.level` automation | full to bar 92; ramp to 0.03 over 93–103; off 104–129; ramp to 1 over 130–134; full 136–199 | H | Per-bar 25–45 Hz track; E4 agrees |
+| sidechain (sub) | depth | 0.78 | M | Grid fit through the measurement chain, 0.98 dB rms |
+| sidechain (sub) | attack | 0.01 s | M | −11 dB at 20 ms |
+| sidechain (sub) | hold | 0.08 s | M | Shelf at 80–120 ms |
+| sidechain (sub) | release | 0.12 s | M | −3 dB at 177 ms, −1 dB at 265 ms |
+| sidechain (sub) | curve | 'db' | M | Better than 'lin' by 0.05 dB (marginal) |
+| kick | duck list | ['sub'] plus E2's and E5's choices for bass, stab and pad | — | Not measured here |
+| song | swing | 0 to 0.06 (no global 0.6) | H | Bass odd and even steps land within 0.1 ms of each other |
