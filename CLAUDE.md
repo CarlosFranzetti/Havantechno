@@ -15,7 +15,7 @@ The repo has no package.json, no build step and no linter. The studio is plain b
 ## Repo shape
 
 - `olde Havantechno dub studio/` is the archived first studio. Treat it as frozen: fix bugs there only if asked. New DAW work goes in new folders.
-- `docs/research/` holds Roundtable research (see its README): briefs, per-agent transcripts, discussion, votes and reports. Transcripts are records; do not edit them. Paths inside them that say `studio/` mean the archived folder.
+- `docs/research/` holds Roundtable research (see its README): briefs, per-agent transcripts, discussion, votes and reports. Transcripts are records; do not edit them. Paths inside them that say `studio/` mean the archived folder. Names: Roundtable is the process, **the Soundsystem** is the whole company of agents across all groups, each group is a crew (Gear Crew, Faceplate, Build Crew, Ear Crew), agents carry role ids and models, the Fable session is the coordinator.
 - `context history.md` gets a timestamped dump every 7 to 8 user updates, then the context is compacted. `memory.md` and `context.md` are earlier dumps.
 - Times shown to the owner and written in new dumps and logs are Eastern Time (America/New_York; EDT until 1 November 2026, then EST), with UTC in parentheses. Entries before 2026-10-24 00:30 ET are in UTC.
 - `prd.md` section 4b holds the remix-DAW direction (D1 to D8) and section 6b the decisions taken: Electron shell, AGPL-3.0-or-later licence, version 1 edits and saves songs, audio files allowed at runtime, sample-based elements of a provided track stay samples (sampler tracks). Read both before designing new UI or audio features.

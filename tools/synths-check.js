@@ -446,6 +446,7 @@ console.log('9. Ear Crew V3: kick attack, swell, length, harmonic, clickDecay; s
   run.trigger(1 + 3.8, { midi: 25, vel: 0.8, dur: 1.9 });
   ok(oscs.length === n1 && ctx.srcs.length === s1 && run._live.length === 1, 'run 1: later triggers reuse the one running voice (oscillators ' + oscs.length + ', voices ' + run._live.length + ')');
   ok(run._live[0].srcs[0].stopAt == null, 'the running voice has no stop time (it runs until panic)');
+  ok(run._run.og.connections.indexOf(run.pre) >= 0, 'the running voice reaches the instrument output (its envelope is connected to inst.pre)');
   run.trigger(1 + 5.7, { midi: 35, vel: 0.8, dur: 1.9 });
   var carrier = oscs[0];
   ok(hasCall(carrier.frequency, 'exponentialRampToValueAtTime', sb.Kit.mtof(35), 1 + 5.7 + 0.03), 'a new note glides to B1 over glide (0.03 s) without a new voice');
@@ -493,7 +494,7 @@ console.log('9. Ear Crew V3: kick attack, swell, length, harmonic, clickDecay; s
   var doc = sb.Song.documentV3(), seqD = sb.Sequencer.create(null); sb.Song.build(seqD, doc); seqD.scheduleAll(0, null, 0);
   ok(JSON.stringify(seqD.hits()) === JSON.stringify(hv), 'documentV3 schedules the same hits as GUIDANCE_V3');
   var bassD = doc.tracks.filter(function (t) { return t.name === 'bass'; })[0];
-  ok(bassD.variants.D.bars === 2 && near(bassD.variants.D.cells[6].nudge, 2 / 24, 1e-9) && bassD.variants.D.cells[1].vel === 0.5 && bassD.variants.D.cells[27].acc === true, 'bass D is a two-bar variant with the +2/24 nudge on bar 1 step 6 and the accent on bar 2 step 11');
+  ok(bassD.variants.D.bars === 2 && near(bassD.variants.D.cells[6].nudge, -1.4 / 24, 1e-9) && bassD.variants.D.cells[1].vel === 0.5 && bassD.variants.D.cells[27].acc === true, 'bass D is a two-bar variant: step 6 at -1.4/24 (timing fit, A9 iteration 4), the accent on bar 2 step 11');
   ok(doc.swing === 0.40 && doc.master.limiter.clip === -0.55 && doc.master.glue.bypass === true, 'documentV3 carries swing 0.40 and the master (limiter -1.5 / 0 / clip -0.55, glue and saturator bypassed)');
   // the Host opens the document (Node, no audio)
   var hostFile = path.join(ENGINE, 'host.js');

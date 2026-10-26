@@ -334,6 +334,44 @@ console.log('9. V3: master from song data, bypass without makeup, lc insert, ste
   console.log('  info saturator small-signal gain (model): wet slope ' + slope.toFixed(2) + ', with mix 0.5 total ' + (0.5 * slope + 0.5).toFixed(2) + ' (' + (20 * Math.log(0.5 * slope + 0.5) / Math.LN10).toFixed(1) + ' dB); not asserted');
 })();
 
+// ------------------------------------------------------------------ 10. clip overshoot clamp, makeup trim
+console.log('10. limiter: sample-rate clamp after the oversampled clip; compressor autoTrim (makeup cancel)');
+(function () {
+  // emulate a WaveShaperNode with oversample 'none': input clamped to [-1, 1], linear interpolation over the curve
+  function shapeNone(curve, x) {
+    var n = curve.length, xc = Math.max(-1, Math.min(1, x)), pos = (xc + 1) / 2 * (n - 1), i = Math.floor(pos), f = pos - i;
+    if (i >= n - 1) return curve[n - 1];
+    return curve[i] + (curve[i + 1] - curve[i]) * f;
+  }
+  var c = new Fake(44100), l = P.create(c, 'limiter', { clipOn: true, clip: -0.55 });
+  var shs = nodesOf(l, 'shaper'), sh = shs[0], cl = shs[1];
+  var level = Math.pow(10, -0.55 / 20);
+  ok(shs.length === 2 && sh.oversample === '4x' && cl.oversample === 'none', 'clipOn: oversampled clip (4x), then a sample-rate clamp (none)');
+  ok(reaches(sh, cl) && cl.connections.indexOf(l._wet) >= 0, 'clipOn: the clip feeds the clamp, the clamp feeds the wet path');
+  ok(near(cl.curve[cl.curve.length - 1], level, 1e-6) && near(cl.curve[0], -level, 1e-6), 'clamp curve runs to +/-' + level.toFixed(4) + ' (-0.55 dBFS)');
+  // the overshoot A9 measured: 0.9973 and -1.0025 after the oversampled stage (clip level 0.9386); the clamp must hold them
+  var steps = [0, 0.5, 0.9386, 0.9973, 1.0025, 1.01, -0.9973, -1.0025, -1.2];
+  var worst = 0, i;
+  for (i = 0; i < steps.length; i++) worst = Math.max(worst, Math.abs(shapeNone(cl.curve, steps[i])));
+  ok(worst <= level + 1e-9, 'a step that overshoots (0.9973, -1.0025, beyond 1): every output at or below the clip level (worst ' + worst.toFixed(6) + ' <= ' + level.toFixed(6) + ')');
+  var raw = Math.max.apply(null, steps.map(Math.abs));
+  ok(raw > level + 1e-3, 'the step overshoots the clip level before the clamp (raw worst ' + raw.toFixed(4) + ' > ' + level.toFixed(4) + ')');
+  ok(near(shapeNone(cl.curve, 1.0025), level, 1e-6) && near(shapeNone(cl.curve, -1.0025), -level, 1e-6), 'the clamp returns exactly +/- the clip level for an overshoot');
+  var sweepMax = 0; for (i = -1000; i <= 1000; i++) sweepMax = Math.max(sweepMax, Math.abs(shapeNone(cl.curve, i / 900)));
+  ok(sweepMax <= level + 1e-9 && near(shapeNone(cl.curve, 0.5), 0.5, 1e-3), 'the clamp over a sweep of inputs: never above the clip level, identity below it');
+  // default: both shapers are identities, no curve
+  var l0 = P.create(new Fake(44100), 'limiter'), sh0 = nodesOf(l0, 'shaper');
+  ok(sh0.length === 2 && sh0[0].curve === null && sh0[1].curve === null && sh0[1].oversample === 'none', 'limiter default: both shapers identity (no curve)');
+  // compressor autoTrim: default unity, and cancels the node's own makeup when set (dB, negative)
+  var cz = new Fake(44100), comp0 = P.create(cz, 'compressor');
+  var tr0 = nodesOf(comp0, 'gain').filter(function (n) { return n.connections.indexOf(comp0._wet) >= 0; })[0];
+  ok(tr0 && tr0.gain.value === 1 && comp0.params.autoTrim === 0, 'compressor default: autoTrim 0 dB, unity (output unchanged)');
+  var comp1 = P.create(cz, 'compressor', { autoTrim: -3.68 });
+  var tr1 = nodesOf(comp1, 'gain').filter(function (n) { return n.connections.indexOf(comp1._wet) >= 0; })[0];
+  ok(callsOf(tr1.gain, 'setTargetAtTime').some(function (x) { return near(x[1], Math.pow(10, -3.68 / 20), 1e-9); }), 'compressor autoTrim -3.68 dB sets the trim gain to ' + Math.pow(10, -3.68 / 20).toFixed(4));
+  ok(comp1.node === nodesOf(comp1, 'comp')[0] || comp1.node.type_ === 'comp', 'compressor still exposes p.node (the DynamicsCompressorNode)');
+})();
+
 // ------------------------------------------------------------------ result
 console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
 process.exit(fails ? 1 : 0);

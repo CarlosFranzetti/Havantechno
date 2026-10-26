@@ -2,7 +2,7 @@
 
 Dumps of the working context, each with a UTC date and time stamp. A new dump is written every 7 to 8 user updates, then the context window is compacted. New dumps are appended under the marker at the bottom; older dumps stay as they are.
 
-Cadence tracker: last dump at 2026-10-24 00:26:40 UTC. Updates since: 0. Next dump due at update 7. (Dump 3 was written at a milestone, not at the count: wave 2 closed with no user message in between.)
+Cadence tracker: last dump at 2026-10-24 04:26 EDT (2026-10-24 08:26:51 UTC). Updates since: 0. Next dump due at update 7.
 
 Earlier dumps from before this file existed: `context.md` (2026-10-21) and `memory.md` (2026-10-21 and 2026-10-23).
 
@@ -120,5 +120,25 @@ B0 bar stays a TODO; sub attack reading right; lowpass restore at 136; choke wit
 ### Branch change (2026-10-24, owner's instruction)
 
 "Let's leave AassMaster and all commits should now be pushed to the main branch in Havantechno." The remote had no `main`; it was created from `6224ca0` (the tip of `claude/song-synths-sequencer-processors-e79zyb`, same history) and pushed. All further commits go to `main`. AassMaster is not touched again. GitHub still lists the old branch as the repository's default; changing that is a repository setting the owner makes on GitHub.
+
+## Dump 4 at 2026-10-24 04:26 EDT (2026-10-24 08:26:51 UTC)
+
+Six owner updates since Dump 3: "what repos are we in"; "leave AassMaster, all commits to main in Havantechno"; "let's also listen to the app"; "make an artifact"; the original track uploaded with "I want it to sound very close to the original ... all the sounds accounted for"; "what's the status with usage / change the time to EST". Times are now Eastern (CLAUDE.md rule).
+
+### Repo and branch
+
+`CarlosFranzetti/Havantechno`, branch **main** (created from the feature branch at 6224ca0; GitHub's default-branch setting still points at the old branch, owner to change). AassMaster untouched. Head after this dump: see git log.
+
+### Listening
+
+Render Room artifact https://claude.ai/artifact/D9a1XyaKNManzV714jEUzj: V3 (latest pass) and V2 full renders with waveforms and section jumps, four V2 excerpts, the meter table. MP3s were also sent as files. The owner's original (192 kbps MP3, 388 s) is at the scratchpad path in docs/research/2026-10-24-ear-crew/BRIEF.md; never commit it.
+
+### Ear Crew (docs/research/2026-10-24-ear-crew/)
+
+Five analysts (E1 low end Opus; E2 mids, E3 drums top, E4 arrangement and samples, E5 mix, Sonnet) measured the record against the app: round 1 inventories, round 2 cross-read with nine disputes settled by measurement, V3-SPEC.md compiled by a scribe with 16 flags ruled, round 3 build by A7 (synths.js, song.js GUIDANCE_V3 and documentV3, core.js m11f), A8 (processors.js: unit bypass, true ceiling with a clamp, decorrelate insert, end-tail reverb, autoTrim) and A9 (render.js latency into the sidecar and --song v3; score.py --v3 delta table and --onsets). Four iterations scored. Facts settled: the record's bass is one G#1 note from bar 88; the chord is one static G#m11 (no progression, no lead); the sub is a 34.475 Hz drone pulsing at 1.2 Hz; the 59 Hz peak is the kick body; swing 0.40 on odd 16ths; no samples or vocals; no master filter sweeps; boundaries at 24, 40, 56, 76, 88, 104, 120, 128, 135, 136, 152, 180, 184. Scores: V3 pass 3 within 1 LU of the record in every section (whole song −10.62 vs −10.65 LUFS), 8 to 16 of 29 third-octave bands within 2 dB per section; pass 4 (−10.41 LUFS) fixed the intro's 500 Hz kick excess, the bass's 40 to 50 Hz, bass timing (all four steps pass), the break hat's top and the bursts' 7 to 11 kHz; A9's fourth score pending. DISCUSSION.md (35 threads) and REPORT.md (draft; sections 5 and 6 to update with score 4) are written. Obstacles: the session limit stopped all five analysts at 9:17 PM ET on 23 Oct (reset 11:50 PM, resumed 12:28 AM); Demucs weights are blocked by the proxy, so no stems.
+
+### Open with the owner
+
+Listen to V3 against the record and say what is wrong by ear (the scorer knows the intro's width and the outro's top band are short). Decide whether to keep tuning or move to milestone 6, whether V3 becomes the default song, and whether stems of the original can be provided. GitHub default branch to main. The earlier items (AGPL confirmation, stray cloud session, old attribution commit) stand.
 
 <!-- next dump goes here -->
