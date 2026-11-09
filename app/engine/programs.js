@@ -502,8 +502,10 @@
     var empty = { hz: 0, clarity: 0, midi: null, root: null, cents: 0 };
     if (N < W * 2) return empty;
     var peak = 0, pi = 0, k;
-    for (k = 0; k < N; k++) { var a = Math.abs(x[k]); if (a > peak) { peak = a; pi = k; } }
+    for (k = 0; k < N; k++) { var a = Math.abs(x[k]); if (a > peak) { peak = a; } }
     if (peak <= 0) return empty;
+    // the onset is the first sample above half the peak (not the loudest one: a steady tone can peak late in a segment)
+    for (k = 0; k < N; k++) if (Math.abs(x[k]) >= 0.5 * peak) { pi = k; break; }
     // skip the onset: the first point after the peak where the 10 ms RMS is under 80 % of the peak RMS, plus 30 ms
     var w10 = Math.round(0.01 * sr), s0 = pi, rmsPk = 0;
     for (k = pi; k < pi + w10 && k < N; k++) rmsPk += x[k] * x[k];
@@ -513,7 +515,7 @@
       for (m = 0; m < w10; m++) q += x[k + m] * x[k + m];
       if (Math.sqrt(q / w10) < 0.8 * rmsPk) { s0 = k; break; }
     }
-    var from = Math.min(N - W, s0 + Math.round(0.03 * sr)), rem = Math.min(N - from, Math.round(1.5 * sr));
+    var from = Math.max(0, Math.min(N - W, s0 + Math.round(0.03 * sr))), rem = Math.min(N - from, Math.round(1.5 * sr));
     var starts = [0, 0.25, 0.5].map(function (f) { return from + Math.floor(f * Math.max(0, rem - W)); });
     var hz = [], cl = [];
     starts.forEach(function (st) {

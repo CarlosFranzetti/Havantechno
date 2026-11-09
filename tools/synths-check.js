@@ -580,6 +580,12 @@ console.log('10. sampler programs: keys, layers, round robin, pitch, frames, env
   rr.panic(); ctx.flush(); rr.trigger(5, { midi: 60, vel: 0.8 });
   ok(near(fillOf(ctx.srcs[ctx.srcs.length - 1]), 0.1, 1e-6), 'panic() restarts the round robin at A');
 
+  // ev.hit counts the round robin (hit 4 of three regions plays the second, A B C A -> B)
+  ctx = new FakeContext(44100); bufs = { A: fillBuf(ctx, 0.1, 0.2), B: fillBuf(ctx, 0.2, 0.2), C: fillBuf(ctx, 0.3, 0.2) };
+  var rh = make(ctx, bufs, [reg('A', 0, 127, { root: 60, seq: 1, seqLen: 3 }), reg('B', 0, 127, { root: 60, seq: 2, seqLen: 3 }), reg('C', 0, 127, { root: 60, seq: 3, seqLen: 3 })]);
+  rh.trigger(1, { midi: 60, vel: 0.8, hit: 4 });
+  ok(near(fillOf(ctx.srcs[0]), 0.2, 1e-6), 'ev.hit 4 (0-based) of three regions plays the second region (B), independent of earlier hits');
+
   // random round robin (check 9): two fresh instruments give the same 20 picks; both halves are used
   function picks(seedless) {
     var c = new FakeContext(44100), b = { A: fillBuf(c, 0.1, 0.2), B: fillBuf(c, 0.2, 0.2) };

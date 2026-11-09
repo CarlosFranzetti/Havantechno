@@ -792,7 +792,7 @@
     return base.map(function (k) { return clamp(Math.round(k + P.shift), 0, 127); });
   }
   // the regions that sound for key k, velocity v127 (1..127) and the random draw rnd; rr counts hits per sequence group
-  function progPick(prog, k, v127, rnd, rr) {
+  function progPick(prog, k, v127, rnd, rr, hit) {
     var groups = {}, order = [], picked = [], i, r;
     for (i = 0; i < prog.regions.length; i++) {
       r = prog.regions[i];
@@ -804,7 +804,7 @@
       groups[gk].push(r);
     }
     for (i = 0; i < order.length; i++) {
-      var list = groups[order[i]], len = list[0].seqLen, n = (rr[order[i]] = (rr[order[i]] || 0) + 1);
+      var list = groups[order[i]], len = list[0].seqLen, n = typeof hit === 'number' ? hit + 1 : (rr[order[i]] = (rr[order[i]] || 0) + 1);
       var want = len > 1 ? ((n - 1) % len) + 1 : null;
       for (var j = 0; j < list.length; j++) if (want === null || list[j].seq === want) picked.push(list[j]);
     }
@@ -832,8 +832,12 @@
     for (var ki = 0; ki < keys.length; ki++) {
       var k = keys[ki];
       st.n++;
-      var rnd = mulberry((Math.imul(st.n, 0x9E3779B1) ^ (k * 40503)) | 0)();
-      var picked = progPick(prog, k, v127, rnd, st.rr);
+      // ev.step (the absolute 16th) seeds the draw and ev.hit (the track's hit index) counts the round robin, so a render
+      // from mid-song matches playback; without them the per-instrument counters are used
+      var seedN = ev && typeof ev.step === 'number' ? ev.step : st.n;
+      var rnd = mulberry((Math.imul(seedN, 0x9E3779B1) ^ (k * 40503)) | 0)();
+      var hit = ev && typeof ev.hit === 'number' ? ev.hit : null;
+      var picked = progPick(prog, k, v127, rnd, st.rr, hit);
       for (var pi = 0; pi < picked.length; pi++) progPlay(inst, ctx, P, picked[pi], t, ev, k, vf);
     }
   }
@@ -921,7 +925,7 @@
     var vd = r.vib && r.vib.depth != null ? r.vib.depth : P.vibDepth, vr = r.vib && r.vib.rate != null ? r.vib.rate : P.vibRate;
     var vdl = r.vib && r.vib.delay != null ? r.vib.delay : P.vibDelay;
     if (vd > 0 && src.detune) { var vo = v.osc('sine', vr, t, finalStop), vg = v.gain(0); setV(vg.gain, 0, t); setV(vg.gain, 0, t + vdl); lin(vg.gain, vd, t + vdl + 0.01); vo.connect(vg); vg.connect(src.detune); }
-    var pn = v.pan(r.pan);
+    var pn = r.pan ? v.pan(r.pan) : null;          // centre adds no panner (no -3 dB law on a centred hit)
     if (pn) { node.connect(pn); node = pn; }
     node.connect(inst.pre);
     // the source, started on the file's segment (loops run until the stop)
@@ -1009,6 +1013,7 @@
 
   function create(ctx, type, opts) {
     var def = BUILD[type];
+    if (!def && root.Drums && typeof root.Drums.has === 'function' && root.Drums.has(type)) return root.Drums.create(ctx, type, opts);   // TR-808/909 voices (drums.js)
     if (!def) {
       try { if (typeof console !== 'undefined' && console.warn) console.warn('[Synths] unknown instrument "' + type + '"'); } catch (e) {}
       def = { spec: { level: { min: 0, max: 1.5, value: 1 } }, build: function () {} };
