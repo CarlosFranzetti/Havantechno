@@ -214,6 +214,7 @@
           for (q in t) if (has(t, q)) t2[q] = t[q];
           if (t.params) for (q in t.params) if (has(t.params, q)) o[q] = t.params[q];
           o.getBuffer = getBuffer;
+          o.getProgram = getProgram;
           t2.inst = root.Synths.create(s.ctx, 'sampler', o);
           return t2;
         });
@@ -282,6 +283,8 @@
     function setDoc(d) {
       var doc = SongDoc.load(typeof d === 'string' ? d : (d || Song.document()));
       ed = extendEditor(SongDoc.createEditor(doc));
+      normalizeDocPrograms();
+      progSeen = programsJson();
     }
     host.document = function () { return ed.doc; };
     host.editor = function () { return ed; };
@@ -303,6 +306,7 @@
       if (structKey(ed.doc) === builtKey) applyInPlace();
       else { rebuild(true); rebuilt = true; }
       emit('document', { reason: 'commit', rebuilt: rebuilt });
+      programEvents();
       return rebuilt;
     };
 
@@ -493,9 +497,13 @@
     // ---------------------------------------------------------- audio files (sampler)
     function audioMap() { return ed.doc.audio || {}; }
     function missingIds() { var a = audioMap(), out = []; for (var id in a) if (has(a, id) && !buffers[id]) out.push(id); return out; }
+    // who uses an audio file: sampler tracks by name, programs as 'program:<id>' (a program region keeps it alive)
     function usedBy(id) {
-      var out = [], t = ed.doc.tracks;
+      var out = [], t = ed.doc.tracks, m = ed.doc.programs, pid, j;
       for (var i = 0; i < t.length; i++) if (isSamplerDef(t[i]) && t[i].params && t[i].params.buffer === id) out.push(t[i].name);
+      if (m) for (pid in m) if (has(m, pid) && m[pid] && m[pid].regions) {
+        for (j = 0; j < m[pid].regions.length; j++) if (m[pid].regions[j] && m[pid].regions[j].buffer === id) { out.push('program:' + pid); break; }
+      }
       return out;
     }
     // after a load: keep decoded buffers the new document names with the same file, drop the rest
@@ -566,20 +574,70 @@
     // a missing entry with the same file name: re-adding the file on the web relinks it
     function relinkId(name) { var a = audioMap(); for (var id in a) if (has(a, id) && !buffers[id] && a[id].name === name) return id; return null; }
     var ID_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+    function programUses(pid, bufId) {
+      var p = getProgram(pid);
+      if (!p || !p.regions) return false;
+      for (var j = 0; j < p.regions.length; j++) if (p.regions[j] && p.regions[j].buffer === bufId) return true;
+      return false;
+    }
+    // a file arrived or went: samplers that play it (directly or through a program region) re-read it
     function refreshSamplers(id) {
       for (var n in seq.tracks) if (has(seq.tracks, n)) {
         var inst = seq.tracks[n].inst;
-        if (inst && inst.type === 'sampler' && inst.params && inst.params.buffer === id) { try { inst.set('buffer', id); } catch (e) {} }
+        if (!inst || inst.type !== 'sampler' || !inst.params) continue;
+        try {
+          if (inst.params.buffer === id) inst.set('buffer', id);
+          if (inst.params.program && programUses(inst.params.program, id) && inst.spec && has(inst.spec, 'program')) inst.set('program', inst.params.program);
+        } catch (e) {}
       }
     }
-    function store(buf, info, o, g) {
+    // WAV header metadata (B1 §7.4), read before decodeAudioData detaches the bytes. Programs.readWavMeta when
+    // programs.js is loaded; until then this fallback reads fmt (rate), smpl (unity note, fraction, loops) and acid (root).
+    function wavMeta(ab) {
+      var M = root.Programs;
+      if (M && typeof M.readWavMeta === 'function') { try { return M.readWavMeta(ab) || null; } catch (e) { return null; } }
+      try {
+        if (!isBuf(ab) || ab.byteLength < 12) return null;
+        var dv = new DataView(ab), len = ab.byteLength;
+        var tag = function (o) { return String.fromCharCode(dv.getUint8(o), dv.getUint8(o + 1), dv.getUint8(o + 2), dv.getUint8(o + 3)); };
+        if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return null;
+        var m = {}, any = false, p = 12, acidRoot = null;
+        while (p + 8 <= len) {
+          var id = tag(p), size = dv.getUint32(p + 4, true), b = p + 8, end = Math.min(len, b + size);
+          if (id === 'fmt ' && end - b >= 8) { m.rate = dv.getUint32(b + 4, true); any = true; }
+          else if (id === 'smpl' && end - b >= 36) {
+            m.root = dv.getUint32(b + 12, true); m.fraction = dv.getUint32(b + 16, true) / 4294967296;
+            var n = dv.getUint32(b + 28, true), loops = [];
+            for (var i = 0; i < n && b + 36 + 24 * (i + 1) <= end; i++) { var q = b + 36 + 24 * i; loops.push([dv.getUint32(q + 8, true), dv.getUint32(q + 12, true)]); }
+            m.loops = loops; any = true;
+          } else if (id === 'acid' && end - b >= 6) { acidRoot = dv.getUint16(b + 4, true); any = true; }
+          p = b + size + (size & 1);
+        }
+        if (m.root == null && acidRoot != null) m.root = acidRoot;
+        return any ? m : null;
+      } catch (e) { return null; }
+    }
+    // pitch analysis (Programs.detectPitch) after decoding; null without programs.js or for a failed run
+    function analyze(buf) {
+      var M = root.Programs;
+      if (!M || typeof M.detectPitch !== 'function' || !buf || typeof buf.getChannelData !== 'function') return null;
+      try {
+        var r = M.detectPitch(buf.getChannelData(0), buf.sampleRate);
+        return r ? { pitch: r.hz == null ? null : r.hz, root: r.midi == null ? null : r.midi, cents: r.cents, clarity: r.clarity } : { pitch: null, root: null };
+      } catch (e) { return null; }
+    }
+    function store(buf, info, o, g, meta) {
       var id = (o.id && ID_RE.test(String(o.id))) ? String(o.id) : (relinkId(info.name) || newId(info.name));
       if (g !== gen) return id;                                // the document changed while this was decoding
       var dur = typeof buf.duration === 'number' ? buf.duration : buf.length / buf.sampleRate;
       buffers[id] = { buffer: buf, name: info.name, src: info.src };
       var doc = ed.doc;
       doc.audio = doc.audio || {};
-      doc.audio[id] = { name: info.name, src: info.src, duration: dur, sampleRate: buf.sampleRate, channels: buf.numberOfChannels };
+      var entry = { name: info.name, src: info.src, duration: dur, sampleRate: buf.sampleRate, channels: buf.numberOfChannels };
+      if (meta) entry.meta = meta;
+      var an = o.analyze === false ? null : analyze(buf);
+      if (an) entry.analysis = an;
+      doc.audio[id] = entry;
       refreshSamplers(id);
       emit('audio', { id: id, status: 'loaded' });
       return id;
@@ -591,7 +649,8 @@
         var dec = decoder();
         if (!dec) throw new Error('Host.loadAudio: no AudioContext to decode with');
         var info = sourceInfo(source, o);
-        resolve(readBytes(source).then(function (ab) { return decode(dec, ab); }).then(function (buf) { return store(buf, info, o, g); }));
+        var meta = null;
+        resolve(readBytes(source).then(function (ab) { meta = wavMeta(ab); return decode(dec, ab); }).then(function (buf) { return store(buf, info, o, g, meta); }));
       });
     };
     host.buffer = function (id) { return getBuffer(id); };
@@ -642,17 +701,284 @@
     };
     host.audioReady = function () { return audioPromise || Promise.resolve({ loaded: [], missing: missingIds() }); };
     // load a file and add a sampler track that plays it (pattern default: one hit at the start of each bar). Commits.
+    // a new sampler track: one file (single-sample path), or o.program (an id in doc.programs), or an array of files /
+    // a {relativePath: File} folder map (auto-mapped into a program first). Resolves the track name. Commits.
+    function addSamplerTrack(base, params, o) {
+      var name = String(base).replace(/[^A-Za-z0-9_-]+/g, '_') || 'sample', b = name, n = 2;
+      while (ed.track(name) || name === 'send' || name === 'master') name = b + '_' + (n++);
+      var t = { name: name, type: 'sampler', inst: 'sampler', gain: o.gain == null ? 0.8 : o.gain, params: params, variants: { A: o.pattern || 'x...............' } };
+      if (o.family && has(FAMILIES, o.family)) t.family = o.family;
+      ed.addTrack(t);
+      host.commit();
+      return name;
+    }
+    function programParams(id) {
+      var g = (getProgram(id) || {}).global || {}, spec = root.Synths && root.Synths.spec ? root.Synths.spec('sampler') : null, out = { buffer: '', program: id };
+      for (var k in g) if (has(g, k) && k !== 'program' && k !== 'buffer' && (!spec || has(spec, k))) out[k] = g[k];
+      return out;
+    }
     host.addSampler = function (source, o) {
       o = o || {};
+      if (o.program) {
+        if (!getProgram(o.program)) return Promise.reject(new Error('Host.addSampler: no program ' + o.program));
+        return Promise.resolve(addSamplerTrack(o.name || getProgram(o.program).name || o.program, programParams(o.program), o));
+      }
+      if (isArr(source) || (source && typeof source === 'object' && !isBuf(source) && !isView(source) && source.bytes == null && typeof source.arrayBuffer !== 'function' && !(typeof root.Blob === 'function' && source instanceof root.Blob))) {
+        return host.mapFiles(source, o).then(function (pid) { return addSamplerTrack(o.name || getProgram(pid).name || pid, programParams(pid), o); });
+      }
       return host.loadAudio(source, o.id ? { id: o.id, name: o.fileName, src: o.src } : { name: o.fileName, src: o.src }).then(function (id) {
-        var base = String(o.name || id).replace(/[^A-Za-z0-9_-]+/g, '_') || 'sample', name = base, n = 2;
-        while (ed.track(name) || name === 'send' || name === 'master') name = base + '_' + (n++);
-        var t = { name: name, type: 'sampler', inst: 'sampler', gain: o.gain == null ? 0.8 : o.gain, params: { buffer: id }, variants: { A: o.pattern || 'x...............' } };
-        if (o.family && has(FAMILIES, o.family)) t.family = o.family;
-        if (!ed.addTrack) throw new Error('Host.addSampler: the editor has no addTrack');
-        ed.addTrack(t);
-        host.commit();
-        return name;
+        return addSamplerTrack(o.name || id, { buffer: id }, o);
+      });
+    };
+
+
+    // ---------------------------------------------------------- programs (batch 1, B1 §6 and §7)
+    var progSeen = {};
+    function getProgram(id) { var m = ed && ed.doc.programs; return (m && id && has(m, id)) ? m[id] : null; }
+    function needP(fn) {
+      var M = root.Programs;
+      if (!M || typeof M[fn] !== 'function') throw new Error('Host: Programs is not loaded (Programs.' + fn + ')');
+      return M;
+    }
+    function normProg(p) {
+      var M = root.Programs;
+      if (M && typeof M.normalize === 'function') { try { var n = M.normalize(p); if (n) return n; } catch (e) {} }
+      return p;
+    }
+    function normalizeDocPrograms() {
+      var m = ed.doc.programs, M = root.Programs;
+      if (!m || !M || typeof M.normalize !== 'function') return;
+      for (var id in m) if (has(m, id)) { try { var n = M.normalize(m[id]); if (n) m[id] = n; } catch (e) {} }
+    }
+    function programsJson() {
+      var m = ed.doc.programs, out = {};
+      if (m) for (var id in m) if (has(m, id)) out[id] = JSON.stringify(m[id]);
+      return out;
+    }
+    // after a commit: 'program' events for programs added, changed or removed by editor operations (or undo)
+    function programEvents() {
+      var now = programsJson(), id;
+      for (id in now) if (has(now, id)) { if (!has(progSeen, id)) emit('program', { id: id, status: 'added' }); else if (progSeen[id] !== now[id]) emit('program', { id: id, status: 'changed' }); }
+      for (id in progSeen) if (has(progSeen, id) && !has(now, id)) emit('program', { id: id, status: 'removed' });
+      progSeen = now;
+    }
+    function programTracks(id) {
+      var out = [], t = ed.doc.tracks;
+      for (var i = 0; i < t.length; i++) if (isSamplerDef(t[i]) && t[i].params && t[i].params.program === id) out.push(t[i].name);
+      return out;
+    }
+    function newProgramId(name) {
+      var m = ed.doc.programs || {}, b = slug(name || 'program'), id = b, n = 2;
+      while (has(m, id)) id = b + '_' + (n++);
+      return id;
+    }
+    host.programs = function () {
+      var m = ed.doc.programs || {}, out = [], id, i;
+      for (id in m) if (has(m, id)) {
+        var p = m[id], miss = 0;
+        for (i = 0; i < p.regions.length; i++) if (!buffers[p.regions[i].buffer]) miss++;
+        out.push({ id: id, name: p.name, kind: p.kind || null, regions: p.regions.length, missing: miss, usedBy: programTracks(id) });
+      }
+      return out;
+    };
+    host.program = function (id) { var p = getProgram(id); return p ? clone(p) : null; };
+    // store a program in doc.programs (normalised by Programs.normalize when loaded); one undo step. Returns the id or null.
+    host.addProgram = function (program, o) {
+      o = o || {};
+      if (!program || typeof program !== 'object') return null;
+      var id = (o.id && ID_RE.test(String(o.id)) && !getProgram(o.id)) ? String(o.id) : newProgramId(program.name);
+      var r = ed.addProgram(id, normProg(program));
+      if (r) { progSeen[id] = JSON.stringify(getProgram(id)); emit('program', { id: id, status: 'added' }); }
+      return r;
+    };
+    // refused while a track plays it
+    host.removeProgram = function (id) {
+      if (!ed.removeProgram(id)) return false;
+      delete progSeen[id];
+      emit('program', { id: id, status: 'removed' });
+      return true;
+    };
+    // a sampler track plays a program: params.program = id and program.global copied into its params (one undo step), commit
+    host.assignProgram = function (track, id) {
+      var t = ed.track(track);
+      if (!t || !isSamplerDef(t) || (id && !getProgram(id))) return false;
+      var g = id ? (getProgram(id).global || {}) : {}, spec = root.Synths && root.Synths.spec ? root.Synths.spec('sampler') : null;
+      ed.group(function () {
+        ed.setTrackParam(track, 'program', id || '');
+        for (var k in g) if (has(g, k) && k !== 'program' && k !== 'buffer' && (!spec || has(spec, k))) ed.setTrackParam(track, k, g[k]);
+      });
+      host.commit();
+      return true;
+    };
+    // ---- import: SFZ text, a File, the shell's {name, path, text|bytes}, or a URL; samples from o.files, the shell or URLs
+    function dirOf(p) { p = String(p || '').replace(/\\/g, '/'); var i = p.lastIndexOf('/'); return i >= 0 ? p.slice(0, i) : ''; }
+    function joinPath(dir, p) {
+      p = String(p || '').replace(/\\/g, '/');
+      if (!dir || /^([a-z][a-z0-9+.-]*:|\/)/i.test(p)) return p;
+      var parts = (dir + '/' + p).split('/'), out = [];
+      for (var i = 0; i < parts.length; i++) { if (parts[i] === '..' && out.length && out[out.length - 1] !== '..') out.pop(); else if (parts[i] !== '.' && parts[i] !== '') out.push(parts[i]); else if (i === 0 && parts[i] === '') out.push(''); }
+      return out.join('/');
+    }
+    // a key of a {relativePath: File|bytes} map: exact, then case-insensitive (SFZ libraries made on Windows)
+    function fileKey(files, p) {
+      if (!files) return null;
+      p = String(p).replace(/\\/g, '/');
+      if (has(files, p)) return p;
+      var lp = p.toLowerCase();
+      for (var k in files) if (has(files, k) && String(k).replace(/\\/g, '/').toLowerCase() === lp) return k;
+      return null;
+    }
+    function textOf(x) {
+      if (typeof x === 'string') return Promise.resolve(x);
+      if (x && typeof x.text === 'string') return Promise.resolve(x.text);
+      if (x && typeof x.text === 'function') return Promise.resolve(x.text());
+      if (x && x.bytes != null) x = x.bytes;
+      if (isBuf(x) || isView(x)) {
+        var u = isBuf(x) ? new Uint8Array(x) : new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
+        if (typeof root.TextDecoder === 'function') return Promise.resolve(new root.TextDecoder('utf-8').decode(u));
+        var s = ''; for (var i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return Promise.resolve(s);
+      }
+      return Promise.reject(new Error('Host.importProgram: cannot read the .sfz source'));
+    }
+    function sfzSource(source, o) {
+      var path = o.path || null, name = o.name || null;
+      if (typeof source === 'string' && /[\n<]/.test(source)) return Promise.resolve({ text: source, name: name || 'program.sfz', path: path, url: null });
+      if (typeof source === 'string') {
+        if (typeof root.fetch !== 'function') return Promise.reject(new Error('Host.importProgram: no fetch for ' + source));
+        return Promise.resolve(root.fetch(source)).then(function (r) {
+          if (!r || r.ok === false) throw new Error('Host.importProgram: could not load ' + source);
+          return r.text();
+        }).then(function (t) { return { text: t, name: name || baseName(source), path: path || source, url: source }; });
+      }
+      return textOf(source).then(function (t) {
+        return { text: t, name: name || (source && source.name) || 'program.sfz', path: path || (source && source.path) || (source && source.name) || null, url: null };
+      });
+    }
+    function isAbs(p) { return /^(\/|[A-Za-z]:[\\/])/.test(String(p || '')); }
+    // read one file the .sfz names (a sample: bytes or File; an #include: text); resolves null when it cannot be found
+    function readRel(rel, src, o, sh, asText) {
+      var files = o.files, sfzDir = dirOf(src.path), full = joinPath(sfzDir, rel), k = fileKey(files, full) || fileKey(files, rel);
+      if (k != null) return Promise.resolve(asText ? textOf(files[k]) : files[k]).then(function (x) { return { data: x, src: o.base ? joinPath(o.base, k) : k }; });
+      if (src.url && typeof root.fetch === 'function') {
+        var u; try { u = new root.URL(rel, src.url).href; } catch (e) { u = null; }
+        if (u) return Promise.resolve(root.fetch(u)).then(function (r) {
+          if (!r || r.ok === false) return null;
+          return (asText ? r.text() : Promise.resolve(u)).then(function (x) { return { data: x, src: u }; });
+        }, function () { return null; });
+      }
+      var abs = isAbs(full) ? full : (o.base ? joinPath(o.base, full) : null);
+      if (!asText && sh && typeof sh.readFile === 'function' && abs) {
+        return Promise.resolve(sh.readFile(abs, {})).then(function (b) { return b ? { data: b, src: abs } : null; }, function () { return null; });
+      }
+      if (asText && sh && typeof sh.readText === 'function' && abs) {
+        return Promise.resolve(sh.readText(abs)).then(function (t) { return t == null ? null : { data: t, src: abs }; }, function () { return null; });
+      }
+      return Promise.resolve(null);
+    }
+    function prefetchIncludes(text, src, o, sh, map, depth) {
+      if (depth > 8) return Promise.resolve();
+      var re = /#include\s+"([^"]+)"/g, m, jobs = [];
+      while ((m = re.exec(text))) {
+        var p = m[1];
+        if (has(map, p)) continue;
+        map[p] = null;
+        jobs.push((function (p) {
+          return readRel(p, src, o, sh, true).then(function (r) {
+            if (r && typeof r.data === 'string') { map[p] = r.data; return prefetchIncludes(r.data, src, o, sh, map, depth + 1); }
+          });
+        })(p));
+      }
+      return Promise.all(jobs);
+    }
+    // a placeholder entry for a sample that could not be read: the region keeps its id and plays when the file is re-added
+    function missingAudio(name, src) {
+      var a = ed.doc.audio = ed.doc.audio || {}, id = relinkId(name) || newId(name);
+      if (!has(a, id)) a[id] = { name: name, src: src };
+      return id;
+    }
+    host.importProgram = function (source, o) {
+      o = o || {};
+      var M;
+      try { M = needP('parseSfz'); } catch (e) { return Promise.reject(e); }
+      var sh = o.shell || root.HavantechnoShell || null, g = gen;
+      return sfzSource(source, o).then(function (src) {
+        var incs = {};
+        return prefetchIncludes(src.text, src, o, sh, incs, 0).then(function () {
+          var include = function (p) { var k = fileKey(incs, p); return k == null ? null : incs[k]; };
+          var first = M.parseSfz(src.text, { resolve: function () { return null; }, include: include }) || {};
+          var paths = [], seen = {}, ids = {}, missing = [];
+          (first.samples || []).forEach(function (p) { if (!seen[p]) { seen[p] = 1; paths.push(p); } });
+          return Promise.all(paths.map(function (p) {
+            var name = baseName(p);
+            return readRel(p, src, o, sh, false).then(function (r) {
+              if (!r) throw new Error('missing');
+              return host.loadAudio(r.data, { name: name, src: r.src, shell: sh });
+            }).then(function (id) { ids[p] = id; }, function () {
+              var fullSrc = isAbs(p) ? p : joinPath(o.base || dirOf(src.path), p);
+              ids[p] = missingAudio(name, fullSrc); missing.push(ids[p]);
+            });
+          })).then(function () {
+            if (g !== gen) throw new Error('Host.importProgram: the document changed during the import');
+            var res = M.parseSfz(src.text, { resolve: function (p) { return has(ids, p) ? ids[p] : null; }, include: include }) || {};
+            var program = res.program || { regions: [] };
+            if (!program.name) program.name = String(src.name || 'program').replace(/\.sfz$/i, '');
+            if (!program.source) program.source = { format: 'sfz', path: src.path || src.name };
+            var id = host.addProgram(program, { id: o.id });
+            missing.forEach(function (m) { emit('audio', { id: m, status: 'missing' }); });
+            return { id: id, warnings: res.warnings || [], missing: missing };
+          });
+        });
+      });
+    };
+    // auto-map files (B1 §4.3): sources = [File|bytes|{name, path, bytes}|URL] or {relativePath: File}; resolves the id
+    host.mapFiles = function (sources, o) {
+      o = o || {};
+      var M;
+      try { M = needP('autoMap'); } catch (e) { return Promise.reject(e); }
+      var list = [];
+      if (isArr(sources)) list = sources.map(function (s) { return { src: s, name: null }; });
+      else if (sources && typeof sources === 'object') for (var k in sources) if (has(sources, k)) list.push({ src: sources[k], name: baseName(k), path: k });
+      return Promise.all(list.map(function (x) {
+        var lo = { shell: o.shell }; if (x.name) lo.name = x.name; if (x.path) lo.src = o.base ? joinPath(o.base, x.path) : x.path;
+        return host.loadAudio(x.src, lo).then(function (id) { return id; }, function () { return null; });
+      })).then(function (ids) {
+        var a = audioMap(), entries = [];
+        ids.forEach(function (id) { if (id && a[id]) entries.push({ id: id, name: a[id].name, analysis: a[id].analysis || null, meta: a[id].meta || null }); });
+        if (!entries.length) throw new Error('Host.mapFiles: no file could be loaded');
+        var program = M.autoMap(entries, { mode: o.mode || 'auto', keys: o.keys || 'mid' });
+        if (o.name) program.name = o.name;
+        return host.addProgram(program, { id: o.id });
+      });
+    };
+    // one file into slices (B1 §4.3): regions on keys from 36, all on the same buffer
+    host.sliceToProgram = function (bufferId, o) {
+      o = o || {};
+      var M = needP('slice'), buf = getBuffer(bufferId);
+      if (!buf) throw new Error('Host.sliceToProgram: ' + bufferId + ' is not loaded');
+      var regions = M.slice(buf, o) || [];
+      regions.forEach(function (r) { r.buffer = bufferId; });
+      var a = audioMap()[bufferId];
+      return host.addProgram({ name: o.name || ((a && a.name) || bufferId).replace(/\.[A-Za-z0-9]{1,5}$/, '') + ' slices', kind: 'drums', global: { gate: 0 }, regions: regions }, { id: o.id });
+    };
+    // SFZ text for a program (or a track's program, with that track's params as <global>); Electron writes it when it can
+    host.exportProgram = function (ref, o) {
+      o = o || {};
+      return new Promise(function (resolve) {
+        var M = needP('toSfz'), id = ref, params = {};
+        var t = ed.track(ref);
+        if (t && isSamplerDef(t)) { id = t.params && t.params.program; params = clone(t.params || {}); }
+        else { var users = programTracks(ref); if (users.length) params = clone(ed.track(users[0]).params || {}); }
+        var p = getProgram(id);
+        if (!p) throw new Error('Host.exportProgram: no program ' + ref);
+        var text = M.toSfz(p, params, ed.doc.audio || {}), seen = {}, files = [];
+        p.regions.forEach(function (r) { if (r.buffer && !seen[r.buffer]) { seen[r.buffer] = 1; files.push({ id: r.buffer, src: (audioMap()[r.buffer] || {}).src || null }); } });
+        var sh = o.shell || root.HavantechnoShell || null, out = { text: text, files: files, id: id };
+        if (o.save !== false && sh && typeof sh.saveFile === 'function') {
+          Promise.resolve(sh.saveFile({ name: String(p.name || id) + '.sfz', text: text, filters: [{ name: 'SFZ', extensions: ['sfz'] }] })).then(function (r) {
+            if (r && r.path) out.path = r.path;
+            resolve(out);
+          }, function () { resolve(out); });
+        } else resolve(out);
       });
     };
 
