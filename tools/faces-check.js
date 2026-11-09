@@ -386,6 +386,93 @@ devices.forEach(function (d) {
   g2.dispose();
 })();
 
+// ---------------------------------------------------------------- sampler, program path: zone map, region panel, handles, buttons
+(function () {
+  var id = host.addProgram({ name: 'kit', kind: 'drums', regions: [
+    { buffer: 'b1', lokey: 36, hikey: 36, root: 36, lovel: 1, hivel: 127 },
+    { buffer: 'b1', lokey: 38, hikey: 40, root: 39, lovel: 1, hivel: 80, loop: 'continuous', loopStart: 1000, loopEnd: 60000, xfade: 0.01 },
+    { buffer: 'gone', lokey: 42, hikey: 42, root: 42, lovel: 1, hivel: 127 }] }, { id: 'kit' });
+  eq(id, 'kit', 'host.addProgram stores the program');
+  var d = { id: 'track:zz', type: 'sampler', kind: 'instrument', track: 'zz', name: 'zz', family: 'drums', spec: global.Synths.spec('sampler'), pathPrefix: 'zz', ref: null };
+  var ov = { 'zz.program': 'kit' }, sh = Object.create(host), calls = [];
+  sh.getParam = function (p) { return Object.prototype.hasOwnProperty.call(ov, p) ? ov[p] : host.getParam(p); };
+  sh.setParam = function (p, v) { ov[p] = v; calls.push(['set', p, v]); return true; };
+  sh.hold = function (p) { calls.push(['hold', p]); };
+  var data = new Float32Array(96000); for (var i = 0; i < data.length; i++) data[i] = Math.sin(i / 50) * (1 - i / data.length);
+  sh.buffer = function (b) { return b === 'b1' ? { duration: 2, sampleRate: 48000, length: 96000, getChannelData: function () { return data; } } : null; };
+  sh.audio = function () { return [{ id: 'b1', name: 'loop.wav', duration: 2 }]; };
+  sh.assignProgram = function (t, p) { calls.push(['assign', t, p]); return true; };
+  sh.exportProgram = function (t) { calls.push(['export', t]); return Promise.resolve({ text: 'x', id: 'kit', path: 'p' }); };
+  Faces.layout('sampler');
+  created.length = 0;
+  var f = Faces.render(d, 'window', sh); f.update(); f.resize(700, 700);
+  eq(f.error(), null, 'program hero draws');
+  check(heroOps(f.el) > 100, 'program hero and zone map painted');
+  var zone = all(f.el, function (x) { return /hv-zone/.test(x.className); })[0], zcv = all(zone, function (x) { return x.tagName === 'canvas'; })[0];
+  check(!!zone && !!zcv, 'zone map panel exists in the window');
+  var region = all(f.el, function (x) { return /hv-region/.test(x.className); })[0];
+  var input = function (n) { return all(region, function (x) { return x.tagName === 'input' && x.getAttribute('aria-label') === n; })[0]; };
+  eq(input('lokey').value, 36, 'region panel shows region 1 (lokey 36)');
+  var buttons = all(f.el, function (x) { return x.tagName === 'button' && /hv-prog|btn/.test(x.className) && /…|SFZ|pitch/.test(x.textContent); }).map(function (b) { return b.textContent; });
+  check(buttons.length === 5, 'five buttons (' + buttons.join(' | ') + ')');
+  // select a region by clicking it in the zone map (region 2: keys 38..40, velocities 1..80)
+  var ZW = Number(zcv.getAttribute('width')), gh = 150 - 14, zp = zone.children[1];
+  function zfire(t, kx, vy, extra) { fire(zp, t, Object.assign({ button: 0, clientX: kx / 128 * ZW, clientY: vy, pointerId: 1 }, extra || {})); }
+  zfire('pointerdown', 39.5, (127 - 40) / 127 * gh); zfire('pointerup', 39.5, 0);
+  f.update();
+  eq(input('lokey').value, 38, 'clicking a zone selects region 2');
+  check(/region 2 of 3/.test(all(region, function (x) { return /face-section-title/.test(x.className); })[0].textContent), 'region panel title follows the selection');
+  zfire('pointerdown', 36.5, (127 - 100) / 127 * gh, { shiftKey: true }); zfire('pointerup', 36.5, 0);
+  f.update();
+  check(/2 selected/.test(all(region, function (x) { return /face-section-title/.test(x.className); })[0].textContent), 'shift-click adds a region to the selection');
+  zfire('pointerdown', 36.5, (127 - 100) / 127 * gh, { shiftKey: true }); zfire('pointerup', 36.5, 0);   // shift again removes it
+  // drag the hikey edge of the selected region from key 41 to key 50: one undo step
+  var ed = host.editor(), before = JSON.stringify(host.program('kit').regions[1]);
+  zfire('pointerdown', 41, (127 - 40) / 127 * gh);
+  fire(zp, 'pointermove', { clientX: 50.5 / 128 * ZW, clientY: (127 - 40) / 127 * gh });
+  fire(zp, 'pointerup', { clientX: 50.5 / 128 * ZW, clientY: 0 });
+  eq(host.program('kit').regions[1].hikey, 50, 'dragging the zone edge sets hikey through setRegion');
+  ed.undo(); eq(JSON.stringify(host.program('kit').regions[1]), before, 'the edge drag was one undo step');
+  ed.redo();
+  // region panel edit and overrides clear
+  input('tune').value = '12'; fire(input('tune'), 'change', {});
+  eq(host.program('kit').regions[1].tune, 12, 'typing a region field edits the document');
+  f.update();
+  // drag the end handle of the selected region (region 2, buffer b1, 96000 frames): hero handle at the right edge
+  var hero = all(f.el, function (x) { return /face-hero/.test(x.className); })[0], hcv = all(hero, function (x) { return x.tagName === 'canvas'; })[0], HW = Number(hcv.getAttribute('width'));
+  var g0 = 6, gw = HW - 12;
+  fire(hero, 'pointerdown', { button: 0, clientX: g0 + gw - 1, clientY: 10, pointerId: 1 });
+  fire(hero, 'pointermove', { clientX: g0 + 0.5 * gw, clientY: 10 });
+  check(!host.program('kit').regions[1].end, 'the document is not touched while dragging');
+  fire(hero, 'pointerup', { clientX: g0 + 0.5 * gw, clientY: 10 });
+  var en = host.program('kit').regions[1].end;
+  check(Math.abs(en - 48000) < 400, 'releasing the end handle writes region.end in frames (' + en + ')');
+  eq(f.error(), null, 'hero redraws after the edits');
+  // program select writes through assignProgram, not setParam, and is not held
+  calls.length = 0;
+  var psel = created.filter(function (c) { return c.opts.label === 'program'; })[0];
+  check(!!psel && psel.opts.options.length === 2, 'program select lists (single sample) and kit');
+  psel.opts.onInput('kit');
+  check(calls.length === 1 && calls[0][0] === 'assign' && calls[0][1] === 'zz' && calls[0][2] === 'kit', 'program select calls host.assignProgram (' + JSON.stringify(calls) + ')');
+  // export button
+  calls.length = 0;
+  var ex = all(f.el, function (x) { return x.tagName === 'button' && /Export/.test(x.textContent); })[0]; fire(ex, 'click', {});
+  check(calls.length === 1 && calls[0][0] === 'export' && calls[0][1] === 'zz', 'Export SFZ calls host.exportProgram for the track');
+  var rd = all(f.el, function (x) { return x.tagName === 'button' && /Re-detect/.test(x.textContent); })[0];
+  eq(rd.disabled === true, true, 'Re-detect pitch is disabled until the host has detectPitch');
+  f.dispose();
+  // face and strip density: quick view only, no panels
+  created.length = 0;
+  var q = Faces.render(d, 'face', sh); q.update();
+  eq(created.map(function (c) { return c.opts.label; }).join(','), 'pitch,attack,release,trim,cutoff,key', 'face density shows the Sitala-style quick view');
+  eq(all(q.el, function (x) { return /hv-zone|hv-region/.test(x.className); }).length, 0, 'no zone map or region panel at face density');
+  eq(q.error(), null, 'program hero at face density');
+  q.dispose();
+  // single-sample path still works when the program id is unknown
+  ov['zz.program'] = 'nope'; var u = Faces.render(d, 'window', sh); u.update(); eq(u.error(), null, 'unknown program id falls back to the single-sample hero'); u.dispose();
+  ov['zz.program'] = ''; 
+})();
+
 // ---------------------------------------------------------------- lint
 (function () {
   var problems = Faces.lint(host);

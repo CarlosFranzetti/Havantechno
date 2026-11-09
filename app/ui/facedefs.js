@@ -711,12 +711,12 @@
     }
     function labelled(name, input) { var l = doc.createElement('label'); l.className = 'hv-regfield'; l.style.display = 'flex'; l.style.flexDirection = 'column'; l.style.fontSize = '10px'; var s = doc.createElement('span'); s.textContent = name; l.appendChild(s); l.appendChild(input); row.appendChild(l); }
     REGION_NUM.forEach(function (f) {
-      var inp = doc.createElement('input'); inp.type = 'number'; inp.min = f[1]; inp.max = f[2]; inp.step = f[3]; inp.style.width = '64px'; inp.setAttribute('aria-label', f[0]);
+      var inp = doc.createElement('input'); inp.type = 'number'; inp.min = f[1]; inp.max = f[2]; inp.step = f[3]; inp.style.width = '64px'; inp.style.background = 'var(--panel-raised)'; inp.style.color = 'var(--fg)'; inp.style.border = '1px solid var(--line)'; inp.setAttribute('aria-label', f[0]);
       inp.addEventListener('change', function () { var v = parseFloat(inp.value); if (v === v) { var patch = {}; patch[f[0]] = clamp(v, f[1], f[2]); apply(patch); } });
       fields[f[0]] = inp; labelled(f[0], inp);
     });
     ['group', 'offBy'].forEach(function (n) {
-      var inp = doc.createElement('input'); inp.type = 'text'; inp.style.width = '64px'; inp.setAttribute('aria-label', n);
+      var inp = doc.createElement('input'); inp.type = 'text'; inp.style.width = '64px'; inp.style.background = 'var(--panel-raised)'; inp.style.color = 'var(--fg)'; inp.style.border = '1px solid var(--line)'; inp.setAttribute('aria-label', n);
       inp.addEventListener('change', function () { var patch = {}; patch[n] = String(inp.value); apply(patch); });
       fields[n] = inp; labelled(n, inp);
     });
