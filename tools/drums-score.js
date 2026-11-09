@@ -118,7 +118,8 @@ var HOLD909 = { bd909: 0.06, lt909: 0.03, mt909: 0.03, ht909: 0.03, ch909: 0.006
 C('bd909', 'pitch start at default (274 Hz)', 'def', 'pitch_start', 274, { tol: TOL_PITCH, src: B3 });
 C('bd909', 'pitch settle at default (53 Hz)', 'def', 'pitch_settle', 53, { tol: TOL_PITCH, src: B3 });
 C('bd909', 'decay time constant at min (derived 15.5 ms)', 'decay=0.012', 'tc', 15.5, { tol: TOL_DECAY, src: B3 });
-C('bd909', 'decay time constant at max (derived 346 ms)', 'decay=0.1', 'tc', 346, { tol: TOL_DECAY, src: B3 });
+C('bd909', 'decay time constant at max (derived 346 ms)', 'decay=0.35', 'tc', 346, { tol: TOL_DECAY, src: B3 });
+C('bd909', 'decay time constant at default (B3 0.035 s)', 'def', 'tc', 35, { tol: TOL_DECAY, src: B3 });
 C('bd909', 'step ladder ev.step 0/1/2 (9 dB each)', 'steps', 'steps', 9, { tol: 1, src: B3 + ' d' });
 C('bd909', 'step ladder at drive 0 (is drive the compressor?)', 'steps-d0', 'steps', 9, { tol: 1, src: B3 + ' d' });
 C('bd909', 'ev.accent / normal (info)', 'acc', 'accent', null, { info: true, src: B3 });
@@ -129,9 +130,11 @@ C('sd909', 'step ladder at drive 0 (is drive the compressor?)', 'steps-d0', 'ste
 C('sd909', 'tone time constant range (derived 103 to 338 ms; spec 40 to 200 ms)', null, 'static', null,
   { static: { got: '0.04..0.2 s (spec)', ok: false }, refText: '0.103..0.338 s', src: B3 + ' (noise path, not resolved)' });
 
-[['lt909', 0.04, 38, 0.15, 378], ['mt909', 0.04, 38, 0.15, 378], ['ht909', 0.04, 38, 0.15, 378]].forEach(function (r) {
+[['lt909', 0.038, 38, 0.38, 378], ['mt909', 0.038, 38, 0.38, 378], ['ht909', 0.038, 38, 0.38, 378]].forEach(function (r) {
   C(r[0], 'decay time constant at min (derived 38 ms)', 'decay=' + r[1], 'tc', r[2], { tol: TOL_DECAY, src: B3 });
-  C(r[0], 'decay time constant at max (derived 378 ms, circuit extreme)', 'decay=' + r[3], 'tc', r[4], { tol: TOL_DECAY, src: B3 + ' (extreme)' });
+  C(r[0], 'decay time constant at max (derived 378 ms)', 'decay=' + r[3], 'tc', r[4], { tol: TOL_DECAY, src: B3 });
+  C(r[0], 'decay-to-1/10 at max (2.3 x 378 ms + hold; INFO, the manual gives a time constant)', 'decay=' + r[3], 't20', 378 * LN10 + 30, { info: true, src: B3 + ' (derived)' });
+  C(r[0], 'decay-to-1/10 at default (0.15 s constant, INFO)', 'def', 't20', 0.15 * LN10 * 1000 + 30, { info: true, src: 'spec default' });
   C(r[0], 'step ladder ev.step 0/1/2 (9 dB each)', 'steps', 'steps', 9, { tol: 1, src: B3 + ' d' });
   C(r[0], 'step ladder at drive 0 (is drive the compressor?)', 'steps-d0', 'steps', 9, { tol: 1, src: B3 + ' d' });
   C(r[0], 'ev.accent / normal (info)', 'acc', 'accent', null, { info: true, src: B3 });
@@ -277,12 +280,32 @@ function envelopeOf(x, a0) {
   }
   return out;
 }
+// start pitch from the first two full cycles after the attack (the pitch sweeps too fast for autocorrelation)
+// The sweep is exponential (tau 7.3 ms, B3 s3 R21 x C9 at the minimum), so the first full cycle (about 8 ms in) is
+// not the start: return the start the cycle implies, f0 = end + (f1 - end) exp(t1 / tau), with end 53 Hz.
+function pitchStartHz(x, a0) {
+  var cr = [], i;
+  for (i = a0 + 1; i < a0 + Math.round(0.03 * SR) && cr.length < 2; i++) {
+    if (x[i - 1] < 0 && x[i] >= 0) cr.push(i - 1 + (-x[i - 1]) / (x[i] - x[i - 1]));
+  }
+  if (cr.length < 2) return NaN;
+  var f1 = SR / (cr[1] - cr[0]), t1 = ((cr[0] + cr[1]) / 2 - a0) / SR;
+  var tEnd = 0.0073, end = 53;
+  return end + (f1 - end) * Math.exp(t1 / tEnd);
+}
 // time (ms) from the envelope peak to 1/10 of it
 function t20ms(x, a0, skipMs) {
   var env = envelopeOf(x, a0), i, pk = 0, pi = -1, sk = Math.round((skipMs || 0) * SR / 1000);
-  for (i = sk; i < env.length; i++) if (env[i] > pk) { pk = env[i]; pi = i; }
+  if (!skipMs) {
+    for (i = 0; i < env.length; i++) if (env[i] > pk) { pk = env[i]; pi = i; }
+  } else {
+    // a held voice: the reference level is the mean over [skip, skip + 5 ms], timed at skip (the hold is flat there)
+    var w = Math.round(0.005 * SR), sum = 0;
+    for (i = sk; i < sk + w && i < env.length; i++) sum += env[i];
+    pk = sum / w; pi = sk; sk = sk + w;
+  }
   if (pk < 1e-6) return NaN;
-  for (i = pi + 1; i < env.length; i++) if (env[i] < 0.1 * pk) return (i - pi) / SR * 1000;
+  for (i = Math.max(pi + 1, sk); i < env.length; i++) if (env[i] < 0.1 * pk) return (i - pi) / SR * 1000;
   return NaN;
 }
 // clap bursts: 1 ms hop, 2 ms RMS, local maxima with 3 dB prominence within 12 dB of the top; times in ms from a0
@@ -319,8 +342,10 @@ function foldEst(x, a0, len) {
   ref /= nr;
   var cut = null;
   for (var i = bands.length - 1; i >= 0; i--) { if (bands[i].db > ref - 30) break; cut = bands[i].f; }
-  if (cut === null || cut < 6000 || cut >= 21500) return { fs: NaN, cut: cut };
-  return { fs: 2 * cut, cut: cut };
+  // spectral null in 10 to 20 kHz: the crossover where the base band and its image meet (fs / 2)
+  var nul = null, nulDb = Infinity;
+  bands.forEach(function (b) { if (b.f >= 10000 && b.f <= 20000 && b.db < nulDb) { nulDb = b.db; nul = b.f; } });
+  return { fs: 2 * nul, cut: nul, brick: cut };
 }
 function peakAbs(x) { var m = 0; for (var i = 0; i < x.length; i++) { var v = Math.abs(x[i]); if (v > m) m = v; } return m; }
 function attackOf(x) {
@@ -388,7 +413,7 @@ function evaluate(c, R) {
       ok = rel(got, c.ref, c.tol); break;
     }
     case 'pitch_start':
-      got = 1000 / periodMs(x, a0 + Math.round(0.002 * SR), Math.round(0.01 * SR), 100, 4000);
+      got = pitchStartHz(x, a0);
       row.got = fmt(got, 1) + ' Hz'; ok = rel(got, c.ref, c.tol); break;
     case 'pitch_settle':
       got = 1000 / periodMs(x, a0 + Math.round(0.04 * SR), Math.round(0.06 * SR), 30, 4000);
@@ -422,7 +447,7 @@ function evaluate(c, R) {
     case 'fold': {
       var fo = foldEst(x, a0, Math.round(c.win * SR / 1000));
       got = fo.fs;
-      row.got = isFinite(fo.fs) ? 'fs ' + fmt(fo.fs, 0) + ' Hz (cut ' + fmt(fo.cut, 0) + ' Hz)' : 'no fold-over found below 21.5 kHz';
+      row.got = 'fs ' + fmt(fo.fs, 0) + ' Hz (null at ' + fmt(fo.cut, 0) + ' Hz, brick-wall ' + (fo.brick === null ? 'none' : fmt(fo.brick, 0)) + ')';
       ok = rel(got, c.ref, c.tol); break;
     }
     default:
@@ -519,7 +544,7 @@ async function main() {
   for (var i = 0; i < args.length; i++) {
     if (args[i] === '--only') only = args[++i].split(',');
     else if (args[i] === '--json') jsonOut = args[++i];
-    else { console.error('drums-score.js: unknown argument ' + args[i]); process.exit(2); }
+    else if (args[i] !== '--levels') { console.error('drums-score.js: unknown argument ' + args[i]); process.exit(2); }
   }
   var playwright = null, tried = [];
   ['playwright', '/opt/node22/lib/node_modules/playwright'].some(function (m) {
@@ -528,7 +553,13 @@ async function main() {
   if (!playwright) { console.error('drums-score.js: Playwright not found (tried ' + tried.join(', ') + ')'); process.exit(2); }
   if (!fs.existsSync(CHROMIUM)) { console.error('drums-score.js: Chromium not found at ' + CHROMIUM); process.exit(2); }
 
+  var levelsMode = args.indexOf('--levels') >= 0;
   var checks = CHECKS.filter(function (c) { return !only || only.indexOf(c.voice) >= 0; });
+  if (levelsMode) {
+    checks = [];
+    var TYPES = ['bd808','sd808','cp808','ch808','oh808','cy808','cb808','lt808','mt808','ht808','lc808','mc808','hc808','rs808','cl808','ma808','bd909','sd909','lt909','mt909','ht909','rs909','cp909','ch909','oh909','cr909','rd909'];
+    TYPES.forEach(function (t) { if (!only || only.indexOf(t) >= 0) checks.push({ voice: t, label: 'levels', render: 'acc', metric: 'accent', ref: null, info: true }); });
+  }
   var need = {};                                  // voice -> set of render keys
   checks.forEach(function (c) {
     if (!need[c.voice]) need[c.voice] = new Set(['def']);
@@ -571,6 +602,18 @@ async function main() {
   }
   if (harnessExit) process.exit(harnessExit);
 
+  if (levelsMode) {
+    console.log('voice    normal peak   normal RMS 0-300ms   accent peak   accent RMS   accent/normal (peak)');
+    Object.keys(R).forEach(function (v) {
+      var n = R[v].def, a = R[v].acc;
+      if (!n || !a || n.err || a.err) { console.log(v + ' render error'); return; }
+      function rmsDb(x) { var m = Math.min(x.length, Math.round(0.3 * SR)), s2 = 0, i; for (i = 0; i < m; i++) s2 += x[i] * x[i]; return 10 * Math.log10(s2 / m + 1e-20); }
+      var np = 20 * Math.log10(peakAbs(n.x) + 1e-20), ap = 20 * Math.log10(peakAbs(a.x) + 1e-20);
+      console.log(pad(v, 9) + pad(np.toFixed(1) + ' dBFS (' + peakAbs(n.x).toFixed(3) + ')', 22) + pad(rmsDb(n.x).toFixed(1) + ' dBFS', 21) +
+        pad(ap.toFixed(1) + ' dBFS (' + peakAbs(a.x).toFixed(3) + ')', 22) + pad(rmsDb(a.x).toFixed(1) + ' dBFS', 13) + (ap - np).toFixed(1) + ' dB');
+    });
+    process.exit(0);
+  }
   var rows = checks.map(function (c) {
     var RR = R[c.voice] || {};
     return evaluate(c, RR);
