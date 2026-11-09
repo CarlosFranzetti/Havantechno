@@ -41,3 +41,7 @@ C1 and C2 reported every page fetch failing with ENOTFOUND after the hosts were 
 ## 2026-11-08 23:53 EST (04:53 UTC) — C2 second pass (curl)
 
 C2-minimal.md "Second pass" rewritten from pages read in full (RBMA Hood interview, Wikipedia Acid Tracks, Spastik, Minimal Nation): Hood's gear confirmed (SH-101, Juno 2, TR-909, DX100, QY, 4-channel mixer; no reverb or compression in recording, a little reverb added at mastering); Spastik is TR-808 percussion (1993, Plus 8 / NovaMute), correcting C2's table; Acid Tracks confirms the 303 and the slow-down from about 130 to about 120 BPM; the 707/727 stay reported only. Corrected top five: Minimal Nation "Rhythm of Vision", Spastik, Acid Tracks, The Bells, Minimal Nation "Acrylic". Equipboard answers with a bot wall and Wikipedia rate-limited one page (429). Committed.
+
+## 2026-11-08 23:54 EST (04:54 UTC) — C1 second pass; Crate Crew report
+
+C1-electro.md "Second pass" from pages read (RBMA Mr. Mixx and Newcleus, Sound on Sound Planet Rock, Wikipedia Clear, Egyptian Lover, Mantronix): Throw the D is TR-808 and voice; Jam On It is 808, Pro-One, TB-303, RS-09 first-hand; Clear recorded April 1982, single 1983; Egypt Egypt's rig is the general one; corrected top five Throw the D, Sucker M.C.'s, Al-Naafiysh, Clear, Jam On It. Crate Crew REPORT.md written: ten picks, what they need from the build (808, 909, a 303-class bass, the sampler, SH-101 and Juno classes, a DX100-class FM), limits, and the ask to the owner for the files of picks 1 to 5.

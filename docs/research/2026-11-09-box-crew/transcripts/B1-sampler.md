@@ -576,3 +576,52 @@ Ask for `sfzformat.com` to be allowed in the session's network settings to check
    - Add a new pure module `app/engine/programs.js` (owner: A7 suggested).
    - Give A1 `songdoc.js` for `normPrograms` and the region editor operations.
 5. **Audio metadata:** `doc.audio[id]` gains `meta` (file rate, `smpl` root and loops) and `analysis` (detected pitch). Derived buffers (baked loops, reversed copies) are cached in the engine and never saved. Sample files stay references; there is no copy into the project folder in batch 1.
+
+## 14. Second pass (2026-11-08 ET, after the coordinator's note that sfzformat.com is reachable)
+
+How I checked: the `WebFetch` tool still could not resolve `sfzformat.com`, but `curl` through the session proxy reached it. I used 10 fetches. Two went to raw GitHub URLs for sfzformat's opcode data file and returned 404. The other eight were sfzformat.com pages, saved to the scratchpad and stripped to text:
+- `/opcodes/fil_type/`
+- `/opcodes/loop_mode/`
+- `/headers/`
+- `/modulations/envelope_generators/`
+- `/opcodes/off_mode/`
+- `/opcodes/pitch_keycenter/`
+- `/opcodes/amp_veltrack/`
+- `/opcodes/lokey/`
+
+I fetched no primary source for the WAV `smpl` chunk, so §7.4 stays unverified. A7 should test `readWavMeta` against a file written by a known tool (for example, sox or a DAW export with loop points) before relying on the field offsets.
+
+### 14.1 Results, item by item
+
+| # | Item (where in this transcript) | Status | What sfzformat.com says | Change for A7 |
+|---|---|---|---|---|
+| 1 | `fil_type` names (§3.2) | **Corrected** | SFZ v1: `lpf_1p, hpf_1p, lpf_2p, hpf_2p, bpf_2p, brf_2p`. SFZ v2 adds `bpf_1p, brf_1p, apf_1p, lpf_2p_sv, hpf_2p_sv, bpf_2p_sv, brf_2p_sv, pkf_2p, lpf_4p, hpf_4p, lpf_6p, hpf_6p, comb, pink`. ARIA adds `lsh, hsh, peq`. **Default `lpf_2p`**: a region with `cutoff` but no `fil_type` is a 2-pole low-pass. | **Yes.** Add `hpf_1p` to tier 1. `lpf_4p`/`hpf_4p` are v2, still tier 1. Import mapping: `lpf_2p`/`lpf_2p_sv` → `lowpass`, `hpf_2p*` → `highpass`, `bpf_2p*` → `bandpass`, `brf_2p*` → `notch`, `lpf_4p` → `lp24`, `hpf_4p` → `hp24`. `lpf_1p`/`hpf_1p` → biquad low-pass/high-pass with Q −3.01 dB (Butterworth; still 12 dB/oct, an approximation), with an import warning. `lpf_6p`/`hpf_6p`, `pkf_2p`, `apf_1p`, `comb`, `pink`, `lsh`/`hsh`/`peq` → `extra` with a warning. Any region with `cutoff` and no `fil_type` → `lowpass`. |
+| 2 | Header inheritance (§3.2, "control → global → master → group → region") | **Corrected** | `<region>` and `<group>` are SFZ v1. `<control>`, `<global>`, `<curve>`, `<effect>` and `<sample>` are SFZ v2. `<master>` and `<midi>` are ARIA. The hierarchy that defines playback is **global → master → group → region** ("the global/group/region or global/master/group/region hierarchy"). `<control>` sits at the file start and sets up MIDI CCs (and, from my knowledge, `default_path`, `note_offset`, `octave_offset`). | **Yes (small).** The parser must not inherit `<control>` opcodes into regions. It applies `<control>`'s directives (`default_path`, offsets) to what follows, and inherits global → master → group → region. |
+| 3 | `loop_mode` values and default (§3.1, §3.2) | **Confirmed values; default corrected** | `no_loop`: start to end, or until note-off, whichever comes first. `one_shot`: start to end, ignoring note-off ("commonly used for drums"; also engaged by `count`). `loop_continuous`: loops until note expiry, including during the release. `loop_sustain`: loops while held; no looping in the release. Release length is `ampeg_release` in every mode except `one_shot`. **Default: `no_loop` for samples without a loop defined, `loop_continuous` for samples with defined loop(s)**, using the first loop in the file metadata. ARIA and Cakewalk ignore file loops under `one_shot`. ARIA loops the whole file when the mode is continuous or sustain and no `loop_end` or file loop exists. | **Yes.** On import with no `loop_mode`, a file whose `smpl` chunk has a loop gets `loop: 'continuous'` with that loop's points, not 'sustain'. `oneshot` ignores file loops. `continuous`/`sustain` with neither `loop_end` nor a file loop loops the whole region. My auto-map choice (§4.3 step 5: 'sustain' for pitched folders) is our own choice, not SFZ's default, and can stay. |
+| 4 | `no_loop` and note-off; the `gate` param (§5.3, decision 3) | **Corrected** | `no_loop` stops at note-off (plus `ampeg_release`). That is plain SFZ behaviour for every region that isn't `one_shot`. | **Yes.** `Programs.parseSfz` sets `global.gate = 1` for **every** SFZ import, drum kits included, because SFZ kits rely on `one_shot` where they need it. `gate = 0` stays the default for the single-buffer path and for auto-mapped drum folders, whose regions are `oneshot` anyway. This narrows decision 3: imported SFZ always uses `gate 1`. |
+| 5 | `off_mode` (§3.2, §5.6) | **Confirmed** | `fast` (default): "turned off immediately. Release settings will not have any effect." `normal`: all envelopes enter their release stage. ARIA adds `off_mode=time` with `off_time` (default 6 ms), and "6 ms is also the fadeout time for off_mode=fast". | **No.** The 6 ms fade in `fadeVoice` matches. Optional: parse ARIA `off_mode=time` + `off_time` into `offMode: 'time'`, `offTime` (s), and use that as the fade length. |
+| 6 | `pitch_keycenter` default (§3.2) | **Confirmed, one addition** | Default 60, range 0..127, integer, SFZ v1. SFZ v2 allows `pitch_keycenter=sample`: the root comes from the file metadata, and is **0** when the file has none. | **Yes (small).** Support `pitch_keycenter=sample`: take `root` from `doc.audio[id].meta.root`, else 0 (the documented fallback; the importer warns, since 0 is rarely what the author meant). |
+| 7 | `lokey`/`hikey`, note names (§3.2, §4.1) | **Partly confirmed** | `lokey` default 0, range 0..127 (v1). SFZ v2 allows `lokey=-1 hikey=-1`, meaning the region is never triggered by keys (used for CC-triggered pedal noises). Note names (`c3`, `D#4`) are allowed, but "the same note names can be mapped to note numbers an octave or even two apart in different DAWs", so numbers are recommended. The page does not state C4 = 60. | **Yes (small).** `lokey = -1` → the region never plays from keys (kept, but it can't be reached until CCs exist). Note names stay parsed with C4 = 60 plus `octave_offset`; that convention is **still unverified**. The importer counts regions keyed by name and shows "keys given as note names: check the octave" when there are any. `hikey`'s default (127) was not fetched. |
+| 8 | Velocity curve, `amp_veltrack` (§5.3, §5.7) | **Corrected** | Default 100, range **−100 to 100** %. At 100: Gain(v) = 20·log10((v/127)²) dB, a **squared** amplitude curve, not linear. | **Yes.** In the program path, `peak = (1 − |vt| + |vt|·c) × 10^(gain/20)` with `c = (v/127)²` for vt ≥ 0, or `c = (1 − v/127)²` for vt < 0. The page gives the formula only at 100; the blend for other values is **my choice, unverified**. Spec change: `veltrack` min −1, max 1, default 1; region `veltrack` −1..1. The single-buffer path keeps today's linear velocity. Check 4 changes: the expected peak at vel 0.85 is 0.85² ≈ 0.72. |
+| 9 | Envelope stage shapes and decay (§5.3, the `adsrAt` pseudo-code) | **Corrected** | For SFZ 1 envelopes (ARIA and sfizz): attack is linear; decay and release are "convex (linear in dB)". `ampeg_decay` sets a *rate*: "The level in the decay phase descends at the rate determined by ampeg_decay but stops once it hits the sustain level" (decay 1 s with sustain 50 % reaches the sustain level before 1 s). The stages are delay, attack, hold, decay, sustain, release. The same shapes apply to `fileg` and `pitcheg`. | **Yes.** Replace the decay and release lines of §5.3 with linear-in-dB ramps against a fixed floor `F` (−90 dB; the floor value is **unverified**, and A9 can fit it against sfizz renders). **Decay:** the level falls linearly in dB from peak toward `F`, at a rate that would cover peak → `F` in `decay` seconds, and stops at the sustain level. In Web Audio, `expo(g, peak·s, t_d0 + decay × (−20·log10 s)/90)` then hold; for `s = 0`, `expo` to `peak·10^(−90/20)` over `decay`. **Release:** linear in dB from the level `L` at `tRel` to `L·10^(−90/20)` over `release` (constant duration from wherever the level is), then stop. That the release time is constant rather than rate-based is **unverified**. `adsrAt` must use the same formulas (checks 22, 11, 15). The filter envelope uses the same shapes on `detune`, in cents: the decay is linear in cents toward `fSustain × fEnv`, an approximation, because cents are already logarithmic. |
+| 10 | EG opcode set (§3.2) | **Confirmed, extras noted** | The SFZ 1 EG opcodes per destination (`ampeg`, `fileg`, `pitcheg`) include `_delay, _attack, _hold, _decay, _sustain, _release, _depth`, plus `_start`, `_vel2delay`/`_vel2attack`/`_vel2hold`/`_vel2decay`/`_vel2sustain`/`_vel2release`, `_dynamic` and `_*_oncc`. | **No change to tier 1.** `_start`, `_vel2*` and `_dynamic` go to tier 2 (kept in `extra`). |
+
+### 14.2 Still unverified after this pass
+
+Not fetched (out of the fetch budget):
+- the defaults of `ampeg_*`/`fileg_*`, and the sustain unit (percent);
+- `pitch_keytrack` (100), `tune`, `transpose`, `volume`, `pan`;
+- `seq_length`/`seq_position` defaults (1/1) and `lorand`/`hirand` (0/1);
+- `resonance` (dB, range), `fil_keytrack`/`fil_keycenter`/`fil_veltrack`;
+- the v1 LFO opcodes (`pitchlfo_*`, `fillfo_*`, `amplfo_*`) and their units;
+- `loop_crossfade` (taken from the first pass's search excerpt);
+- `hikey`'s default and the note-name octave convention;
+- the `sample=` value-with-spaces rule, `#define`/`#include` syntax, and `default_path`.
+
+Also unverified: the RIFF `smpl` and `acid` layouts. A7 should keep these values as named constants in `programs.js` with a comment marking them unverified, so a later pass can fix them in one place.
+
+### 14.3 Effect on decisions (§13)
+
+- Decision 3 narrows: imported SFZ always gets `gate 1`. Only auto-mapped drum folders and the single-buffer path use `gate 0`.
+- Decision 4 changes one range: `veltrack` is −1..1.
+- The other decisions are unaffected.
