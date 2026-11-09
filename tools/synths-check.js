@@ -207,7 +207,7 @@ console.log('4. hat metalHp: the metal-path highpass');
 console.log('5. defaults: every synth logs the same calls as the archived engine');
 (function () {
   function run(sb, ctx) {
-    sb.Synths.types().forEach(function (type) {
+    sb.Synths.types().filter(function (type) { return type !== 'fm'; }).forEach(function (type) {   // fm is new (not in the archive)
       var inst = sb.Synths.create(ctx, type);
       inst.trigger(0.5, { vel: 0.9, accent: true, midi: 47, dur: 0.2, notes: [63, 66, 70] });
       inst.trigger(0.8, { vel: 0.6, midi: 35, dur: 0.1 });
@@ -747,6 +747,45 @@ console.log('10. sampler programs: keys, layers, round robin, pitch, frames, env
   ['C2', 'C3', 'C4'].forEach(function (n) { [64, 127].forEach(function (v) { [1, 2].forEach(function (r) { ents.push({ id: n + v + r, name: n + ' v' + v + ' rr' + r + '.wav' }); }); }); });
   var am = PR.autoMap(ents, { mode: 'pitched', keys: 'mid' });
   ok(am.regions.length === 12 && am.regions.every(function (x) { return x.seqLen === 2; }) && am.regions.some(function (x) { return x.root === 36; }) && am.regions.some(function (x) { return x.root === 60; }), 'autoMap: 12 regions, two velocity layers and two round-robin members per root (36, 48, 60)');
+})();
+
+// ------------------------------------------------------------------ 11. fm instrument (L1 ruling 6) and the sampler's _lastHit
+console.log('11. fm: ratio sets the modulator, index 0 is a sine, indexEnv follows the modulator envelope; sampler _lastHit');
+(function () {
+  var sb = appSandbox();
+  // ratio: the modulator runs at ratio x the note, so the sidebands sit at carrier +- n x modulator
+  var ctx = new FakeContext(44100), oscs = recordCreated(ctx, 'createOscillator'), gains = recordCreated(ctx, 'createGain');
+  var fm = sb.Synths.create(ctx, 'fm', { ratio: 2, index: 2, indexEnv: 0 });
+  fm.trigger(1, { midi: 69, vel: 0.8, dur: 0.5 });
+  ok(oscs.length >= 2 && hasCall(oscs[0].frequency, 'setValueAtTime', 440, 1) && hasCall(oscs[1].frequency, 'setValueAtTime', 880, 1),
+     'ratio 2 on A4: carrier 440 Hz, modulator 880 Hz (sidebands 440 +- 880 n)');
+  ok(sb.Synths.types().indexOf('fm') >= 0, "'fm' is listed in types()");
+  // index 0: no modulation depth reaches the carrier (a sine)
+  ctx = new FakeContext(44100); gains = recordCreated(ctx, 'createGain');
+  var fm0 = sb.Synths.create(ctx, 'fm', { ratio: 1, index: 0, indexEnv: 0.5 });
+  fm0.trigger(1, { midi: 69, vel: 0.8, dur: 0.5 });
+  // gains: [out, pre] come from makeInst, then the modulation gains (constant, envelope, enveloped depth) and the amp
+  ok(gains[2].gain.value === 0 && gains[4].gain.value === 0, 'index 0 gives a sine: the modulation gains are 0');
+  // indexEnv 1: the index follows the modulator envelope (attack to 1, then decay to ~0)
+  ctx = new FakeContext(44100); gains = recordCreated(ctx, 'createGain');
+  var fe = sb.Synths.create(ctx, 'fm', { ratio: 1, index: 4, indexEnv: 1, modAttack: 0.01, modDecay: 0.2 });
+  fe.trigger(2, { midi: 69, vel: 0.8, dur: 0.5 });
+  ok(gains[2].gain.value === 0 && gains[4].gain.value === 4 * 440, 'indexEnv 1: the constant part is 0, the enveloped depth is index x modulator (1760 Hz)');
+  ok(hasCall(gains[3].gain, 'linearRampToValueAtTime', 1, 2.01) && hasCall(gains[3].gain, 'exponentialRampToValueAtTime', 0.0001, 2.21),
+     'the modulator envelope ramps to 1 at modAttack and decays to ~0 by modAttack + modDecay');
+  // polyphony and glide
+  ctx = new FakeContext(44100); oscs = recordCreated(ctx, 'createOscillator');
+  var fp = sb.Synths.create(ctx, 'fm', { glide: 0.05 });
+  fp.trigger(1, { notes: [60, 64, 67], vel: 0.8, dur: 0.3 });
+  ok(oscs.length === 6, 'three notes make three voices (two oscillators each)');
+  fp.trigger(2, { midi: 72, vel: 0.8, dur: 0.3 });
+  ok(fp._lastF > 500 && hasCall(oscs[oscs.length - 2].frequency, 'exponentialRampToValueAtTime', 523.2511306011972, 2.05), 'a melodic glide ramps the carrier from the last note');
+  // sampler: _lastHit for the program path and the single-buffer path
+  ctx = new FakeContext(44100);
+  var buf = { duration: 2, sampleRate: 44100, numberOfChannels: 1, length: 88200, id: 'b' };
+  var sp = sb.Synths.create(ctx, 'sampler', { buffer: 'b', getBuffer: function () { return buf; } });
+  sp.trigger(3, { midi: 60, vel: 0.8 });
+  ok(sp._lastHit && sp._lastHit.region === null && sp._lastHit.t0 === 3 && near(sp._lastHit.rate, 2, 1e-9), 'single-buffer hit sets _lastHit {region: null, t0, rate}');
 })();
 
 console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');

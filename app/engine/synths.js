@@ -366,6 +366,51 @@
   };
 
   // STAB: chord of detuned saw pairs, each pair panned left/right, shared lowpass with envelope, highpassed.
+  // FM (L1 ruling 6, the DX100 target): a two-operator pair. The modulator (ratio x the note) drives the carrier's frequency
+  // AudioParam. The index is Chowning's I = depth / modulator frequency, so the sidebands sit at carrier +- n x modulator
+  // and the ratio sets their spacing. indexEnv blends the index between constant (0) and the modulator envelope (1).
+  // feedback loops the modulator's output back into its own frequency through a delay of one modulator period.
+  BUILD.fm = {
+    spec: { ratio: { min: 0.5, max: 16, value: 1 }, index: { min: 0, max: 20, value: 2 }, indexEnv: { min: 0, max: 1, value: 0.5 },
+            feedback: { min: 0, max: 1, value: 0 }, attack: { min: 0.001, max: 2, value: 0.005, unit: 's' },
+            decay: { min: 0.01, max: 4, value: 0.4, unit: 's' }, sustain: { min: 0, max: 1, value: 0.6 },
+            release: { min: 0.01, max: 4, value: 0.25, unit: 's' }, modAttack: { min: 0.001, max: 2, value: 0.001, unit: 's' },
+            modDecay: { min: 0.01, max: 4, value: 0.3, unit: 's' }, detune: { min: 0, max: 50, value: 0, unit: 'ct' },
+            glide: { min: 0, max: 0.3, value: 0, unit: 's' }, level: { min: 0, max: 1.5, value: 1 } },
+    build: function (inst) {
+      var ctx = inst.ctx, P = inst.params;
+      inst.trigger = function (t, ev) {
+        var g = vel(ev), notes = notesOf(ev, 60), hold = (ev && ev.dur) || 0.25, i, nn = notes.length, amp = g / Math.sqrt(nn);
+        var end = t + Math.max(P.attack + hold + P.release, P.modAttack + P.modDecay + hold) + 0.05;
+        for (i = 0; i < nn; i++) {
+          var v = voice(ctx, inst), f = mtof(notes[i]), f0 = (P.glide > 0 && inst._lastF) ? inst._lastF : f;
+          var fmod = f * P.ratio, fmod0 = f0 * P.ratio;
+          var car = v.osc('sine', f0, t, end, P.detune), mod = v.osc('sine', fmod0, t, end);
+          if (f0 !== f) { expo(car.frequency, f, t + P.glide); expo(mod.frequency, fmod, t + P.glide); }
+          var depth = P.index * fmod;                       // Hz deviation of the carrier: I x modulator frequency
+          // constant part of the index, and the part that follows the modulator envelope
+          var dConst = v.gain(depth * (1 - P.indexEnv)), envM = v.gain(0), dEnv = v.gain(depth * P.indexEnv);
+          setV(envM.gain, 0.0001, t); lin(envM.gain, 1, t + P.modAttack); expo(envM.gain, 0.0001, t + P.modAttack + P.modDecay);
+          mod.connect(dConst); dConst.connect(car.frequency);
+          mod.connect(envM); envM.connect(dEnv); dEnv.connect(car.frequency);
+          if (P.feedback > 0) {
+            var fbD = ctx.createDelay(1); val(fbD.delayTime, Math.min(1, 1 / fmod0));
+            var fbG = v.gain(P.feedback * fmod0);
+            mod.connect(fbD); fbD.connect(fbG); fbG.connect(mod.frequency);
+            v.track(fbD);
+          }
+          // carrier amplitude: attack, decay to sustain, release at the end of the hold
+          var ga = v.gain(0), sus = Math.max(0.0001, P.sustain * amp), decEnd = Math.min(t + P.attack + P.decay, t + hold);
+          setV(ga.gain, 0.0001, t); lin(ga.gain, amp, t + P.attack);
+          expo(ga.gain, sus, decEnd); setV(ga.gain, sus, t + hold);
+          expo(ga.gain, 0.0001, t + hold + P.release);
+          car.connect(ga); ga.connect(inst.pre);
+        }
+        inst._lastF = notes.length ? mtof(notes[notes.length - 1]) : inst._lastF;
+      };
+    }
+  };
+
   BUILD.stab = {
     spec: { cutoff: { min: 100, max: 12000, value: 1600, unit: 'Hz' }, env: { min: 0, max: 8000, value: 2200, unit: 'Hz' },
             res: { min: 0.1, max: 12, value: 2 }, attack: { min: 0.001, max: 0.5, value: 0.002, unit: 's' },
@@ -838,10 +883,10 @@
       var rnd = mulberry((Math.imul(seedN, 0x9E3779B1) ^ (k * 40503)) | 0)();
       var hit = ev && typeof ev.hit === 'number' ? ev.hit : null;
       var picked = progPick(prog, k, v127, rnd, st.rr, hit);
-      for (var pi = 0; pi < picked.length; pi++) progPlay(inst, ctx, P, picked[pi], t, ev, k, vf);
+      for (var pi = 0; pi < picked.length; pi++) progPlay(inst, ctx, P, picked[pi], t, ev, k, vf, prog.regions.indexOf(picked[pi]));
     }
   }
-  function progPlay(inst, ctx, P, r, t, ev, k, vf) {
+  function progPlay(inst, ctx, P, r, t, ev, k, vf, ri) {
     var getBuf = inst._getBuffer, buf = null, meta = null;
     if (typeof getBuf !== 'function') return;
     try { buf = getBuf(r.buffer); } catch (e) { buf = null; }
@@ -860,6 +905,7 @@
     if (loop && r.xfade > 0) src_buf = bakeLoop(ctx, src_buf, ls, le, r.xfade * scale, r.xfCurve);
     var sr = src_buf.sampleRate || ctx.sampleRate;
     var semis = (k - r.root) * r.keytrack / 100 + r.transpose + (r.tune + P.fine) / 100, rate = Math.pow(2, semis / 12);
+    inst._lastHit = { region: ri, t0: t, rate: rate };   // the sampler face draws the playhead and hit flash from this
     var segSec = (endF - off) / sr / rate, dur = ev && typeof ev.dur === 'number' && ev.dur > 0 ? ev.dur : null;
     var relAt = null;
     if (dur != null && r.loop !== 'oneshot' && (P.gate >= 0.5 || loop)) relAt = t + dur;   // gate: the note-off; oneshot ignores dur
@@ -981,6 +1027,7 @@
         if (ev && typeof ev.note === 'number') nOff = ev.note;
         else if (ev && typeof ev.midi === 'number') nOff = ev.midi - 48;
         var rate = Math.pow(2, (P.pitch + nOff) / 12);
+        inst._lastHit = { region: null, t0: t, rate: rate };   // the sampler face draws the playhead from this
         var g = vel(ev);
         var end = P.loop ? t + ((ev && ev.dur) || seg / rate) : t + seg / rate;
         var reg = P.choke ? chokeGroups(ctx) : null;

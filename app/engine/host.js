@@ -635,6 +635,24 @@
         return { pitch: hz || null, hz: hz, root: hz ? (r.root == null ? null : r.root) : null, midi: hz ? r.midi : null, cents: hz ? (r.cents || 0) : 0, clarity: r.clarity || 0 };
       } catch (e) { return null; }
     }
+    function clone2(o) { var c = {}; for (var k in o) if (has(o, k)) c[k] = o[k]; return c; }
+    // re-run pitch detection on a loaded file (the face's "Re-detect pitch"); writes doc.audio[id].analysis, emits 'audio'
+    host.detectPitch = function (id) {
+      return new Promise(function (resolve, reject) {
+        setTimeout(function () {
+          try {
+            needP('detectPitch');
+            var buf = getBuffer(id), a = audioMap()[id];
+            if (!buf || !a) throw new Error('Host.detectPitch: ' + id + ' is not loaded');
+            var an = analyze(buf);
+            if (!an) throw new Error('Host.detectPitch: the analysis failed');
+            a.analysis = an;
+            emit('audio', { id: id, status: 'analysed' });
+            resolve({ hz: an.hz, midi: an.midi, cents: an.cents, confidence: an.clarity });
+          } catch (e) { reject(e); }
+        }, 0);
+      });
+    };
     function store(buf, info, o, g, meta) {
       var id = (o.id && ID_RE.test(String(o.id))) ? String(o.id) : (relinkId(info.name) || newId(info.name));
       if (g !== gen) return id;                                // the document changed while this was decoding
@@ -860,7 +878,8 @@
         }).then(function (t) { return { text: t, name: name || baseName(source), path: path || source, url: source }; });
       }
       return textOf(source).then(function (t) {
-        return { text: t, name: name || (source && source.name) || 'program.sfz', path: path || (source && source.path) || (source && source.name) || null, url: null };
+        var rp = source && (source.webkitRelativePath || source.relativePath);
+        return { text: t, name: name || (source && source.name) || 'program.sfz', path: path || rp || (source && source.path) || (source && source.name) || null, url: null };
       });
     }
     function isAbs(p) { return /^(\/|[A-Za-z]:[\\/])/.test(String(p || '')); }
@@ -880,7 +899,8 @@
         return Promise.resolve(sh.readFile(abs, {})).then(function (b) { return b ? { data: b, src: abs } : null; }, function () { return null; });
       }
       if (asText && sh && typeof sh.readText === 'function' && abs) {
-        return Promise.resolve(sh.readText(abs)).then(function (t) { return t == null ? null : { data: t, src: abs }; }, function () { return null; });
+        // HavantechnoShell.readText(path, {base}): .sfz .txt .json, 4 MiB, null when missing or refused (A6)
+        return Promise.resolve(sh.readText(abs, {})).then(function (t) { return t == null ? null : { data: t, src: abs }; }, function () { return null; });
       }
       return Promise.resolve(null);
     }
@@ -905,14 +925,23 @@
       if (!has(a, id)) a[id] = { name: name, src: src };
       return id;
     }
+    // a dropped or picked file list ([File] with webkitRelativePath, or the shell's [{name, path, bytes}]) -> {relativePath: file}
+    function filesMap(list) {
+      if (!isArr(list)) return list || null;
+      var m = {};
+      list.forEach(function (f) { if (f) m[String(f.webkitRelativePath || f.relativePath || f.path || f.name).replace(/\\/g, '/')] = f; });
+      return m;
+    }
     host.importProgram = function (source, o) {
       o = o || {};
+      if (o.files) { var fm = filesMap(o.files); o = clone2(o); o.files = fm; }
       var M;
       try { M = needP('parseSfz'); } catch (e) { return Promise.reject(e); }
       var sh = o.shell || root.HavantechnoShell || null, g = gen;
       return sfzSource(source, o).then(function (src) {
         var incs = {};
         return prefetchIncludes(src.text, src, o, sh, incs, 0).then(function () {
+          var unresolved = Object.keys(incs).filter(function (k) { return incs[k] == null; });
           var include = function (p) { var k = fileKey(incs, p); return k == null ? null : incs[k]; };
           var first = M.parseSfz(src.text, { resolve: function () { return null; }, include: include }) || {};
           var paths = [], seen = {}, ids = {}, missing = [];
@@ -934,7 +963,11 @@
             if (!program.source) program.source = { format: 'sfz', path: src.path || src.name };
             var id = host.addProgram(program, { id: o.id });
             missing.forEach(function (m) { emit('audio', { id: m, status: 'missing' }); });
-            return { id: id, warnings: res.warnings || [], missing: missing };
+            var warnings = (res.warnings || []).slice();
+            unresolved.forEach(function (p) {
+              if (!warnings.some(function (w) { return w && w.opcode === '#include' && String(w.why || '').indexOf(p) >= 0; })) warnings.push({ line: 0, opcode: '#include', why: 'include not found: ' + p });
+            });
+            return { id: id, warnings: warnings, missing: missing, unresolvedIncludes: unresolved };
           });
         });
       });

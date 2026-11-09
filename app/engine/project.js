@@ -157,6 +157,68 @@
     try { return webPick('audio/*,' + AUDIO_EXT.map(function (e) { return '.' + e; }).join(','), true); } catch (e) { return Promise.reject(e); }
   }
 
+  // pick several files or a whole folder (A4: "Sampler track from folder...", "Import SFZ..."). o: {shell, directory,
+  // multiple, accept}. The web resolves [File] (folder picks carry webkitRelativePath); Electron resolves the shell's
+  // [{name, path, bytes, relativePath}] through HavantechnoShell.openFiles({directory, multiple, filters, binary}) when
+  // A6 provides it, else openFile({multiple, directory, ...}) if that returns an array, else one file. null on cancel.
+  function pickFiles(o) {
+    o = o || {};
+    var sh = shellOf(o), acc = o.accept || null;
+    var exts = acc ? acc.split(',').map(function (x) { return x.trim().replace(/^\./, ''); }).filter(function (x) { return x && x.indexOf('/') < 0; }) : null;
+    var filters = exts && exts.length ? [{ name: 'Files', extensions: exts }] : undefined;
+    function norm(r) {
+      if (r == null || r === false || (r && r.canceled)) return null;
+      if (Object.prototype.toString.call(r) === '[object Array]') return r.length ? r : null;
+      if (r.files && r.files.length) return r.files;
+      return [r];
+    }
+    if (fn(sh, 'openFiles')) return asPromise(sh.openFiles({ directory: !!o.directory, multiple: o.multiple !== false, filters: filters, binary: true })).then(norm);
+    if (fn(sh, 'openFile')) return asPromise(sh.openFile({ directory: !!o.directory, multiple: o.multiple !== false, filters: filters, binary: true })).then(norm);
+    return new Promise(function (resolve, reject) {
+      var d = root.document;
+      if (!d || !d.createElement) { reject(new Error('Project: no way to pick files here')); return; }
+      var input = d.createElement('input'), done = false;
+      input.type = 'file'; input.style.display = 'none';
+      if (o.multiple !== false) input.multiple = true;
+      if (o.directory) { input.webkitdirectory = true; try { input.setAttribute && input.setAttribute('webkitdirectory', ''); } catch (e) {} }
+      if (acc) input.accept = acc;
+      function finish(v) { if (done) return; done = true; try { if (input.parentNode) input.parentNode.removeChild(input); } catch (e) {} resolve(v); }
+      input.addEventListener('change', function () {
+        var fl = input.files, out = [];
+        for (var i = 0; fl && i < fl.length; i++) out.push(fl[i]);
+        finish(out.length ? out : null);
+      });
+      input.addEventListener('cancel', function () { finish(null); });
+      (d.body || d.documentElement).appendChild(input);
+      input.click();
+    });
+  }
+  // pick an .sfz (or a folder holding one) and import it into the host with its samples and #include files
+  function importProgram(o) {
+    o = o || {};
+    var host = o.host;
+    if (!host || typeof host.importProgram !== 'function') return Promise.reject(new Error('Project.importProgram: a host is required'));
+    var sh = shellOf(o);
+    var pick = o.files ? Promise.resolve(o.files) : (fn(sh, 'openFile') && !o.directory
+      ? asPromise(sh.openFile({ filters: [{ name: 'SFZ', extensions: ['sfz'] }] })).then(function (r) { return (r == null || r === false || r.canceled) ? null : [r]; })
+      : pickFiles({ shell: sh, directory: o.directory !== false, multiple: true }));
+    return pick.then(function (list) {
+      if (!list || !list.length) return null;
+      // the root .sfz: the least deep one (included files usually sit in subfolders), then by name
+      var sfz = null, best = null;
+      for (var i = 0; i < list.length; i++) {
+        var rp = String(list[i].webkitRelativePath || list[i].relativePath || list[i].path || list[i].name);
+        if (!/\.sfz$/i.test(rp)) continue;
+        var depth = rp.split(/[\\/]/).length;
+        if (!sfz || depth < best.d || (depth === best.d && rp < best.p)) { sfz = list[i]; best = { d: depth, p: rp }; }
+      }
+      if (!sfz) throw new Error('Project.importProgram: no .sfz file in the selection');
+      var io = { shell: sh, id: o.id, base: o.base };
+      if (list.length > 1) io.files = list;
+      return host.importProgram(sfz, io);
+    });
+  }
+
   // what a loaded project could not find (batch 1): audio entries without a buffer, with who uses them, and the programs
   // with silent regions. Programs reload with the project through their region samples, which are doc.audio entries.
   function missing(host) {
@@ -207,7 +269,7 @@
     try { return asPromise(sh.appDataPath()).then(function (p) { return p || null; }, function () { return null; }); } catch (e) { return Promise.resolve(null); }
   }
 
-  root.Project = { serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, missing: missing, autosave: autosave, restore: restore,
+  root.Project = { serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, pickFiles: pickFiles, importProgram: importProgram, missing: missing, autosave: autosave, restore: restore,
                    restoreAsync: restoreAsync, clearAutosave: clearAutosave, appDataPath: appDataPath, fileName: fileName,
                    EXT: EXT, AUTOSAVE_KEY: AUTOSAVE_KEY, FORMAT: FORMAT };
 })();

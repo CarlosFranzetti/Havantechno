@@ -339,7 +339,7 @@ var section5 = (function () {
   ok(devs.length === want.length && want.length === 49, 'devices() lists ' + devs.length + ' devices (want ' + want.length + ': 13 instruments, 2 inserts, 13 sidechains, 13 channels, 2 sends, 6 master units)');
   var bad = want.filter(function (w) { var d = byId[w[0]]; return !d || d.type !== w[1] || d.kind !== w[2] || d.track !== w[3] || d.pathPrefix !== w[4] || d.family !== FAM[w[1]] || !d.ref || !d.spec; });
   ok(bad.length === 0, 'device ids, types, kinds, tracks, path prefixes and families match' + (bad.length ? ' (bad: ' + bad.map(function (w) { return w[0]; }).join(', ') + ')' : ''));
-  ok(sb.Synths.types().every(function (t) { return devs.some(function (d) { return d.kind === 'instrument' && d.type === t; }); }), 'every instrument type has a device');
+  ok(G.tracks.every(function (t) { return devs.some(function (d) { return d.kind === 'instrument' && d.type === t.inst; }); }), 'every instrument type of the song has a device');
   ok(host.device('track:kick').ref.type === 'kick' && host.device('master:glue').ref.node === undefined && host.device('track:bass:eq').ref.type === 'eq3' && host.device('nope') === null, 'device(id) returns the live engine object');
   var unreachable = [];
   devs.forEach(function (d) {
@@ -939,7 +939,71 @@ function section8() {
   });
 }
 
-section5.then(section6).then(section7).then(section8).then(function () {
+// ------------------------------------------------------------------ 9. batch-1 follow-ups (A1): host.detectPitch,
+// Project.pickFiles, SFZ #include through HavantechnoShell.readText and through a dropped file list
+function file(rel, text, bytes) { return { name: rel.split('/').pop(), webkitRelativePath: rel, text: function () { return Promise.resolve(text); }, arrayBuffer: function () { return Promise.resolve(bytes); } }; }
+function section9() {
+  console.log('9. detectPitch, pickFiles, SFZ includes (shell readText and dropped files)');
+  var sb = sandbox(); load(sb); loadHost(sb);
+  var H = sb.Host, P = sb.Project;
+  if (!sb.Programs) { ok(true, 'programs.js not loaded: section 9 skipped'); return Promise.resolve(); }
+  var h = H.create({ context: new FakeContext(48000) }), aev = [];
+  h.on('audio', function (e) { aev.push(e.id + ':' + e.status); });
+  return h.start().then(function () {
+    return h.loadAudio(makeWav({ rate: 48000, frames: 24000 }), { name: 'tone.wav', analyze: false });
+  }).then(function (id) {
+    var d = h.buffer(id).getChannelData(0);
+    for (var i = 0; i < d.length; i++) d[i] = 0.5 * Math.sin(2 * Math.PI * 220 * i / 48000);
+    return Promise.all([h.detectPitch(id), h.detectPitch('nope').then(function () { return 'ok'; }, function (e) { return e.message; })]).then(function (r) {
+      var a = h.document().audio[id].analysis;
+      ok(Math.abs(r[0].hz - 220) < 1 && r[0].midi > 56.9 && r[0].midi < 57.1 && Math.abs(r[0].cents) < 10 && r[0].confidence > 0.8, 'host.detectPitch finds 220 Hz on a sine (' + r[0].hz.toFixed(2) + ' Hz, midi ' + r[0].midi.toFixed(2) + ')');
+      ok(a && Math.abs(a.hz - 220) < 1 && a.root === 57 && aev.indexOf(id + ':analysed') >= 0, "the result is written into the audio entry's analysis and an 'audio' analysed event fires");
+      ok(/not loaded/.test(r[1]), 'detectPitch rejects for a file that is not loaded');
+    });
+  }).then(function () {
+    // pickFiles: Electron openFiles, the openFile fallback, cancel, and the web input (fake DOM)
+    var calls = [];
+    var sh1 = { openFiles: function (o) { calls.push(o); return Promise.resolve([{ name: 'a.wav', path: '/k/a.wav', bytes: new Uint8Array(2) }, { name: 'b.wav', path: '/k/b.wav', bytes: new Uint8Array(2) }]); } };
+    var sh2 = { openFile: function (o) { calls.push(o); return Promise.resolve({ name: 'c.wav', path: '/k/c.wav', bytes: new Uint8Array(2) }); } };
+    var sh3 = { openFiles: function () { return Promise.resolve(null); } };
+    var input = null, fakeFiles = [{ name: 'a.wav', webkitRelativePath: 'kit/a.wav' }, { name: 'b.wav', webkitRelativePath: 'kit/b.wav' }];
+    sb.document = { body: { appendChild: function (n) { n.parentNode = this; }, removeChild: function () {} },
+      createElement: function () { input = { style: {}, ls: {}, attrs: {}, setAttribute: function (k, v) { this.attrs[k] = v; }, addEventListener: function (t, f) { this.ls[t] = f; }, click: function () { var me = this; setTimeout(function () { me.files = fakeFiles; me.ls.change(); }, 0); } }; return input; } };
+    return Promise.all([P.pickFiles({ shell: sh1, directory: true, accept: '.wav,.sfz' }), P.pickFiles({ shell: sh2 }), P.pickFiles({ shell: sh3 }), P.pickFiles({ directory: true })]).then(function (r) {
+      delete sb.document;
+      ok(r[0].length === 2 && calls[0].directory === true && calls[0].multiple === true && calls[0].binary === true && calls[0].filters[0].extensions.join() === 'wav,sfz', 'pickFiles in Electron: openFiles({directory, multiple, binary, filters}) -> the files');
+      ok(r[1].length === 1 && r[1][0].path === '/k/c.wav' && calls[1].multiple === true && r[2] === null, 'without openFiles it asks openFile with the same options and wraps one file; cancel is null');
+      ok(r[3] && r[3].length === 2 && r[3][0] === fakeFiles[0] && r[3][1] === fakeFiles[1] && input.multiple === true && input.webkitdirectory === true && input.attrs.webkitdirectory === '', 'pickFiles on the web: <input type=file multiple webkitdirectory> resolves the File list (fake DOM)');
+    });
+  }).then(function () {
+    // SFZ #include through HavantechnoShell.readText (Electron)
+    var texts = [], reads = [];
+    var shell = {
+      readText: function (p, o) { texts.push(p); return Promise.resolve(p === '/kits/inc/common.sfz' ? '<region> sample=sd.wav key=38\n#include "inc/deeper.sfz"' : p === '/kits/inc/deeper.sfz' ? '<region> sample=hh.wav key=42' : null); },
+      readFile: function (p) { reads.push(p); return Promise.resolve(/\/kits\/(bd|sd|hh)\.wav$/.test(p) ? makeWav({ rate: 44100, frames: 40 }) : null); }
+    };
+    var sfz = '#include "inc/common.sfz"\n#include "nowhere.sfz"\n<region> sample=bd.wav key=36\n';
+    return h.importProgram({ name: 'kit.sfz', path: '/kits/kit.sfz', text: sfz }, { shell: shell }).then(function (r) {
+      var pr = h.program(r.id), keys = pr.regions.map(function (x) { return x.lokey; }).sort().join();
+      ok(texts.indexOf('/kits/inc/common.sfz') >= 0 && keys === '36,38,42' && r.missing.length === 0, 'includes (nested; paths relative to the root .sfz folder) come through readText; all three regions load (' + keys + ')');
+      ok(r.unresolvedIncludes.join() === 'nowhere.sfz' && r.warnings.some(function (w) { return w.opcode === '#include' && /nowhere\.sfz/.test(w.why); }), 'an include that cannot be read is listed as a warning');
+      // the same through a dropped file list on the web (Project.importProgram picks the .sfz out of the list)
+      var list = [file('kit/inc/common.sfz', '<region> sample=sd.wav key=38'), file('kit/kit.sfz', '<control> default_path=smp/\n#include "inc/common.sfz"\n#include "gone.sfz"\n<region> sample=bd.wav key=36'),
+                  file('kit/smp/bd.wav', null, makeWav({ rate: 44100, frames: 40 }))];
+      return P.importProgram({ host: h, files: list, shell: {} });
+    }).then(function (r) {
+      var pr = h.program(r.id), bd = pr.regions.filter(function (x) { return x.lokey === 36; })[0];
+      ok(pr.regions.length === 2 && h.buffer(bd.buffer) && r.unresolvedIncludes.join() === 'gone.sfz', 'web: the dropped list resolves the include and default_path samples; the missing include is a warning');
+      ok(r.missing.length === 1 && /smp\/\.\.\/sd\.wav|smp\/sd\.wav|sd\.wav/.test(h.document().audio[r.missing[0]].src), 'a sample the include names but the list lacks is listed missing (' + h.document().audio[r.missing[0]].src + ')');
+      return P.importProgram({ host: h, files: [file('x.wav', null, new ArrayBuffer(4))], shell: {} }).then(function () { return 'ok'; }, function (e) { return e.message; });
+    }).then(function (msg) {
+      ok(/no \.sfz/.test(msg), 'Project.importProgram refuses a selection without an .sfz');
+      h.dispose();
+    });
+  });
+}
+
+section5.then(section6).then(section7).then(section8).then(section9).then(function () {
   console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
   process.exit(fails ? 1 : 0);
 }, function (e) {

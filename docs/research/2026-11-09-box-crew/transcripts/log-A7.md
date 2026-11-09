@@ -33,3 +33,13 @@ Owner files: app/engine/synths.js, app/engine/programs.js (new), tools/synths-ch
 - app/engine/synths.js, Synths.create: before the unknown-type branch, a type that Drums.has() is created by root.Drums.create(ctx, type, opts), so song tracks can use bd808, sd909 and the rest.
 - app/engine/selfcheck.js (A1's file): one line changed, the load() list now includes 'drums' after 'synths'. This is the only change to A1's file.
 - Checks after the change: synths-check exit 0 (161 passed); selfcheck exit 0 (375 passed).
+
+## fm instrument and sampler _lastHit (coordinator, L1 ruling 6)
+- BUILD.fm in synths.js: two sine operators. Modulator at ratio x note drives the carrier's frequency AudioParam; index is Chowning's I (depth = index x modulator Hz), so sidebands sit at carrier +- n x modulator. indexEnv blends constant and modulator-envelope index; feedback loops the modulator through a DelayNode of one period into its own frequency; carrier amp ADSR; glide; polyphonic. Spec: ratio, index, indexEnv, feedback, attack, decay, sustain, release, modAttack, modDecay, detune, glide, level.
+- Note: the index is scaled by the modulator frequency (Chowning convention), not the carrier. Sidebands are at carrier +- n x modulator either way.
+- Feedback is an approximation (delay of one period, no DX algorithms yet).
+- Sampler: inst._lastHit = {region, t0, rate} set on each program hit (region = index into program.regions) and {region: null, t0, rate} in single-buffer mode.
+- synths-check section 5 excludes 'fm' (not in the archive); section 11 added (fm ratio, index 0, indexEnv, polyphony, glide, _lastHit).
+- Chromium (scratch script): fm 440 Hz carrier, ratio 0.5, index 2: power at 220 and 660 Hz (carrier +- 1 x 220) and 880 Hz (+2) present; off-grid 330/500/550/770 Hz at -120 dB. No page errors.
+- Checks: synths-check exit 0 (169 passed); selfcheck exit 0 (375); Chromium program render R1-R7 unchanged.
+- selfcheck note: one run failed a web import case (A1's check at selfcheck.js:996, "the dropped list resolves ..."), then 392/392 passed on rerun with exit 0. The shared selfcheck.js shows A1's uncommitted edits in the tree; A7 did not edit it in this step. Treat the single failure as unexplained until A1 confirms.
