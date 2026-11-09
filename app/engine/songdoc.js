@@ -15,6 +15,9 @@
  * cell is plain, so song.js stays readable.
  * Samples (wave 2): doc.audio = {bufferId: {name, src, duration, sampleRate, channels}} holds references to audio
  * files, never their bytes; a track with type 'sampler' (inst 'sampler') plays params.buffer. ed.addTrack / removeTrack.
+ * Programs (batch 1): doc.programs = {id: {name, kind, source, global, regions}}, a sampler plays params.program;
+ * audio entries may carry meta (file header) and analysis (pitch). ed.addProgram / removeProgram / setProgram /
+ * setRegion / addRegions / removeRegion.
  */
 (function () {
   'use strict';
@@ -160,9 +163,38 @@
     for (id in a) if (has(a, id) && a[id] && typeof a[id] === 'object') {
       var e = a[id], o = {};
       for (k in AUDIO_KEYS) if (has(AUDIO_KEYS, k) && typeof e[k] === AUDIO_KEYS[k] && (AUDIO_KEYS[k] !== 'number' || isFinite(e[k]))) o[k] = e[k];
+      // file metadata read from the header before decoding, and the pitch analysis (plain JSON objects; batch 1)
+      if (e.meta && typeof e.meta === 'object' && !isArr(e.meta)) o.meta = clone(e.meta);
+      if (e.analysis && typeof e.analysis === 'object' && !isArr(e.analysis)) o.analysis = clone(e.analysis);
       if (o.name == null) o.name = String(id);
       out[id] = o;
     }
+    return out;
+  }
+  // doc.programs: {id: program} (B1 §6). Structure only here: a program is an object with a regions array (at most
+  // 2048 region objects, each with a string `buffer`) and optional name, kind, source, global. Defaults are filled by
+  // Programs.normalize (programs.js) in the Host; SongDoc keeps everything else as plain JSON so nothing is lost.
+  var MAX_REGIONS = 2048;
+  function normRegion(r) {
+    if (!r || typeof r !== 'object' || isArr(r)) return null;
+    var o = clone(r);
+    o.buffer = o.buffer == null ? '' : String(o.buffer);
+    return o;
+  }
+  function normProgram(p, id) {
+    if (!p || typeof p !== 'object' || isArr(p)) return null;
+    var o = clone(p), regs = isArr(p.regions) ? p.regions : [], i;
+    o.name = o.name == null ? String(id) : String(o.name);
+    if (o.kind != null) o.kind = String(o.kind);
+    if (o.global == null || typeof o.global !== 'object' || isArr(o.global)) o.global = {};
+    o.regions = [];
+    for (i = 0; i < regs.length && o.regions.length < MAX_REGIONS; i++) { var r = normRegion(regs[i]); if (r) o.regions.push(r); }
+    return o;
+  }
+  function normPrograms(m) {
+    var out = {}, id;
+    if (!m || typeof m !== 'object' || isArr(m)) return out;
+    for (id in m) if (has(m, id)) { var p = normProgram(m[id], id); if (p) out[id] = p; }
     return out;
   }
   function kindOf(t) {
@@ -178,6 +210,7 @@
                 progression: (def.progression || []).slice(), sends: clone(def.sends || {}), tracks: [], sections: clone(def.sections || []) };
     for (var i = 0; i < (def.tracks || []).length; i++) doc.tracks.push(trackFromLegacy(def.tracks[i]));
     if (def.audio) doc.audio = normAudio(def.audio);
+    if (def.programs) doc.programs = normPrograms(def.programs);
     return doc;
   }
   // one legacy track (patterns / melody strings, or variants) -> a document track
@@ -206,6 +239,7 @@
       def.tracks.push(t);
     }
     if (doc.audio) def.audio = normAudio(doc.audio);
+    if (doc.programs) def.programs = normPrograms(doc.programs);
     return def;
   }
   function save(doc) {
@@ -216,6 +250,7 @@
       for (var k in d.tracks[i].variants) if (has(d.tracks[i].variants, k)) d.tracks[i].variants[k] = compact(d.tracks[i].variants[k]);
     }
     if (d.audio != null) d.audio = normAudio(d.audio);
+    if (d.programs != null) d.programs = normPrograms(d.programs);
     return JSON.stringify(d);
   }
   function load(json) {
@@ -232,6 +267,7 @@
     }
     d.progression = d.progression || []; d.sends = d.sends || {};
     if (d.audio != null) d.audio = normAudio(d.audio);
+    if (d.programs != null) d.programs = normPrograms(d.programs);
     return d;
   }
 
@@ -328,6 +364,70 @@
       return t;
     };
     // remove a track and every reference to it: section play and fx, duck lists, section set and ramp paths
+    // ---- programs (B1 §7.1): each operation is one undo step; refused operations take none
+    function prog(id) { return ed.doc.programs && has(ed.doc.programs, id) ? ed.doc.programs[id] : null; }
+    function patchInto(obj, patch) { for (var k in patch) if (has(patch, k)) { if (patch[k] == null) delete obj[k]; else obj[k] = clone(patch[k]); } }
+    ed.program = function (id) { return prog(id); };
+    ed.programUsage = function (id) {
+      var out = [];
+      for (var i = 0; i < ed.doc.tracks.length; i++) { var t = ed.doc.tracks[i]; if (isSampler(t) && t.params && t.params.program === id) out.push(t.name); }
+      return out;
+    };
+    ed.addProgram = function (id, program) {
+      id = String(id || '');
+      if (!id || prog(id)) return null;
+      var p = normProgram(program, id); if (!p) return null;
+      snap();
+      ed.doc.programs = ed.doc.programs || {};
+      ed.doc.programs[id] = p;
+      return id;
+    };
+    // refused while a track plays it
+    ed.removeProgram = function (id) {
+      if (!prog(id) || ed.programUsage(id).length) return false;
+      snap();
+      delete ed.doc.programs[id];
+      return true;
+    };
+    // name, kind, source: replaced; global: merged (a null value removes a key)
+    ed.setProgram = function (id, patch) {
+      var p = prog(id); if (!p || !patch || typeof patch !== 'object') return false;
+      snap();
+      for (var k in patch) if (has(patch, k)) {
+        if (k === 'regions') continue;
+        if (k === 'global' && patch.global && typeof patch.global === 'object') patchInto(p.global, patch.global);
+        else if (patch[k] == null) delete p[k];
+        else p[k] = k === 'name' ? String(patch[k]) : clone(patch[k]);
+      }
+      if (!p.name) p.name = String(id);
+      return true;
+    };
+    // merge a patch into one region (a null value removes the field; buffer cannot be removed)
+    ed.setRegion = function (id, index, patch) {
+      var p = prog(id); if (!p || !(index >= 0 && index < p.regions.length) || !patch || typeof patch !== 'object') return null;
+      snap();
+      var r = p.regions[index];
+      patchInto(r, patch);
+      r.buffer = r.buffer == null ? '' : String(r.buffer);
+      return r;
+    };
+    // append regions; returns the index of the first, or -1
+    ed.addRegions = function (id, regions) {
+      var p = prog(id), list = isArr(regions) ? regions : [regions], add = [], i;
+      if (!p) return -1;
+      for (i = 0; i < list.length; i++) { var r = normRegion(list[i]); if (r) add.push(r); }
+      if (!add.length || p.regions.length + add.length > MAX_REGIONS) return -1;
+      snap();
+      var first = p.regions.length;
+      for (i = 0; i < add.length; i++) p.regions.push(add[i]);
+      return first;
+    };
+    ed.removeRegion = function (id, index) {
+      var p = prog(id); if (!p || !(index >= 0 && index < p.regions.length)) return false;
+      snap();
+      p.regions.splice(index, 1);
+      return true;
+    };
     ed.removeTrack = function (name) {
       var i, j, idx = -1;
       for (i = 0; i < ed.doc.tracks.length; i++) if (ed.doc.tracks[i].name === name) idx = i;
@@ -357,5 +457,5 @@
 
   root.SongDoc = { STEPS: STEPS, parsePattern: parsePattern, parseMelody: parseMelody, parseVariant: parseVariant, formatVariant: formatVariant,
                    emptyVariant: emptyVariant, fromLegacy: fromLegacy,
-                   isSampler: isSampler, normAudio: normAudio, toLegacy: toLegacy, save: save, load: load, createEditor: createEditor };
+                   isSampler: isSampler, normAudio: normAudio, normPrograms: normPrograms, MAX_REGIONS: MAX_REGIONS, toLegacy: toLegacy, save: save, load: load, createEditor: createEditor };
 })();
