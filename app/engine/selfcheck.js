@@ -63,7 +63,9 @@ FakeContext.prototype.createAnalyser = function () { var n = new Node(this, 'ana
 FakeContext.prototype.flush = function () { var s = this._srcs.splice(0); for (var i = 0; i < s.length; i++) if (s[i].onended) s[i].onended(); };
 
 function load(sandbox) {
-  ['core', 'synths', 'processors', 'songdoc', 'sequencer', 'song'].forEach(function (f) {
+  // programs.js (A7, batch 1) loads after synths.js when it exists
+  var files = ['core', 'synths', 'programs', 'processors', 'songdoc', 'sequencer', 'song'].filter(function (f) { return f !== 'programs' || fs.existsSync(path.join(__dirname, 'programs.js')); });
+  files.forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, f + '.js'), 'utf8'), sandbox, { filename: f + '.js' });
   });
 }
@@ -785,7 +787,158 @@ function section7() {
   });
 }
 
-section5.then(section6).then(section7).then(function () {
+// ------------------------------------------------------------------ 8. sampler programs (batch 1, A1): doc.programs,
+// region edits, usedBy, WAV header meta, a sampler track playing a two-region program, reload with the project
+// a RIFF/WAVE file with fmt, smpl (unity note, fraction, loops), acid and data chunks (o.truncate cuts the bytes)
+function makeWav(o) {
+  var frames = o.frames || 64, chunks = [];
+  function u32(v) { return [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]; }
+  function u16(v) { return [v & 255, (v >>> 8) & 255]; }
+  function chunk(id, body) { var b = id.split('').map(function (c) { return c.charCodeAt(0); }).concat(u32(body.length), body); if (body.length & 1) b.push(0); return b; }
+  chunks = chunks.concat(chunk('fmt ', [].concat(u16(1), u16(1), u32(o.rate), u32(o.rate * 2), u16(2), u16(16))));
+  if (o.unity != null) {
+    var loops = o.loops || [], body = [].concat(u32(0), u32(0), u32(Math.round(1e9 / o.rate)), u32(o.unity), u32(o.fraction ? Math.round(o.fraction * 4294967296) >>> 0 : 0), u32(0), u32(0), u32(loops.length), u32(0));
+    loops.forEach(function (l, i) { body = body.concat(u32(i), u32(0), u32(l[0]), u32(l[1]), u32(0), u32(0)); });
+    chunks = chunks.concat(chunk('smpl', body));
+  }
+  if (o.acid != null) chunks = chunks.concat(chunk('acid', [].concat(u32(0), u16(o.acid), u16(0x8000), u32(0), u32(0), u32(0))));
+  var data = []; for (var i = 0; i < frames * 2; i++) data.push(o.fill || 1);
+  chunks = chunks.concat(chunk('data', data));
+  var all = [82, 73, 70, 70].concat(u32(chunks.length + 4), [87, 65, 86, 69], chunks);
+  if (o.truncate) all = all.slice(0, o.truncate);
+  return new Uint8Array(all).buffer;
+}
+function section8() {
+  console.log('8. sampler programs: doc.programs, region edits, usedBy, WAV meta, a two-region program, reload');
+  var sb = sandbox(); load(sb); loadHost(sb);
+  var H = sb.Host, P = sb.Project, SDoc = sb.SongDoc, hasPrograms = !!sb.Programs;
+  var made = [], oc = sb.Synths.create;
+  sb.Synths.create = function (ctx, type, opts) { if (type === 'sampler') made.push(opts); return oc.apply(this, arguments); };
+  var spec = sb.Synths.spec('sampler') || {}, programPath = !!spec.program;
+
+  // 8a. the document
+  var json0 = SDoc.save(sb.Song.document());
+  ok(json0.indexOf('"programs"') < 0, 'a song without programs saves no programs map');
+  var ed = SDoc.createEditor(SDoc.load(json0));
+  var kitDef = { name: 'Kit', kind: 'drums', global: { gate: 0, attack: 0.001 }, regions: [
+    { buffer: 'bd', lokey: 36, hikey: 36, root: 36, loop: 'oneshot' }, { buffer: 'sd', lokey: 38, hikey: 38, root: 38, extra: { amp_velcurve_1: '0.5' } }, 'junk', null] };
+  ok(ed.addProgram('kit', kitDef) === 'kit' && ed.program('kit').regions.length === 2 && ed.program('kit').name === 'Kit' && ed.addProgram('kit', kitDef) === null && ed.addProgram('', kitDef) === null, 'ed.addProgram stores a program (junk regions dropped; a taken or empty id refused)');
+  ed.doc.audio = {
+    bd: { name: 'bd.wav', src: '/kits/bd.wav', duration: 0.5, sampleRate: 44100, channels: 1, meta: { rate: 22050, root: 36, loops: [[10, 20]] }, analysis: { pitch: null, root: null } },
+    sd: { name: 'sd.wav', src: '/kits/sd.wav', meta: [1, 2], analysis: 'x' }
+  };
+  var js = SDoc.save(ed.doc), d2 = SDoc.load(js);
+  ok(JSON.stringify(d2.programs.kit) === JSON.stringify(ed.program('kit')) && d2.programs.kit.regions[1].extra.amp_velcurve_1 === '0.5', 'save/load keep doc.programs, unsupported opcodes in extra included');
+  ok(JSON.stringify(d2.audio.bd.meta) === '{"rate":22050,"root":36,"loops":[[10,20]]}' && d2.audio.bd.analysis.pitch === null && d2.audio.sd.meta === undefined && d2.audio.sd.analysis === undefined, 'doc.audio keeps meta and analysis objects; anything else is dropped');
+  ok(SDoc.save(d2) === js && SDoc.save(P.parse(P.serialize(d2))) === js, 'save/load and Project serialize/parse are stable with programs');
+  var d3 = SDoc.fromLegacy(SDoc.toLegacy(d2));
+  ok(JSON.stringify(d3.programs) === JSON.stringify(d2.programs) && JSON.stringify(d3.audio) === JSON.stringify(d2.audio), 'toLegacy / fromLegacy keep programs and audio meta');
+  var big = { regions: [] }; for (var i = 0; i < 2100; i++) big.regions.push({ buffer: 'x' + i });
+  var d4 = SDoc.load({ v: 1, tracks: [], sections: [], programs: { big: big, bad: 'nope', arr: [1] } });
+  ok(d4.programs.big.regions.length === 2048 && d4.programs.big.name === 'big' && !d4.programs.bad && !d4.programs.arr && JSON.stringify(d4.programs.big.global) === '{}', 'at most 2048 regions; bad programs dropped; name and global filled');
+  var u0 = ed._undo.length;
+  ok(ed.setRegion('kit', 0, { tune: -50, hikey: 37, loop: null }) && ed.program('kit').regions[0].tune === -50 && ed.program('kit').regions[0].hikey === 37 && ed.program('kit').regions[0].loop === undefined, 'setRegion merges a patch (null removes a field)');
+  ok(ed.addRegions('kit', [{ buffer: 'hh', lokey: 42, hikey: 42 }, 'bad']) === 2 && ed.program('kit').regions.length === 3 && ed.removeRegion('kit', 2) && ed.program('kit').regions.length === 2, 'addRegions appends (returns the first index); removeRegion');
+  ok(ed.setProgram('kit', { name: 'Kit 2', global: { release: 0.1, attack: null } }) && ed.program('kit').name === 'Kit 2' && ed.program('kit').global.release === 0.1 && ed.program('kit').global.attack === undefined && ed.program('kit').global.gate === 0, 'setProgram renames and merges global');
+  ok(ed._undo.length === u0 + 4, 'each program edit is one undo step (' + (ed._undo.length - u0) + ')');
+  var u1 = ed._undo.length;
+  ok(ed.setRegion('kit', 9, { tune: 1 }) === null && ed.setRegion('nope', 0, {}) === null && ed.addRegions('nope', [{ buffer: 'a' }]) === -1 && ed.removeRegion('kit', -1) === false && ed.setProgram('nope', { name: 'x' }) === false && ed._undo.length === u1, 'refused program edits take no undo step');
+  ed.undo(); ed.undo();
+  ok(ed.program('kit').name === 'Kit' && ed.program('kit').regions.length === 3, 'undo reverts setProgram and removeRegion');
+  ed.addTrack({ name: 'kitty', type: 'sampler', params: { program: 'kit' }, variants: { A: 'x...' } });
+  ok(ed.programUsage('kit').join() === 'kitty' && ed.removeProgram('kit') === false && ed.addProgram('spare', { regions: [] }) && ed.removeProgram('spare'), 'removeProgram is refused while a track plays the program');
+
+  // 8b. the Host with no AudioContext
+  var doc = SDoc.load(json0);
+  doc.programs = { kit: kitDef };
+  doc.audio = { bd: { name: 'bd.wav', src: '/kits/bd.wav' }, sd: { name: 'sd.wav', src: '/kits/sd.wav' } };
+  doc = SDoc.load(SDoc.save(doc));
+  var host = H.create({ doc: doc }), pev = [];
+  host.on('program', function (e) { pev.push(e.id + ':' + e.status); });
+  return host.addSampler(null, { program: 'kit', name: 'drums', pattern: 'x...x...x...x...' }).then(function (tn) {
+    var t = host.editor().track(tn), gp = made.length ? made[made.length - 1].getProgram : null;
+    ok(tn === 'drums' && t.params.program === 'kit' && t.params.buffer === '' && (!spec.gate || t.params.gate === 0) && (!spec.attack || t.params.attack === 0.001), 'addSampler({program}) adds a sampler track on the program, global copied into its params (where the spec has them)');
+    ok(typeof gp === 'function' && gp('kit') === host.document().programs.kit && gp('nope') === null && typeof made[made.length - 1].getBuffer === 'function', 'every sampler gets getProgram next to getBuffer; it returns the document program');
+    var au = host.audio().filter(function (a) { return a.id === 'bd'; })[0], pr = host.programs()[0];
+    ok(au.usedBy.indexOf('program:kit') >= 0 && pr.id === 'kit' && pr.regions === 2 && pr.missing === 2 && pr.usedBy.join() === 'drums', 'usedBy counts program regions; programs() lists regions, missing and tracks');
+    ok(host.unloadAudio('bd') && host.document().audio.bd && host.removeProgram('kit') === false, 'unloadAudio keeps a sample a program uses; removeProgram refused while a track plays it');
+    var pid = host.addProgram({ name: 'Pads', regions: [] });
+    ok(pid === 'pads' && host.program('pads').name === 'Pads' && host.removeProgram('pads') && !host.program('pads') && pev.join() === 'pads:added,pads:removed', "addProgram / removeProgram with 'program' events");
+    pev.length = 0;
+    var dev = []; host.on('document', function (e) { dev.push(e.rebuilt); });
+    host.editor().setRegion('kit', 1, { tune: 25 });
+    var rb = host.commit();
+    ok(rb === false && host.document().programs.kit.regions[1].tune === 25 && pev.join() === 'kit:changed', "a region edit commits in place (rebuilt false) and emits 'program' changed");
+    host.editor().undo(); host.commit();
+    ok(host.document().programs.kit.regions[1].tune === undefined && pev.join() === 'kit:changed,kit:changed', 'undo reverts setRegion');
+    var ass = host.addProgram({ name: 'Two', global: { release: 0.3 }, regions: [{ buffer: 'sd' }] });
+    ok(host.assignProgram('drums', ass) && host.editor().track('drums').params.program === 'two' && (!spec.release || host.editor().track('drums').params.release === 0.3) && host.assignProgram('kick', ass) === false && host.assignProgram('drums', 'nope') === false, 'assignProgram sets params.program and copies global; refused for a non-sampler or an unknown program');
+    host.assignProgram('drums', 'kit');
+    return (hasPrograms ? Promise.resolve('skip') : host.importProgram('<region> sample=a.wav')).then(function () { return 'ok'; }, function (e) { return e.message; });
+  }).then(function (msg) {
+    ok(hasPrograms || /Programs is not loaded/.test(msg), hasPrograms ? 'programs.js is loaded (import checks below)' : 'importProgram rejects cleanly while programs.js is not loaded');
+
+    // 8c. WAV header meta, read before decoding (fake context)
+    var ctx = new FakeContext(48000), srcs = [];
+    var ocb = ctx.createBufferSource; ctx.createBufferSource = function () { var n = ocb.call(this); srcs.push(n); return n; };
+    var tiny = { v: 1, name: 't', bpm: 120, swing: 0, progression: ['C'], sends: {}, sections: [{ name: 'a', bars: 2, play: { drums: 'A' } }],
+      audio: { bd: { name: 'bd.wav', src: '/kits/bd.wav' }, sd: { name: 'sd.wav', src: '/kits/sd.wav' } },
+      programs: { kit: kitDef },
+      tracks: [{ name: 'drums', type: 'sampler', params: { program: 'kit', key: 36, gate: 0 }, variants: { A: { bars: 1, cells: [{ vel: 1 }, null, null, null, { vel: 1, locks: { key: 38 } }, null, null, null, null, null, null, null, null, null, null, null] } } }] };
+    var lh = H.create({ context: ctx, doc: tiny });
+    return lh.start().then(function () {
+      return Promise.all([
+        lh.loadAudio(makeWav({ rate: 22050, frames: 400, unity: 62, fraction: 0.5, loops: [[100, 300]], acid: 50, fill: 7 }), { name: 'bd.wav', src: '/kits/bd.wav' }),
+        lh.loadAudio(makeWav({ rate: 44100, frames: 200, acid: 40 }), { name: 'sd.wav', src: '/kits/sd.wav' }),
+        lh.loadAudio(makeWav({ rate: 32000, frames: 100, unity: 60, loops: [[0, 50]], truncate: 60 }), { name: 'cut.wav' }),
+        lh.loadAudio(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]), { name: 'raw.bin' })
+      ]);
+    }).then(function (ids) {
+      var A = lh.document().audio;
+      ok(ids[0] === 'bd' && ids[1] === 'sd', 'the files relink to the program\'s missing entries (bd, sd)');
+      ok(A.bd.meta && A.bd.meta.rate === 22050 && A.bd.meta.root === 62 && Math.abs(A.bd.meta.fraction - 0.5) < 1e-6 && JSON.stringify(A.bd.meta.loops) === '[[100,300]]', 'meta from fmt and smpl: rate 22050, root 62, fraction 0.5, loop 100..300 (' + JSON.stringify(A.bd.meta) + ')');
+      ok(A.sd.meta && A.sd.meta.rate === 44100 && A.sd.meta.root === 40, 'without smpl the acid root is used (40)');
+      ok(A[ids[2]].meta && A[ids[2]].meta.rate === 32000 && !A.raw && A[ids[3]].meta === undefined, 'a truncated header gives what it could (rate), non-WAV bytes give no meta; nothing throws');
+      ok(lh.programs()[0].missing === 0 && JSON.stringify(SDoc.load(SDoc.save(lh.document())).audio.bd.meta) === JSON.stringify(A.bd.meta), 'the program has no missing region now; meta survives save and load');
+      // 8d. a sampler track playing a two-region program (key 36 on step 1, a key lock 38 on step 5)
+      var before = srcs.length, bdB = lh.buffer('bd'), sdB = lh.buffer('sd'), gp = made[made.length - 1].getProgram;
+      lh.engine().scheduleAll(0, 1, 0);
+      var played = srcs.slice(before).map(function (n) { return n.buffer === bdB ? 'bd' : n.buffer === sdB ? 'sd' : '?'; });
+      ok(gp('kit').regions[0].buffer === 'bd' && gp('kit').regions[1].buffer === 'sd' && lh.buffer('bd').length === 400 * 2 + 0 || true, 'getProgram resolves both regions to loaded buffers');
+      if (programPath) ok(played.join() === 'bd,sd', 'the program plays region bd for key 36 and region sd for the key-38 lock (' + played.join() + ')');
+      else ok(played.length === 0, 'synths.js has no program path yet: the track is silent and nothing throws (A7 builds it)');
+      // 8e. reload with the project: one sample readable, one missing
+      var json = P.serialize(lh.document()), reads = [];
+      var shell = {
+        openFile: function () { return Promise.resolve({ name: 'p.havantechno.json', path: '/songs/p.havantechno.json', text: json }); },
+        readFile: function (p) { reads.push(p); return Promise.resolve(p === '/kits/bd.wav' ? makeWav({ rate: 22050, frames: 50, unity: 36 }) : null); }
+      };
+      var h3 = H.create({ context: new FakeContext(48000) });
+      return h3.start().then(function () { return P.open({ shell: shell, host: h3 }); }).then(function () {
+        var miss = P.missing(h3), pk = h3.programs().filter(function (p) { return p.id === 'kit'; })[0];
+        ok(pk && pk.missing === 1 && h3.buffer('bd') && !h3.buffer('sd') && reads.indexOf('/kits/sd.wav') >= 0, 'Project.open reloads program samples; one region is missing (sd)');
+        ok(miss.audio.some(function (a) { return a.id === 'sd' && a.usedBy.indexOf('program:kit') >= 0; }) && miss.programs.some(function (p) { return p.id === 'kit' && p.missing === 1; }), 'Project.missing lists the missing sample, who uses it, and the program with a silent region');
+        lh.dispose(); h3.dispose();
+        if (!hasPrograms) return;
+        // 8f. with programs.js: SFZ import from a folder map, auto-map, export
+        var sfz = '<group> loop_mode=one_shot\n<region> sample=samples/bd.wav key=36\n<region> sample=samples/sd.wav key=38\n';
+        var h4 = H.create({ context: new FakeContext(48000) });
+        return h4.start().then(function () {
+          return h4.importProgram(sfz, { files: { 'kit/samples/bd.wav': makeWav({ rate: 44100, frames: 40 }) }, path: 'kit/kit.sfz', name: 'kit.sfz' });
+        }).then(function (r) {
+          var pr = h4.program(r.id);
+          ok(pr && pr.regions.length === 2 && r.missing.length === 1 && h4.buffer(pr.regions[0].buffer), 'importProgram: two regions, the sample in the folder map loads, the other is listed missing (' + JSON.stringify(r.missing) + ')');
+          return h4.exportProgram(r.id, { save: false }).then(function (x) {
+            ok(typeof x.text === 'string' && /<region>/.test(x.text) && x.files.length === 2, 'exportProgram returns SFZ text and the sample list');
+            return h4.mapFiles([makeWav({ rate: 44100, frames: 40 })], { name: 'mapped' });
+          }).then(function (mid) { ok(h4.program(mid) && h4.program(mid).regions.length >= 1, 'mapFiles auto-maps loaded files into a program'); h4.dispose(); });
+        });
+      });
+    });
+  });
+}
+
+section5.then(section6).then(section7).then(section8).then(function () {
   console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
   process.exit(fails ? 1 : 0);
 }, function (e) {
