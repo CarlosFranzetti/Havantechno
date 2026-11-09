@@ -13,13 +13,13 @@
  * 808 types: bd808 sd808 cp808 ch808 oh808 cy808 cb808 lt808 mt808 ht808 lc808 mc808 hc808 rs808 cl808 ma808.
  * 909 types: bd909 sd909 lt909 mt909 ht909 rs909 cp909 ch909 oh909 cr909 rd909.
  *
- * Sources (docs/research/2026-11-09-box-crew/transcripts/B2-808.md and B3-909.md). Each spec entry carries
- * `basis`: 'paper' (Werner DAFx-14 / Werner-Abel-Smith ICMC|SMC 2014 / andremichelle/tr-909 constants),
- * 'prior' (io-808 or ER-99 by-ear constants, or the transcripts' memory notes: NOT circuit values, to be fitted
- * by A9 against the owner's references) or 'choice' (a design range with no source).
+ * Sources (docs/research/2026-11-09-box-crew/transcripts/B2-808.md and B3-909.md, third passes). Each spec entry carries
+ * `basis`: 'manual' (Roland TR-808 / TR-909 service notes: check table values or values derived from the schematics),
+ * 'paper' (Werner DAFx-14 / Werner-Abel-Smith ICMC|SMC 2014), 'source' (andremichelle/tr-909 constants), or
+ * 'prior' (io-808 or ER-99 by-ear constants, memory notes, or a design choice: NOT circuit values, to be fitted by A9).
  *
- * Conventions: 808 `decay` is seconds to -60 dB. 909 `decay`/`tune`(bd) are TIME CONSTANTS (andremichelle's panel
- * mappings), their spec unit says so. The 909 hats are sampled in the original; here the sampled voices are
+ * Conventions: 808 `decay` is seconds to 1/10 of the peak (the service notes' "checking voices" table); the 909 bd/sd/tom/hat
+ * `decay`/`tune`/`tone` are TIME CONSTANTS (andremichelle's panel mappings and the manual's RC values), their spec unit says so. The 909 hats are sampled in the original; here the sampled voices are
  * rendered once per context into AudioBuffers by plain JS DSP (no OfflineAudioContext needed) and played through
  * a hold + exponential decay. Hat groups: 'hat808' (ch808 chokes oh808) and 'hat909' (one channel, any new
  * hat voice stops the previous one).
@@ -31,8 +31,8 @@
   var K = root.Kit;
   var setV = K.setV, lin = K.lin, val = K.val, disc = K.disc, clamp = K.clamp, target = K.target, dbToGain = K.dbToGain;
 
-  var LN1000 = 6.907755;                       // ln(1000): seconds-to--60-dB -> exponential time constant
-  function tcOf(t60) { return Math.max(t60, 0.0005) / LN1000; }
+  var LN10 = 2.302585;                         // ln(10): seconds-to-1/10 (the manual's decay definition) -> exponential time constant
+  function tcOf(t10) { return Math.max(t10, 0.0005) / LN10; }
 
   // ------------------------------------------------------------ constants from the papers
   // Werner, Abel, Smith, "The TR-808 Cymbal: a Physically-Informed, Circuit-Bendable, Digital Model", ICMC|SMC 2014
@@ -42,25 +42,41 @@
   var METAL = {
     freqs: [205.3, 369.6, 304.4, 522.7, 800, 540],
     duty: 0.4798,
-    bp: [3440, 7100],
-    hp: 10500,
+    bp: [3440, 7210],                 // stage b 3440 (paper; the manual's values give 2620, unreconciled), stage a 7210 (manual; paper 7100)
+    bpPaper: [3440, 7100],
+    hp: 14400,                        // cymbal high-pass IC5a, manual (calculated natural frequency; the paper's measured corner is about 10500)
+    hpPaper: 10500,
+    hpOpen: 7800, hpClosed: 11700,    // hat Sallen-Key high-passes, manual (OH 7.8 kHz, CH 11.7 kHz)
     cowbell: [800, 540]
   };
   // Werner, "A Physically-Informed, Circuit-Bendable, Digital Model of the Roland TR-808 Bass Drum Circuit",
   // DAFx-14: 1 ms trigger pulse, centre frequency shift of more than an octave for about 6 ms, model centre
   // frequency 49.5 Hz (Roland's chart 56 Hz).
-  var BD808 = { tune: 49.5, shift: 2.0, shiftTime: 0.006, pulseMs: 1 };
+  // Service notes: 56 Hz typical at 12 o'clock (p. 14), stem 53.8k -> 6.8k gives a ratio of 2.81 (p. 9), accent doubling for the
+  // 4 ms ON period of Q43 (p. 5).
+  var BD808 = { tune: 56, shift: 2.8, shiftTime: 0.006, pulseMs: 1, accentRatio: 2.0, accentTime: 0.004 };
+  // accent / normal peak ratios from the service notes' check table (CP is printed 6 / 2, a probable misprint: 2 is a prior)
+  var ACC808 = { bd808: 2.86, sd808: 3.33, lc808: 3.43, lt808: 3.43, mc808: 3.33, mt808: 3.67, hc808: 3.43, ht808: 3.43, cl808: 3.2, rs808: 3.33,
+                 ma808: 1.67, cp808: 2.0, cb808: 3.43, cy808: 2.0, oh808: 2.0, ch808: 2.0 };
   // andremichelle/tr-909 (AGPL-3.0-or-later): bassdrum.ts 7-9 hold 0.060 s, FreqStart 274, FreqEnd 53;
   // preset.ts 70-77 mappings; processor.ts 17 step levels -18 / -9 / 0 dB.
   var BD909 = { start: 274, end: 53, hold: 0.06 };
+  // TR-909 service notes p. 5: sample clock about 30 kHz (60 kHz / 2), 6-bit, ROM lengths from the address counters
+  var ROM909 = { rate: 30000, bits: 6, ch: 8192, oh: 24576, cr: 32768, rd: 32768 };
   var STEP_DB = [-18, -9, 0];
 
   // ------------------------------------------------------------ small helpers
-  function ampOf(ev) { var v = ev && typeof ev.vel === 'number' ? ev.vel : 0.8; return clamp(v * (ev && ev.accent ? 1.2 : 1), 0, 1.5); }
-  // 909 step levels (weak / normal / accent = ev.step 0 / 1 / 2) as absolute dB gains; no ev.step = unchanged
-  function stepAmp(ev) {
-    if (!ev || typeof ev.step !== 'number' || ev.step !== ev.step) return 1;
-    return dbToGain(STEP_DB[clamp(Math.round(ev.step), 0, 2)]);
+  function velOf(ev) { return clamp(ev && typeof ev.vel === 'number' ? ev.vel : 0.8, 0, 1.5); }
+  // 808: the accent hit is the full-scale hit; an unaccented hit is 1/ratio of it (ratios from the check table, ACC808)
+  function ampOf(ev, inst) {
+    var r = (inst && ACC808[inst.type]) || 1;
+    return velOf(ev) * (ev && ev.accent ? 1 : 1 / r);
+  }
+  // 909: ev.step 0 / 1 / 2 = weak / normal / accent as absolute dB gains (-18 / -9 / 0). Without ev.step the accent
+  // flag is 6 dB (manual, scope p. 9) over an unaccented hit at half scale.
+  function ampOf9(ev) {
+    if (ev && typeof ev.step === 'number' && ev.step === ev.step) return velOf(ev) * dbToGain(STEP_DB[clamp(Math.round(ev.step), 0, 2)]);
+    return velOf(ev) * (ev && ev.accent ? 1 : 0.5);
   }
   function P(min, max, value, unit, basis, label) {
     var o = { min: min, max: max, value: value, unit: unit || '' };
@@ -113,7 +129,8 @@
   function bankOf(ctx) {
     var c = cacheOf(ctx);
     if (c.bank) return c.bank;
-    var b = { freqs: METAL.freqs.slice(), duty: METAL.duty, bp: METAL.bp.slice(), hp: METAL.hp, cowbell: METAL.cowbell.slice(), wave: null };
+    var b = { freqs: METAL.freqs.slice(), duty: METAL.duty, bp: METAL.bp.slice(), bpPaper: METAL.bpPaper.slice(), hp: METAL.hp, hpPaper: METAL.hpPaper,
+             hpOpen: METAL.hpOpen, hpClosed: METAL.hpClosed, cowbell: METAL.cowbell.slice(), wave: null };
     try {
       if (typeof ctx.createPeriodicWave === 'function') {
         var co = pulseCoeffs(METAL.duty, 96);
@@ -265,41 +282,47 @@
 
   var BUILD = {};
   function base(extra, drive) {
-    var s = { level: P(0, 1.5, 1, '', 'choice'), drive: P(0, 1, drive || 0, '', 'choice') };
+    var s = { level: P(0, 1.5, 1, ''), drive: P(0, 1, drive || 0, '') };
     for (var k in extra) if (extra.hasOwnProperty(k)) s[k] = extra[k];
     return s;
   }
 
   // ================================================================ TR-808
-  // ---- bd808: 1 ms pulse into a bridged-T ringing near `tune`; centre frequency shifted up by more than an octave
-  // for ~6 ms (Werner), then back; a slow "sigh" (droop) over the decay. Accent is amplitude only (vel x1.2) plus a
-  // slightly larger attack shift.
+  // Values: Roland TR-808 service notes (manual) unless the spec row's basis says otherwise.
+  // ---- bd808: 1 ms pulse into a bridged-T ringing near `tune` (56 Hz typical, p. 14). The stem is shortened for ~6 ms
+  // after every trigger (centre-frequency ratio 2.81, Werner's "more than an octave"); on accent, Q43 doubles the
+  // frequency for its 4 ms ON period (p. 5), built here as a 2x window right after the shift. A slow "sigh" (droop)
+  // follows. Accent also raises the peak 2.86x over an unaccented hit (check table).
   BUILD.bd808 = {
     spec: base({
-      tune: P(35, 90, BD808.tune, 'Hz', 'paper', 'Werner model centre frequency 49.5 Hz (Roland chart 56 Hz)'),
-      decay: P(0.1, 2.0, 0.35, 's', 'prior', 'seconds to -60 dB; io-808 300 ms at mid setting'),
-      tone: P(200, 5000, 1200, 'Hz', 'prior', 'low-pass after the resonator; io-808 200 + 20 x tone'),
-      shift: P(1, 3, BD808.shift, 'x', 'paper', 'attack centre-frequency ratio, "more than an octave"'),
+      tune: P(45, 70, BD808.tune, 'Hz', 'manual', 'p. 14: 18 ms period (56 Hz) at 12 o\'clock; bare RC 45.7 Hz, Werner model 49.5 Hz'),
+      decay: P(0.05, 0.8, 0.3, 's', 'manual', 'p. 14: 50 / 300 / 800 ms, time to 1/10 of the peak'),
+      tone: P(400, 5000, 1200, 'Hz', 'prior', 'low-pass after the resonator (TONE pot)'),
+      shift: P(1, 3, BD808.shift, 'x', 'paper', 'attack centre-frequency ratio on every hit; manual stem 53.8k -> 6.8k = 2.81'),
       shiftTime: P(0.003, 0.012, BD808.shiftTime, 's', 'paper', 'duration of the attack shift, 5 to 6 ms'),
       droop: P(0, 1, 0.1, '', 'prior', 'pitch sigh over the decay (x 0.3 = fraction)'),
-      click: P(0, 1, 0.3, '', 'prior', 'level of the 1 ms trigger edge')
+      click: P(0, 1, 0.3, '', 'paper', 'level of the 1 ms trigger edge')
     }, 0.15),
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
-        var p = inst.params, a = ampOf(ev), v = voice(ctx, inst);
-        var tc = tcOf(p.decay), st = p.shiftTime, f0 = p.tune * p.shift * (ev.accent ? 1.15 : 1);
-        var end = t + 0.002 + tc * 9 + 0.03;
-        var o = v.osc('sine', f0, t, end);
-        target(o.frequency, p.tune, t + st, 0.0015);
-        target(o.frequency, p.tune * (1 - 0.3 * p.droop), t + st + 0.008, p.decay / 3);
+        var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst);
+        var tc = tcOf(p.decay), st = p.shiftTime, f0 = p.tune * p.shift;
+        var end = t + 0.002 + tc * 9 + 0.03 + (ev.accent ? BD808.accentTime : 0);
+        var o = v.osc('sine', f0, t, end), tEnd = t + st;
+        if (ev.accent) {                                   // Q43 ON period: twice the frequency for 4 ms after the shift
+          setV(o.frequency, p.tune * BD808.accentRatio, t + st);
+          tEnd = t + st + BD808.accentTime;
+        }
+        target(o.frequency, p.tune, tEnd, 0.0015);
+        target(o.frequency, p.tune * (1 - 0.3 * p.droop), tEnd + 0.008, p.decay / 3);
         var g = v.gain(0);
         setV(g.gain, 0, t); lin(g.gain, a * 0.9, t + 0.001); target(g.gain, 0, t + 0.001, tc);
         con(o, g);
         var lpC = v.filter('lowpass', 5000, 0.7), cg = v.gain(a * 0.8 * p.click);
         var s1 = v.buf(pulseBuf(ctx, BD808.pulseMs), t, t + 0.01);
         con(s1, cg); con(cg, lpC);
-        // the retriggering pulse (C39, R161, D52) about when the shift ends
+        // the retriggering pulse (C39, R161, D52) when the shift ends
         var cg2 = v.gain(a * 0.4 * p.click), s2 = v.buf(pulseBuf(ctx, BD808.pulseMs), t + st, t + st + 0.01);
         con(s2, cg2); con(cg2, lpC);
         var lp = v.filter('lowpass', p.tone, 0.7);
@@ -309,30 +332,32 @@
     }
   };
 
-  // ---- sd808: two sine "bridged-T" oscillators + contour-gated high-passed noise; the snappy contour is also added
-  // to the oscillators' trigger (Sound on Sound "The TR808 Snare")
+  // ---- sd808: two bridged-T oscillators at 238 and 476 Hz (table; schematic 249.6 / 499 before loading) plus
+  // contour-gated high-passed noise. TONE (VR8) is the output balance between the two resonators (p. 6), not a
+  // noise filter. SNAPPY (VR9) sets the snappy contour, which is added to the trigger so it also kicks the oscillators.
   BUILD.sd808 = {
     spec: base({
-      tune: P(120, 400, 238, 'Hz', 'prior', 'io-808 lowOscFreq 238'),
-      ratio: P(1.5, 3, 2.0, 'x', 'prior', 'io-808 476/238'),
-      tone: P(0, 1, 0.5, '', 'choice', 'moves the noise high-pass 800 to 3000 Hz (io-808: 800 + 100 x tone)'),
-      snappy: P(0, 1, 0.5, '', 'prior', 'noise level; also kicks the oscillators'),
-      decay: P(0.03, 0.5, 0.1, 's', 'prior', 'body, seconds to -60 dB'),
-      noiseDecay: P(0.03, 0.6, 0.075, 's', 'prior', 'io-808 noise decay 75 ms')
+      tune: P(120, 400, 238, 'Hz', 'manual', 'p. 14: 4.2 ms period; the second resonator is tune x ratio'),
+      ratio: P(1.5, 3, 2.0, 'x', 'manual', 'p. 14: 2.1 ms (476 Hz) over 4.2 ms (238 Hz)'),
+      tone: P(0, 1, 0.5, '', 'manual', 'balance 238 Hz (0) to 476 Hz (1) resonator, p. 6; centre = equal'),
+      snappy: P(0, 1, 0.5, '', 'manual', 'noise and snappy contour amplitude (VR9)'),
+      decay: P(0.03, 0.5, 0.06, 's', 'manual', 'p. 14: 60 ms at mid, time to 1/10 of the peak'),
+      noiseDecay: P(0.03, 0.6, 0.11, 's', 'manual', 'noise gate tau 48 ms (Q48, C56 x R194) = 0.11 s to 1/10')
     }, 0.1),
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
-        var p = inst.params, a = ampOf(ev), v = voice(ctx, inst), sn = p.snappy;
-        var tcB = tcOf(p.decay), tcN = tcOf(p.noiseDecay), end = t + Math.max(p.decay, p.noiseDecay, 0.06) * 1.6 + 0.05;
+        var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), sn = p.snappy;
+        var tcB = tcOf(p.decay), tcN = tcOf(p.noiseDecay), end = t + Math.max(p.decay, p.noiseDecay, 0.06) * 4 + 0.05;
         var bus = v.gain(1), o1 = v.osc('sine', p.tune, t, end), o2 = v.osc('sine', p.tune * p.ratio, t, end);
+        var g1 = v.gain(Math.min(1, 2 * (1 - p.tone))), g2 = v.gain(Math.min(1, 2 * p.tone));
         var gA = v.gain(0), gB = v.gain(0);
         expEnv(gA.gain, t, a * 0.3, 0, tcB);
         expEnv(gB.gain, t, a * 0.15 * sn, 0, tcOf(0.05));
-        con(o1, gA); con(o2, gA); con(o1, gB); con(o2, gB); con(gA, bus); con(gB, bus);
+        con(o1, g1); con(o2, g2); con(g1, gA); con(g2, gA); con(g1, gB); con(g2, gB); con(gA, bus); con(gB, bus);
         var n = v.noise(t, end);
         if (n) {
-          var hp = v.filter('highpass', 800 + p.tone * 2200, 0.7), gN = v.gain(0);
+          var hp = v.filter('highpass', 1200, 0.7), gN = v.gain(0);       // corner 589 Hz first-order in the schematic; 800 to 1800 Hz prior
           expEnv(gN.gain, t, a * 0.7 * sn, 0, tcN);
           con(n, hp); con(hp, gN); con(gN, bus);
         }
@@ -341,36 +366,38 @@
     }
   };
 
-  // ---- claps (shared by cp808 and cp909): bandpassed noise, saw-like bursts, plus a reverb-like tail
+  // ---- claps (shared by cp808 and cp909): bandpassed noise, a few narrow pulses, then the main decay.
+  // 808 (p. 6): three pulses gated by a 30 ms pulse, envelope tau 38.5 ms (R365 x C144), main decay after the third pulse.
   function clapVoice(inst, t, ev, o) {
-    var ctx = inst.ctx, p = inst.params, a = ampOf(ev) * (o.step ? stepAmp(ev) : 1), v = voice(ctx, inst);
-    var nb = Math.max(1, Math.round(p.bursts)), sp = p[o.spacingKey], btc = p.burstDecay;
-    var tcT = tcOf(p.decay), end = t + (nb - 1) * sp + Math.max(btc * 9, p.decay) + 0.05;
+    var ctx = inst.ctx, p = inst.params, a = o.nine ? ampOf9(ev) : ampOf(ev, inst), v = voice(ctx, inst);
+    var sp = p[o.spacingKey], nb = Math.max(1, Math.round(p.bursts)), btc = p.burstDecay;
+    if (o.gate) nb = Math.min(nb, Math.floor(o.gate / sp + 1e-9) + 1);       // the pulse generator only runs while the gate is on
+    var tcT = tcOf(p.decay), tLast = t + (nb - 1) * sp, end = tLast + Math.max(btc * 9, p.decay * 4) + 0.05;
     var n = v.noise(t, end);
     if (!n) return;
     var bp = v.filter('bandpass', p.tone, p.q), gB = v.gain(0), gT = v.gain(0), out = v.gain(1);
     if (o.hp) { var hp = v.filter('highpass', o.hp, 0.7); con(n, hp); con(hp, bp); } else con(n, bp);
     setV(gB.gain, 0, t);
     for (var i = 0; i < nb; i++) {
-      var ti = t + i * sp, lv = (i === 0 ? 1 : 0.5) * a * 1.4;   // non-negative saw pattern (io-808's 1, .5, 0, -.5 is a bug)
+      var ti = t + i * sp, lv = (o.tau ? Math.exp(-i * sp / o.tau) : (i === 0 ? 1 : 0.5)) * a * 1.4;
       setV(gB.gain, lv, ti);
       target(gB.gain, 0, ti, btc);
     }
-    setV(gT.gain, 0, t); lin(gT.gain, a * p.tail * 1.1, t + 0.0002); target(gT.gain, 0, t + 0.0002, tcT);
+    setV(gT.gain, 0, t); setV(gT.gain, 0, tLast); lin(gT.gain, a * p.tail * 1.1, tLast + 0.0002); target(gT.gain, 0, tLast + 0.0002, tcT);
     con(bp, gB); con(bp, gT); con(gB, out); con(gT, out);
     con(out, outOf(v, inst, null, t));
   }
   BUILD.cp808 = {
     spec: base({
-      tone: P(500, 3000, 1000, 'Hz', 'prior', 'band-pass centre; io-808 1000'),
+      tone: P(500, 3000, 1000, 'Hz', 'manual', 'band-pass 1000 Hz, block diagram p. 7'),
       q: P(0.5, 8, 2, '', 'prior', 'band-pass Q, no source'),
-      bursts: P(1, 6, 4, '', 'prior', 'io-808 four bursts'),
-      spacing: P(0.004, 0.03, 0.01, 's', 'prior', 'io-808 10 ms'),
-      burstDecay: P(0.003, 0.02, 0.008, 's', 'prior', 'time constant of each burst, no source'),
-      decay: P(0.05, 0.6, 0.2, 's', 'prior', 'tail, seconds to -60 dB (io-808 reverb 115 ms)'),
-      tail: P(0, 1, 0.5, '', 'prior', 'tail amount (io-808 0.75)')
+      bursts: P(1, 6, 3, '', 'manual', 'three pulses (Fig. 13-5), limited by the 30 ms gate'),
+      spacing: P(0.004, 0.03, 0.01, 's', 'prior', 'tooth spacing, comparator-timed in the original, not derivable'),
+      burstDecay: P(0.003, 0.02, 0.008, 's', 'prior', 'time constant of each narrow pulse, no source'),
+      decay: P(0.05, 0.6, 0.1, 's', 'manual', 'p. 14: 100 ms main decay after the third pulse, to 1/10'),
+      tail: P(0, 1, 0.5, '', 'prior', 'level of the main decay against the pulses')
     }, 0),
-    build: function (inst) { inst.trigger = function (t, ev) { clapVoice(inst, t, ev, { spacingKey: 'spacing', hp: 0, step: false }); }; }
+    build: function (inst) { inst.trigger = function (t, ev) { clapVoice(inst, t, ev, { spacingKey: 'spacing', hp: 0, nine: false, gate: 0.03, tau: 0.0385 }); }; }
   };
 
   // ---- the metal bank voices: ch808, oh808, cy808, cb808
@@ -386,16 +413,17 @@
   function hat808(open) {
     return {
       spec: base({
-        tune: P(0.7, 1.4, 1, 'x', 'choice', 'ratio on the six oscillator frequencies'),
-        spread: P(0, 1, 0, '', 'prior', 'per-oscillator tolerance jitter, +/-5 % at 1'),
-        hp: P(5000, 12000, METAL.hp, 'Hz', 'prior', 'paper corner about 10500 Hz (HPF #3, resonant); Q 1.5 is a first guess'),
-        decay: open ? P(0.09, 1.5, 0.35, 's', 'prior', 'io-808 90 + 3.6 x decay ms; seconds to -60 dB')
-                    : P(0.01, 0.15, 0.05, 's', 'prior', 'io-808 closed 50 ms; seconds to -60 dB')
+        tune: P(0.7, 1.4, 1, 'x', 'prior', 'ratio on the six oscillator frequencies'),
+        spread: P(0, 1, 0, '', 'paper', 'per-oscillator tolerance jitter, +/-5 % at 1 (component tolerance, paper section 3)'),
+        hp: open ? P(5000, 14000, METAL.hpOpen, 'Hz', 'manual', 'Sallen-Key high-pass C66 R147 R146 = 7.8 kHz (calculated)')
+                 : P(5000, 14000, METAL.hpClosed, 'Hz', 'manual', 'Sallen-Key high-pass C72 R153 R155 = 11.7 kHz (calculated)'),
+        decay: open ? P(0.09, 0.6, 0.45, 's', 'manual', 'p. 14: 90 / 450 / 600 ms, time to 1/10 of the peak')
+                    : P(0.03, 0.1, 0.05, 's', 'manual', 'p. 14: 50 ms, fixed on the machine, to 1/10')
       }, 0),
       build: function (inst) {
         var ctx = inst.ctx;
         inst.trigger = function (t, ev) {
-          var p = inst.params, a = ampOf(ev), v = voice(ctx, inst), end = t + p.decay * 1.4 + 0.1;
+          var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), end = t + p.decay * 4 + 0.1;
           var sum = metalSum(v, t, end, p.tune, p.spread);
           var bp1 = v.filter('bandpass', METAL.bp[0], 1), bp2 = v.filter('bandpass', METAL.bp[1], 1);
           var gA = v.gain(0), gB = v.gain(0), hp = v.filter('highpass', p.hp, 1.5), mix = v.gain(1);
@@ -412,18 +440,18 @@
   BUILD.ch808 = hat808(false);
   BUILD.oh808 = hat808(true);
 
-  // ---- cy808: three bands (3440, 7100, high-pass 10500), each with its own decay; tone scales the third band
+  // ---- cy808: three bands (BPF a, BPF b, high-pass 14.4 kHz), each with its own decay; tone scales the third band
   BUILD.cy808 = {
     spec: base({
-      tune: P(0.7, 1.4, 1, 'x', 'choice', 'ratio on the six oscillator frequencies'),
-      spread: P(0, 1, 0, '', 'prior', 'per-oscillator tolerance jitter'),
-      tone: P(0, 1, 0.5, '', 'paper', 'mainly the attenuation of the third band (paper section 10)'),
-      decay: P(0.4, 3, 1.5, 's', 'prior', 'low band seconds to -60 dB; mid 0.57x and high 0.21x (io-808 700/400/150 ms)')
+      tune: P(0.7, 1.4, 1, 'x', 'prior', 'ratio on the six oscillator frequencies'),
+      spread: P(0, 1, 0, '', 'paper', 'per-oscillator tolerance jitter'),
+      tone: P(0, 1, 0.5, '', 'manual', 'divider VR4 over the band outputs: mainly the third band (paper section 10)'),
+      decay: P(0.35, 1.2, 0.8, 's', 'manual', 'p. 14: 350 / 800 / 1200 ms, time to 1/10; mid and high bands 0.57x and 0.21x are priors')
     }, 0),
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
-        var p = inst.params, a = ampOf(ev), v = voice(ctx, inst), end = t + p.decay * 1.3 + 0.1;
+        var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), end = t + p.decay * 4 + 0.1;
         var sum = metalSum(v, t, end, p.tune, p.spread), mix = v.gain(1);
         var bands = [[v.filter('bandpass', METAL.bp[0], 1), 1, 1], [v.filter('bandpass', METAL.bp[1], 1), 0.57, 1],
                      [v.filter('highpass', METAL.hp, 1.5), 0.21, 0.15 + 0.85 * p.tone]];
@@ -440,15 +468,15 @@
   // ---- cb808: only the 800 and 540 Hz oscillators, band-pass, two-stage envelope (one contour generator)
   BUILD.cb808 = {
     spec: base({
-      tune: P(0.7, 1.4, 1, 'x', 'choice', 'ratio on 540 and 800 Hz'),
-      tone: P(1000, 5000, 2640, 'Hz', 'prior', 'band-pass centre; 2.64 kHz is Reid\'s CR8000 figure and io-808\'s'),
-      decay: P(0.1, 1, 0.4, 's', 'prior', 'long stage seconds to -60 dB; io-808 400 ms at 0.25 of the total'),
-      fast: P(0.005, 0.05, 0.015, 's', 'prior', 'short stage, io-808 15 ms')
+      tune: P(0.7, 1.4, 1, 'x', 'manual', 'ratio on 540 and 800 Hz (1.85 ms and 1.25 ms periods, p. 14)'),
+      tone: P(1000, 5000, 2640, 'Hz', 'prior', 'band-pass centre; 2.64 kHz is Reid\'s CR8000 figure and io-808\'s, the manual\'s values give 1.0 kHz'),
+      decay: P(0.02, 1, 0.05, 's', 'manual', 'p. 14: 50 ms, time to 1/10; long stage of the envelope'),
+      fast: P(0.005, 0.05, 0.015, 's', 'prior', 'short stage (R82 C34 in parallel with C9), io-808 15 ms')
     }, 0),
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
-        var p = inst.params, a = ampOf(ev), v = voice(ctx, inst), end = t + p.decay * 1.3 + 0.1;
+        var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), end = t + Math.max(p.decay, p.fast) * 4 + 0.1;
         var sum = metalSum(v, t, end, p.tune, 0, bankOf(ctx).cowbell);
         var bp = v.filter('bandpass', p.tone, 1), gF = v.gain(0), gL = v.gain(0), mix = v.gain(1);
         expEnv(gF.gain, t, a * 2.0 * 0.75, 0, tcOf(p.fast));
@@ -460,29 +488,30 @@
   };
 
   // ---- toms and congas: bridged-T resonator like the kick, higher pitch, short pitch drop, a little noise and a click
-  // io-808 tomConga.js 10-41, 51: [osc Hz at tuning 100, at tuning 0], [osc decay, noise decay] ms. Priors.
+  // hz = [pitch at tuning 100, at tuning 0] and dec = [osc decay, noise decay] seconds. Pitch ends and the oscillator
+  // decay are from the service notes' check table (p. 14); the noise decay is an io-808 prior.
   var TOMS = {
-    lt808: { hz: [100, 80], dec: [0.2, 0.2] }, mt808: { hz: [160, 120], dec: [0.13, 0.155] }, ht808: { hz: [220, 165], dec: [0.2, 0.125] },
-    lc808: { hz: [220, 165], dec: [0.18, 0.2] }, mc808: { hz: [310, 250], dec: [0.1, 0.155] }, hc808: { hz: [455, 370], dec: [0.18, 0.125] }
+    lt808: { hz: [100, 80], dec: [0.2, 0.2] }, mt808: { hz: [160, 120], dec: [0.13, 0.155] }, ht808: { hz: [220, 165], dec: [0.1, 0.125] },
+    lc808: { hz: [220, 165], dec: [0.18, 0.2] }, mc808: { hz: [310, 250], dec: [0.1, 0.155] }, hc808: { hz: [455, 370], dec: [0.08, 0.125] }
   };
   function tom808(name) {
     var d = TOMS[name];
     return {
       spec: base({
-        tune: P(0, 100, 50, '%', 'prior', 'panel TUNING position: pitch = low + tune/100 x (high - low), io-808 end points'),
-        decay: P(d.dec[0] * 0.4, d.dec[0] * 4, d.dec[0], 's', 'prior', 'oscillator, seconds to -60 dB (io-808)'),
+        tune: P(0, 100, 50, '%', 'manual', 'panel TUNING: pitch = low + tune/100 x (high - low), p. 14 end points'),
+        decay: P(d.dec[0] * 0.4, d.dec[0] * 4, d.dec[0], 's', 'manual', 'p. 14 mid decay, time to 1/10 of the peak'),
         noiseDecay: P(0.03, 0.5, d.dec[1], 's', 'prior', 'noise decay (io-808)'),
-        sweep: P(0, 1, 0.3, '', 'choice', 'start pitch = pitch x (1 + sweep), falling in about 20 ms'),
+        sweep: P(0, 1, 0.3, '', 'manual', 'germanium diodes: first few ms 1.2 to 1.4x higher in pitch (p. 6)'),
         noise: P(0, 1, 1, '', 'prior', 'noise level (io-808 gain 0.2)'),
         click: P(0, 1, 1, '', 'prior', 'trigger edge (io-808 1 ms, gain 0.3)')
       }, 0),
       build: function (inst) {
         var ctx = inst.ctx;
         inst.trigger = function (t, ev) {
-          var p = inst.params, a = ampOf(ev), v = voice(ctx, inst), f = d.hz[1] + p.tune / 100 * (d.hz[0] - d.hz[1]);
-          var end = t + Math.max(p.decay, p.noiseDecay) * 1.3 + 0.05, mix = v.gain(1);
+          var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), f = d.hz[1] + p.tune / 100 * (d.hz[0] - d.hz[1]);
+          var end = t + Math.max(p.decay, p.noiseDecay) * 4 + 0.05, mix = v.gain(1);
           var o = v.osc('sine', f * (1 + p.sweep), t, end);
-          target(o.frequency, f, t, 0.02 / 3);
+          target(o.frequency, f, t, 0.005);
           var g = v.gain(0);
           expEnv(g.gain, t, a * 0.65, 0, tcOf(p.decay));
           con(o, g); con(g, mix);
@@ -501,17 +530,17 @@
   }
   for (var tn in TOMS) if (TOMS.hasOwnProperty(tn)) BUILD[tn] = tom808(tn);
 
-  // ---- cl808: triangle through a band-pass at the same frequency, exponential envelope (io-808 claveRimshot.js)
+  // ---- cl808: IC20a bridged-T, R312 R308 C117 give 2526 Hz (table 2500 Hz), 25 ms
   BUILD.cl808 = {
     spec: base({
-      tune: P(1500, 4000, 2450, 'Hz', 'prior', 'io-808 CLAVE_FREQ'),
-      decay: P(0.01, 0.1, 0.04, 's', 'prior', 'io-808 40 ms'),
-      q: P(0.5, 12, 3, '', 'choice', 'band-pass Q')
+      tune: P(1500, 4000, 2526, 'Hz', 'manual', 'schematic 2526 Hz, check table 2500 Hz (0.4 ms)'),
+      decay: P(0.01, 0.1, 0.025, 's', 'manual', 'p. 14: 25 ms, time to 1/10'),
+      q: P(0.5, 12, 3, '', 'prior', 'band-pass Q')
     }, 0),
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
-        var p = inst.params, a = ampOf(ev), v = voice(ctx, inst), tc = tcOf(p.decay), end = t + p.decay * 1.4 + 0.03;
+        var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), tc = tcOf(p.decay), end = t + p.decay * 4 + 0.03;
         var o = v.osc('triangle', p.tune, t, end), bp = v.filter('bandpass', p.tune, p.q), g = v.gain(0);
         expEnv(g.gain, t, a * 1.6, 0, tc);
         con(o, bp); con(bp, g); con(g, outOf(v, inst, null, t));
@@ -519,22 +548,22 @@
     }
   };
 
-  // ---- rs808: a 480 Hz resonator, a 1750 Hz triangle through a 2450 Hz high-pass, and a click (io-808 priors)
+  // ---- rs808: IC21 bridged-T at 452.5 Hz (table 455 Hz) and the table's 1667 Hz element, plus a click; decay 10 ms
   BUILD.rs808 = {
     spec: base({
-      tune: P(0.5, 2, 1, 'x', 'choice', 'ratio on every frequency'),
-      decay: P(0.01, 0.08, 0.025, 's', 'prior', 'seconds to -60 dB, no source'),
-      click: P(0, 1, 0.5, '', 'choice', '2 ms trigger edge')
+      tune: P(0.5, 2, 1, 'x', 'prior', 'ratio on every frequency'),
+      decay: P(0.005, 0.08, 0.01, 's', 'manual', 'p. 14: 10 ms, time to 1/10'),
+      click: P(0, 1, 0.5, '', 'prior', '2 ms trigger edge')
     }, 0.2),
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
-        var p = inst.params, a = ampOf(ev), v = voice(ctx, inst), tc = tcOf(p.decay), end = t + p.decay * 1.4 + 0.03, r = p.tune;
+        var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), tc = tcOf(p.decay), end = t + p.decay * 4 + 0.03, r = p.tune;
         var mix = v.gain(1);
-        var o1 = v.osc('sine', 480 * r, t, end), bp = v.filter('bandpass', 480 * r, 2), g1 = v.gain(0);
+        var o1 = v.osc('sine', 452.5 * r, t, end), bp = v.filter('bandpass', 452.5 * r, 2), g1 = v.gain(0);
         expEnv(g1.gain, t, a * 1.4, 0, tc);
         con(o1, bp); con(bp, g1); con(g1, mix);
-        var o2 = v.osc('triangle', 1750 * r, t, end), hp = v.filter('highpass', 2450 * r, 0.7), g2 = v.gain(0);
+        var o2 = v.osc('triangle', 1667 * r, t, end), hp = v.filter('highpass', 1667 * r, 0.7), g2 = v.gain(0);
         expEnv(g2.gain, t, a * 0.6, 0, tc);
         con(o2, hp); con(hp, g2); con(g2, mix);
         var cg = v.gain(a * 0.5 * p.click), s = v.buf(pulseBuf(ctx, 2), t, t + 0.02);
@@ -544,21 +573,21 @@
     }
   };
 
-  // ---- ma808: noise through a 5 kHz high-pass, a quick linear envelope (io-808 maracasHandclap.js)
+  // ---- ma808: noise through the Q68 high-pass (RC corners 2.34 to 10.6 kHz), linear decay 25 ms (short) or 35 ms (long)
   BUILD.ma808 = {
     spec: base({
-      tone: P(3000, 9000, 5000, 'Hz', 'prior', 'high-pass, io-808 5000'),
-      decay: P(0.01, 0.1, 0.03, 's', 'prior', 'linear decay, io-808 30 ms')
+      tone: P(1500, 9000, 2340, 'Hz', 'manual', 'high-pass lower corner 1/(2 pi 68k 1n) = 2.34 kHz; a 10.6 kHz low-pass follows'),
+      decay: P(0.01, 0.1, 0.025, 's', 'manual', 'p. 14: 25 ms (short) or 35 ms (long)')
     }, 0),
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
-        var p = inst.params, a = ampOf(ev), v = voice(ctx, inst), end = t + p.decay + 0.03;
+        var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), end = t + p.decay + 0.03;
         var n = v.noise(t, end);
         if (!n) return;
-        var hp = v.filter('highpass', p.tone, 0.7), g = v.gain(0);
+        var hp = v.filter('highpass', p.tone, 0.7), lp = v.filter('lowpass', 10600, 0.7), g = v.gain(0);
         setV(g.gain, 0, t); lin(g.gain, a * 0.5, t + 0.0002); lin(g.gain, 0, t + 0.0002 + p.decay);
-        con(n, hp); con(hp, g); con(g, outOf(v, inst, null, t));
+        con(n, hp); con(hp, lp); con(lp, g); con(g, outOf(v, inst, null, t));
       };
     }
   };
@@ -568,19 +597,19 @@
   // `hold` then a time-constant decay, plus a click (panel Attack). andremichelle/tr-909 bassdrum.ts / preset.ts.
   BUILD.bd909 = {
     spec: base({
-      start: P(150, 400, BD909.start, 'Hz', 'paper', 'bassdrum.ts FreqStart 274'),
-      end: P(40, 70, BD909.end, 'Hz', 'paper', 'bassdrum.ts FreqEnd 53'),
-      tune: P(0.007, 0.0294, 0.007, 's (time constant)', 'paper', 'panel Tune = pitch-fall time constant, preset.ts 70, default 7 ms'),
-      decay: P(0.012, 0.1, 0.035, 's (time constant)', 'paper', 'panel Decay, preset.ts 71, 12 to 100 ms, default about 34.6 ms'),
-      hold: P(0.02, 0.1, BD909.hold, 's', 'paper', 'ReleaseStartTime 0.060'),
-      attack: P(-12, 6, 0, 'dB', 'paper', 'panel Attack = click gain in dB (bassdrum.ts 36); the range is a choice'),
-      clickDecay: P(0.002, 0.03, 0.012, 's', 'prior', 'ER-99 20 ms; click is a sample in the original'),
+      start: P(150, 400, BD909.start, 'Hz', 'source', 'bassdrum.ts FreqStart 274; the VCO frequency is not resolved in the manual'),
+      end: P(40, 70, BD909.end, 'Hz', 'source', 'bassdrum.ts FreqEnd 53'),
+      tune: P(0.007, 0.04, 0.007, 's (time constant)', 'manual', 'pitch envelope R57 22k x C9 0.33u = 7.3 ms, with VR2 100k = 40 ms; source default 7 ms (7 to 29.4)'),
+      decay: P(0.012, 0.35, 0.035, 's (time constant)', 'manual', 'R58 47k x C8 0.33u = 15.5 ms up to 346 ms with VR5 1M; source default 35 ms (12 to 100)'),
+      hold: P(0, 0.1, BD909.hold, 's', 'source', 'ReleaseStartTime 0.060'),
+      attack: P(-12, 6, 0, 'dB', 'source', 'panel Attack = click gain in dB (bassdrum.ts 36); the range is a choice'),
+      clickDecay: P(0.0003, 0.003, 0.0007, 's', 'manual', 'ENV2: R41 22k x C12 0.033u = 0.73 ms'),
       clickLp: P(500, 8000, 3000, 'Hz', 'prior', 'ER-99 3 kHz')
     }, 0.35),
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
-        var p = inst.params, a = ampOf(ev) * stepAmp(ev), v = voice(ctx, inst);
+        var p = inst.params, a = ampOf9(ev), v = voice(ctx, inst);
         var end = t + 0.0003 + p.hold + p.decay * 9 + 0.03;
         var o = v.osc('sine', p.start, t, end);
         target(o.frequency, p.end, t, p.tune);
@@ -590,7 +619,7 @@
         var n = v.noise(t, t + p.clickDecay * 9 + 0.02);
         if (n) {
           var lp = v.filter('lowpass', p.clickLp, 0.7), gc = v.gain(0);
-          expEnv(gc.gain, t, a * 0.5 * dbToGain(p.attack), 0, p.clickDecay);
+          expEnv(gc.gain, t, a * 0.9 * dbToGain(p.attack), 0, p.clickDecay);
           con(n, lp); con(lp, gc); con(gc, mix);
         }
         con(mix, outOf(v, inst, null, t));
@@ -602,21 +631,21 @@
   // (snaredrum.ts 22), Tone = noise decay time constant 40 to 200 ms (preset.ts 73), Snappy = noise gain in dB.
   BUILD.sd909 = {
     spec: base({
-      tune: P(-0.5, 0.5, 0, 'oct', 'paper', 'preset.ts 76 TuneMapping, applied to the tone part only'),
-      tone: P(0.04, 0.2, 0.09, 's (time constant)', 'paper', 'noise decay, preset.ts 73 range 40 to 200 ms; the 200 ms default belongs to a recorded noise that decays by itself, so this synthesised default is a choice'),
-      snappy: P(-18, 6, 0, 'dB', 'paper', 'noise gain, snaredrum.ts 24; the range is a choice'),
-      base: P(120, 300, 190, 'Hz', 'prior', 'body oscillator 1; 180/330 Hz is memory, ER-99 220'),
-      ratio: P(1.4, 2.4, 1.83, 'x', 'prior', 'oscillator 2 over 1, from 180/330 memory'),
-      bodyDecay: P(0.04, 0.3, 0.1, 's', 'prior', 'seconds to -60 dB, ER-99 100 ms'),
+      tune: P(-0.5, 0.5, 0, 'oct', 'source', 'preset.ts 76 TuneMapping, applied to the tone part only'),
+      tone: P(0.04, 0.34, 0.2, 's (time constant)', 'source', 'noise decay, preset.ts 73 default 200 ms (range 40 to 200); the manual\'s RC gives 103 to 338 ms, unreconciled'),
+      snappy: P(-18, 6, 0, 'dB', 'source', 'noise gain, snaredrum.ts 24; the range is a choice'),
+      base: P(120, 300, 190, 'Hz', 'prior', 'body oscillator 1; absolute pitch not resolved in the manual (VR6 tune pot)'),
+      ratio: P(1.2, 1.8, 1.47, 'x', 'manual', 'VCO-2 over VCO-1 = C69 0.01u / C71 0.0068u'),
+      bodyDecay: P(0.04, 0.3, 0.1, 's', 'prior', 'seconds to 1/10, ER-99 100 ms'),
       glide: P(0, 4, 1, 'x', 'prior', 'extra pitch at the start = f x (1 + glide); ER-99 4x'),
-      glideTime: P(0.003, 0.03, 0.01, 's', 'prior', 'ER-99 10 ms'),
+      glideTime: P(0.01, 0.03, 0.02, 's', 'manual', 'pitch bend "about 20 ms" (p. 6)'),
       hpf: P(800, 6000, 2000, 'Hz', 'prior', 'noise high-pass, no source')
     }, 0.3),
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
-        var p = inst.params, a = ampOf(ev) * stepAmp(ev), v = voice(ctx, inst), ng = dbToGain(p.snappy + (ev.accent ? 3 : 0));
-        var f1 = p.base * Math.pow(2, p.tune), tcB = tcOf(p.bodyDecay), end = t + Math.max(p.bodyDecay, p.tone * 7) + 0.05;
+        var p = inst.params, a = ampOf9(ev), v = voice(ctx, inst), ng = dbToGain(p.snappy);
+        var f1 = p.base * Math.pow(2, p.tune), tcB = tcOf(p.bodyDecay), end = t + Math.max(p.bodyDecay * 4, p.tone * 7) + 0.05;
         var bus = v.gain(1), gB = v.gain(0);
         expEnv(gB.gain, t, a * 0.4, 0, tcB);
         for (var i = 0; i < 2; i++) {
@@ -643,9 +672,9 @@
     var f0 = TOMS909[name];
     return {
       spec: base({
-        tune: P(-0.5, 0.5, 0, 'oct', 'paper', 'preset.ts 76 TuneMapping around the tom base'),
-        decay: P(0.04, 0.15, 0.08, 's (time constant)', 'paper', 'preset.ts 72 range 40 to 150 ms; the 150 ms default belongs to a recorded tom that decays by itself, so this synthesised default is a choice'),
-        hold: P(0.01, 0.1, 0.03, 's', 'paper', 'processor.ts 139-143 release start 30 ms'),
+        tune: P(-0.5, 0.5, 0, 'oct', 'source', 'preset.ts 76 TuneMapping around the tom base'),
+        decay: P(0.038, 0.38, 0.15, 's (time constant)', 'manual', 'ENV2 R111 56k x C21 0.68u = 38 ms up to 378 ms with VR11 500k; source default 150 ms (40 to 150)'),
+        hold: P(0.01, 0.1, 0.03, 's', 'source', 'processor.ts 139-143 release start 30 ms'),
         base: P(f0 * 0.6, f0 * 1.6, f0, 'Hz', 'prior', 'ER-99 100/200/300 adjusted, memory'),
         depth: P(0, 3, 1, 'x', 'prior', 'pitch envelope extra = f x depth; ER-99 2x'),
         pitchDecay: P(0.02, 0.25, 0.1, 's (time constant)', 'prior', 'ER-99 100 ms'),
@@ -654,7 +683,7 @@
       build: function (inst) {
         var ctx = inst.ctx;
         inst.trigger = function (t, ev) {
-          var p = inst.params, a = ampOf(ev) * stepAmp(ev), v = voice(ctx, inst), f = p.base * Math.pow(2, p.tune);
+          var p = inst.params, a = ampOf9(ev), v = voice(ctx, inst), f = p.base * Math.pow(2, p.tune);
           var end = t + p.hold + p.decay * 9 + 0.05, mix = v.gain(1);
           var o = v.osc('sine', f * (1 + p.depth), t, end);
           target(o.frequency, f, t, p.pitchDecay);
@@ -670,19 +699,20 @@
   }
   for (var t9 in TOMS909) if (TOMS909.hasOwnProperty(t9)) BUILD[t9] = tom909(t9);
 
-  // ---- rs909: click into three parallel band-passes (ER-99: 220, 500, 950 Hz, Q 10.5, gains 10:20:30), high-pass 100
+  // ---- rs909: click into three parallel band-passes F1 495, F2 219, F3 1053 Hz (manual, from C and R; ER-99 had 500/220/950
+  // with Q 10.5 and gains 10:20:30, kept as priors), high-pass 100
   BUILD.rs909 = {
     spec: base({
-      tune: P(0.5, 2, 1, 'x', 'prior', 'ratio on the three resonances'),
-      decay: P(0.01, 0.08, 0.03, 's', 'prior', 'ER-99 30 ms; seconds to -60 dB'),
+      tune: P(0.5, 2, 1, 'x', 'manual', 'ratio on the three resonances 495, 219, 1053 Hz'),
+      decay: P(0.003, 0.01, 0.005, 's', 'manual', 'scope: ringing about 5 ms; seconds to 1/10'),
       q: P(2, 20, 10.5, '', 'prior', 'ER-99 10.5')
     }, 0.6),
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
-        var p = inst.params, a = ampOf(ev) * stepAmp(ev), v = voice(ctx, inst), end = t + p.decay * 1.5 + 0.05;
+        var p = inst.params, a = ampOf9(ev), v = voice(ctx, inst), end = t + p.decay * 4 + 0.05;
         var s = v.buf(pulseBuf(ctx, 1), t, t + 0.02), sum = v.gain(1), hp = v.filter('highpass', 100, 0.7), g = v.gain(0);
-        var fs = [220, 500, 950], gs = [10, 20, 30];
+        var fs = [219, 495, 1053], gs = [10, 20, 30];
         for (var i = 0; i < 3; i++) {
           var bp = v.filter('bandpass', fs[i] * p.tune, p.q), gi = v.gain(gs[i] / 60 * 2.2);
           con(s, bp); con(bp, gi); con(gi, sum);
@@ -693,18 +723,19 @@
     }
   };
 
-  // ---- cp909: the clap circuit (SOS: generated by a circuit, not a sample); ER-99: high-pass 900, band-pass 1200, 10 ms
+  // ---- cp909: the clap circuit (SOS: generated by a circuit, not a sample). Noise through a band-pass and a 185 Hz high-pass
+  // (R202 39k, C56 0.022u, manual); burst count, spacing and band-pass centre are unresolved in the scan (ER-99: 1200 Hz, 10 ms).
   BUILD.cp909 = {
     spec: base({
       tone: P(700, 2500, 1200, 'Hz', 'prior', 'ER-99 band-pass 1200'),
-      q: P(0.5, 4, 1, '', 'choice', 'band-pass Q'),
-      spread: P(0.006, 0.02, 0.01, 's', 'prior', 'burst spacing, ER-99 10 ms'),
-      bursts: P(2, 5, 4, '', 'prior', 'memory'),
+      q: P(0.5, 4, 1, '', 'prior', 'band-pass Q'),
+      spread: P(0.004, 0.02, 0.01, 's', 'prior', 'burst spacing, by eye on the scope, ER-99 10 ms'),
+      bursts: P(3, 5, 4, '', 'prior', 'scope by eye, about 4 to 5'),
       burstDecay: P(0.003, 0.02, 0.008, 's', 'prior', 'time constant of each burst'),
-      decay: P(0.1, 0.6, 0.25, 's', 'prior', 'tail, seconds to -60 dB (ER-99 250 ms)'),
+      decay: P(0.1, 0.6, 0.1, 's', 'prior', 'tail, seconds to 1/10; the scope shows a tail of roughly 0.1 s'),
       tail: P(0, 1, 0.4, '', 'prior', 'tail amount')
     }, 0.1),
-    build: function (inst) { inst.trigger = function (t, ev) { clapVoice(inst, t, ev, { spacingKey: 'spread', hp: 900, step: true }); }; }
+    build: function (inst) { inst.trigger = function (t, ev) { clapVoice(inst, t, ev, { spacingKey: 'spread', hp: 185, nine: true, gate: 0, tau: 0 }); }; }
   };
 
   // ---- the sampled 909 voices, synthesised once per context into buffers (plain JS DSP)
@@ -730,15 +761,18 @@
       x2 = x1; x1 = x[i]; y2 = y1; y1 = y; x[i] = y;
     }
   }
-  // kind: 'ch' | 'oh' (flat, the voice applies hold + decay), 'cr' | 'rd' (envelope baked in, plays through)
+  // kind: 'ch' | 'oh' (flat, the voice applies hold + decay), 'cr' | 'rd' (envelope baked in, plays through).
+  // Lengths are the ROM address ranges at the 30 kHz sample clock (manual p. 5): closed 0x2000, open 0x6000, crash/ride 0x8000 samples.
   var HAT_KINDS = {
-    ch: { len: 0.5, hp: 6000, lp: 9000, noise: 0.6, env: null, seed: 909001 },
-    oh: { len: 1.8, hp: 6000, lp: 9000, noise: 0.5, env: null, seed: 909002 },
-    cr: { len: 3.5, hp: 3000, lp: 12000, noise: 0.7, env: [[0.45, 0.6], [1.2, 0.4]], seed: 909003 },
-    rd: { len: 3.0, hp: 2500, lp: 12000, noise: 0.35, env: [[0.5, 0.7], [1.4, 0.3]], seed: 909004 }
+    ch: { n: ROM909.ch, hp: 6000, lp: 9000, noise: 0.6, env: null, seed: 909001 },
+    oh: { n: ROM909.oh, hp: 6000, lp: 9000, noise: 0.5, env: null, seed: 909002 },
+    cr: { n: ROM909.cr, hp: 3000, lp: 12000, noise: 0.7, env: [[0.22, 0.6], [0.55, 0.4]], seed: 909003 },
+    rd: { n: ROM909.rd, hp: 2500, lp: 12000, noise: 0.35, env: [[0.25, 0.7], [0.6, 0.3]], seed: 909004 }
   };
+  // crush 0: a clean buffer at the context rate; crush > 0: the 6-bit, 30 kHz ROM character (bits 8 - 2 x crush, 6 at 1)
   function renderHat(ctx, kind, crush) {
-    var cfg = HAT_KINDS[kind], sr = ctx.sampleRate || 44100, n = Math.round(cfg.len * sr), x = new Float32Array(n), rnd = mulberry(cfg.seed);
+    var cfg = HAT_KINDS[kind], rom = crush > 0, sr = rom ? ROM909.rate : (ctx.sampleRate || 44100);
+    var n = rom ? cfg.n : Math.round(cfg.n / ROM909.rate * sr), x = new Float32Array(n), rnd = mulberry(cfg.seed);
     var i, j, fr = METAL.freqs, ph = [];
     for (j = 0; j < fr.length; j++) ph.push(rnd());
     var mul = (kind === 'rd') ? 3 : (kind === 'cr' ? 5 : 7);          // oscillator ratios are priors; shifted up so the band-limit keeps metal
@@ -750,19 +784,22 @@
     runBiquad(biquad('highpass', cfg.hp, 0.7, sr), x);
     runBiquad(biquad('lowpass', cfg.lp, 0.7, sr), x);
     runBiquad(biquad('lowpass', cfg.lp, 0.7, sr), x);
-    if (cfg.env) for (i = 0; i < n; i++) {
-      var te = i / sr, e = 0;
-      for (j = 0; j < cfg.env.length; j++) e += cfg.env[j][1] * Math.exp(-te / cfg.env[j][0]);
-      x[i] *= e * Math.min(1, te / 0.002);
-    }
-    // the 6-bit, 18 kHz character (prior: B3 snippets only): sample-and-hold rate and bit depth, both scaled by crush
-    if (crush > 0) {
-      var rate = sr - (sr - 18000) * crush, hold = Math.max(1, Math.round(sr / rate)), lv = Math.pow(2, 8 - 2 * crush - 1), held = 0;
-      for (i = 0; i < n; i++) { if (i % hold === 0) held = Math.round(x[i] * lv) / lv; x[i] = held; }
+    var fade = Math.round(0.01 * sr);
+    for (i = 0; i < n; i++) {
+      var te = i / sr, e = 1;
+      if (cfg.env) { e = 0; for (j = 0; j < cfg.env.length; j++) e += cfg.env[j][1] * Math.exp(-te / cfg.env[j][0]); e *= Math.min(1, te / 0.002); }
+      if (n - i < fade) e *= (n - i) / fade;                           // no click when the ROM run ends
+      x[i] *= e;
     }
     var pk = 0;
     for (i = 0; i < n; i++) if (Math.abs(x[i]) > pk) pk = Math.abs(x[i]);
-    var sc = pk > 0 ? 0.9 / pk : 1, b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0);
+    var sc = pk > 0 ? 0.9 / pk : 1;
+    if (rom) {                                                          // 6-bit DAC (hex latch + resistor ladder)
+      var lv = Math.pow(2, 8 - 2 * crush - 1);
+      for (i = 0; i < n; i++) x[i] = Math.round(x[i] * sc * lv) / lv;
+      sc = 1;
+    }
+    var b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0);
     for (i = 0; i < n; i++) d[i] = x[i] * sc;
     return b;
   }
@@ -775,15 +812,15 @@
     var kind = open ? 'oh' : 'ch';
     return {
       spec: base({
-        decay: open ? P(0.03, 0.16, 0.069, 's (time constant)', 'paper', 'preset.ts 74 OpenedHihatMapping, default about 69 ms')
-                    : P(0.008, 0.06, 0.008, 's (time constant)', 'paper', 'preset.ts 75 ClosedHihatMapping, default 8 ms'),
-        hold: open ? P(0.004, 0.05, 0.012, 's', 'paper', 'processor.ts 150 release start 0.012') : P(0.002, 0.05, 0.006, 's', 'paper', 'processor.ts 151 release start 0.006'),
-        crush: P(0, 1, 0.5, '', 'prior', '6-bit / 18 kHz character; B3 snippets only, not confirmed')
+        decay: open ? P(0.03, 0.16, 0.069, 's (time constant)', 'source', 'preset.ts 74 OpenedHihatMapping, default about 69 ms')
+                    : P(0.008, 0.06, 0.008, 's (time constant)', 'source', 'preset.ts 75 ClosedHihatMapping, default 8 ms; the manual puts the closed path at 1/10 of the open one for the same pot position'),
+        hold: open ? P(0.004, 0.05, 0.012, 's', 'source', 'processor.ts 150 release start 0.012') : P(0.002, 0.05, 0.006, 's', 'source', 'processor.ts 151 release start 0.006'),
+        crush: P(0, 1, 1, '', 'manual', '1 = the ROM: 6-bit (hex latch IC68 + RA9), 30 kHz clock (60 kHz / 2); 0 = a clean buffer')
       }, 0),
       build: function (inst) {
         var ctx = inst.ctx;
         inst.trigger = function (t, ev) {
-          var p = inst.params, a = ampOf(ev) * stepAmp(ev), v = voice(ctx, inst), b = hatBuf(ctx, kind, p.crush);
+          var p = inst.params, a = ampOf9(ev), v = voice(ctx, inst), b = hatBuf(ctx, kind, p.crush);
           if (!b) return;
           var end = Math.min(t + p.hold + p.decay * 9 + 0.02, t + b.duration), g = v.gain(0);
           expEnv(g.gain, t, a, p.hold, p.decay);
@@ -798,13 +835,13 @@
   function cym909(kind) {
     return {
       spec: base({
-        tune: P(-0.5, 0.5, 0, 'oct', 'paper', 'preset.ts 76 TuneMapping (crash, ride)'),
-        crush: P(0, 1, 0.5, '', 'prior', '6-bit / 18 kHz character; B3 snippets only')
+        tune: P(-0.5, 0.5, 0, 'oct', 'source', 'preset.ts 76 TuneMapping (crash, ride); the Tune pot (VR25 10k) wiring may allow only about +-2 st, unresolved. Pitch and length move together'),
+        crush: P(0, 1, 1, '', 'manual', '1 = the ROM: 6-bit, 30 kHz; 0 = a clean buffer')
       }, 0),
       build: function (inst) {
         var ctx = inst.ctx;
         inst.trigger = function (t, ev) {
-          var p = inst.params, a = ampOf(ev) * stepAmp(ev), v = voice(ctx, inst), b = hatBuf(ctx, kind, p.crush);
+          var p = inst.params, a = ampOf9(ev), v = voice(ctx, inst), b = hatBuf(ctx, kind, p.crush);
           if (!b) return;
           var rate = Math.pow(2, p.tune), g = v.gain(a);
           con(v.buf(b, t, t + b.duration / rate + 0.02, rate), g);
@@ -842,7 +879,8 @@
     create: create, has: has,
     types: function () { return TYPES.slice(); },
     spec: function (t) { return BUILD[t] ? BUILD[t].spec : null; },
-    bank: bankOf,                       // the shared metal bank of a context: {freqs, duty, bp, hp, cowbell, wave}
+    bank: bankOf,                       // the shared metal bank of a context: {freqs, duty, bp, bpPaper, hp, hpPaper, hpOpen, hpClosed, cowbell, wave}
+    ACC808: ACC808, ROM909: ROM909,
     METAL: METAL, STEP_DB: STEP_DB.slice(),
     pulseCoeffs: pulseCoeffs
   };

@@ -65,7 +65,7 @@ function load() {
 
 var EXPECT808 = ['bd808', 'sd808', 'cp808', 'ch808', 'oh808', 'cy808', 'cb808', 'lt808', 'mt808', 'ht808', 'lc808', 'mc808', 'hc808', 'rs808', 'cl808', 'ma808'];
 var EXPECT909 = ['bd909', 'sd909', 'lt909', 'mt909', 'ht909', 'rs909', 'cp909', 'ch909', 'oh909', 'cr909', 'rd909'];
-var BASES = { paper: 1, prior: 1, choice: 1 };
+var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
 
 // ------------------------------------------------------------------ 1. module, types, specs
 console.log('1. module, types and specs');
@@ -160,7 +160,7 @@ types.forEach(function (t) {
 });
 (function () {
   var ctx = new RecCtx(), i = D.create(ctx, 'bd808', { decay: 99, tune: 1, bogus: 5 });
-  ok(i.get('decay') === 2.0 && i.get('tune') === 35 && i.get('bogus') === undefined, 'create() options go through the clamp, unknown options are ignored');
+  ok(i.get('decay') === 0.8 && i.get('tune') === 45 && i.get('bogus') === undefined, 'create() options go through the clamp, unknown options are ignored');
   var c0 = i.out.gain.calls.length; i.set('level', 0.4);
   ok(i.out.gain.calls.length > c0 && i.out.gain.calls[i.out.gain.calls.length - 1][1] === 0.4, 'level writes the output gain');
   var cv = i._shaper.curve; i.set('drive', 1);
@@ -173,7 +173,7 @@ console.log('6. metal bank and filter centres');
   var plain = new RecCtx(44100, false), wave = new RecCtx(44100, true);
   var b = D.bank(wave);
   ok(JSON.stringify(b.freqs) === JSON.stringify([205.3, 369.6, 304.4, 522.7, 800, 540]), 'bank frequencies 205.3, 369.6, 304.4, 522.7, 800, 540 Hz');
-  ok(b.duty === 0.4798 && JSON.stringify(b.bp) === JSON.stringify([3440, 7100]) && b.hp === 10500 && JSON.stringify(b.cowbell) === JSON.stringify([800, 540]), 'duty 47.98 %, band-passes 3440 and 7100 Hz, high-pass 10500 Hz, cowbell pair 800 and 540');
+  ok(b.duty === 0.4798 && JSON.stringify(b.bp) === JSON.stringify([3440, 7210]) && JSON.stringify(b.bpPaper) === JSON.stringify([3440, 7100]) && b.hp === 14400 && b.hpOpen === 7800 && b.hpClosed === 11700 && JSON.stringify(b.cowbell) === JSON.stringify([800, 540]), 'duty 47.98 %, band-passes 3440 (paper) and 7210 Hz (manual), high-passes 14400 (cymbal), 7800 (OH), 11700 Hz (CH), cowbell pair 800 and 540');
   ok(D.bank(wave) === b && wave.waves.length === 1 && b.wave === wave.waves[0], 'one bank and one PeriodicWave per context');
   ok(D.bank(plain).wave === null, 'no createPeriodicWave: the bank has no wave (voices fall back to square)');
   // the pulse wave really has the duty: fraction of the cycle above the mean
@@ -198,7 +198,7 @@ console.log('6. metal bank and filter centres');
   ok(c.nodes.filter(function (n) { return n.type_ === 'osc'; }).every(function (n) { return n.wave === b0(c); }), 'ch808 oscillators use the shared pulse wave');
   function b0(ctx) { return D.bank(ctx).wave; }
   var fl = filtersOf(c);
-  ok(fl.indexOf('bandpass:3440') >= 0 && fl.indexOf('bandpass:7100') >= 0 && fl.indexOf('highpass:10500') >= 0, 'ch808 filters: band-pass 3440 and 7100, high-pass 10500 (' + fl.join(' ') + ')');
+  ok(fl.indexOf('bandpass:3440') >= 0 && fl.indexOf('bandpass:7210') >= 0 && fl.indexOf('highpass:11700') >= 0, 'ch808 filters: band-pass 3440 and 7210, high-pass 11700 (' + fl.join(' ') + ')');
   // tune ratio and spread
   var c2 = new RecCtx(), h2 = D.create(c2, 'oh808', { tune: 1.25 }); h2.trigger(0, {});
   ok(near(freqsOf(c2).sort(function (x, y) { return x - y; })[0], 205.3 * 1.25, 1e-9), 'tune scales the bank');
@@ -211,7 +211,7 @@ console.log('6. metal bank and filter centres');
   // cymbal: three bands
   var c5 = new RecCtx(), h5 = D.create(c5, 'cy808'); h5.trigger(0, {});
   var f5 = filtersOf(c5);
-  ok(f5.indexOf('bandpass:3440') >= 0 && f5.indexOf('bandpass:7100') >= 0 && f5.indexOf('highpass:10500') >= 0, 'cy808 has the three bands');
+  ok(f5.indexOf('bandpass:3440') >= 0 && f5.indexOf('bandpass:7210') >= 0 && f5.indexOf('highpass:14400') >= 0, 'cy808 has the three bands (3440, 7210, high-pass 14400)');
   // plain square fallback
   var c6 = new RecCtx(44100, false), h6 = D.create(c6, 'ch808'); h6.trigger(0, {});
   ok(c6.nodes.filter(function (n) { return n.type_ === 'osc'; }).every(function (n) { return n.type === 'square'; }), 'without PeriodicWave the oscillators are plain squares');
@@ -241,7 +241,7 @@ console.log('7. kick pitch tracks, hold and step levels');
   ok(tgh && hold && near(tgh[2] - 2, 0.0003 + 0.06, 1e-9) && tgh[3] === 0.035 && near(hold[2], tgh[2], 1e-9), 'bd909 amplitude is flat for 60 ms, then decays with the 35 ms time constant');
   var c1 = new RecCtx(), k1 = D.create(c1, 'bd909', { tune: 1, decay: 1, start: 1, end: 1 }); k1.trigger(0, {});
   var tg1 = osc0(c1).frequency.calls.filter(function (x) { return x[0] === 'setTargetAtTime'; })[0];
-  ok(tg1[3] === 0.0294 && tg1[1] === 40 && osc0(c1).frequency.calls[0][1] === 150, 'bd909 Tune maxes at 29.4 ms; start and end clamp to 150 and 40 Hz');
+  ok(tg1[3] === 0.04 && tg1[1] === 40 && osc0(c1).frequency.calls[0][1] === 150, 'bd909 Tune maxes at 40 ms (manual); start and end clamp to 150 and 40 Hz');
   var lo = D.create(new RecCtx(), 'bd909'); lo.set('tune', 0); lo.set('decay', 0);
   ok(lo.get('tune') === 0.007 && lo.get('decay') === 0.012, 'bd909 Tune and Decay clamp at 7 ms and 12 ms');
   // step levels
@@ -250,16 +250,43 @@ console.log('7. kick pitch tracks, hold and step levels');
   // bd808
   var c8 = new RecCtx(), b8 = D.create(c8, 'bd808'); b8.trigger(1, { vel: 1 });
   var f8 = osc0(c8).frequency.calls, s8 = f8.filter(function (x) { return x[0] === 'setValueAtTime'; })[0], t8 = f8.filter(function (x) { return x[0] === 'setTargetAtTime'; });
-  ok(near(s8[1], 99, 1e-9) && near(t8[0][2], 1.006, 1e-9) && t8[0][1] === 49.5 && t8[1][1] < 49.5 && t8[1][1] > 45, 'bd808: starts an octave up (99 Hz = 2 x 49.5) for 6 ms, returns to 49.5 Hz, then a slow droop');
-  var pl = peakRamp((function () { var cx = new RecCtx(), q = D.create(cx, 'bd808', { click: 0 }); q.trigger(0, { vel: 0.5 }); return cx; })());
-  var ac = peakRamp((function () { var cx = new RecCtx(), q = D.create(cx, 'bd808', { click: 0 }); q.trigger(0, { vel: 0.5, accent: true }); return cx; })());
-  ok(near(ac / pl, 1.2, 1e-6), 'accent scales the amplitude by 1.2 (ev.vel x 1.2)');
-  var cv = new RecCtx(), bv = D.create(cv, 'bd808', { click: 0 }); bv.trigger(0, { vel: 1 });
-  var cw = new RecCtx(), bw = D.create(cw, 'bd808', { click: 0 }); bw.trigger(0, { vel: 0.5 });
-  ok(near(peakRamp(cv) / peakRamp(cw), 2, 1e-6), 'ev.vel scales the amplitude linearly');
-  // accent changes nothing about the settled pitch
-  var ca = new RecCtx(), ba = D.create(ca, 'bd808'); ba.trigger(0, { vel: 1, accent: true });
-  ok(osc0(ca).frequency.calls.filter(function (x) { return x[0] === 'setTargetAtTime'; })[0][1] === 49.5, 'accent does not move the settled pitch');
+  ok(near(s8[1], 56 * 2.8, 1e-9) && near(t8[0][2], 1.006, 1e-9) && t8[0][1] === 56 && t8[1][1] < 56 && t8[1][1] > 50 && D.spec('bd808').tune.value === 56, 'bd808: 56 Hz default; starts 2.8x up for 6 ms on every hit, returns to 56 Hz, then a slow droop');
+  ok(near(1 / 56, 0.018, 0.0005), 'the 56 Hz default has the manual\'s 18 ms period');
+  function peakAny(cx) { var m = 0; cx.nodes.forEach(function (n) { if (n.type_ === 'gain') n.gain.calls.forEach(function (c) { if ((c[0] === 'linearRampToValueAtTime' || c[0] === 'setValueAtTime') && c[1] > m && c[2] > 0) m = c[1]; }); }); return m; }
+  function accRatio(type) { var r = [false, true].map(function (acc) { var cx = new RecCtx(), q = D.create(cx, type, { click: 0 }); q.trigger(0, { vel: 0.5, accent: acc }); return peakAny(cx); }); return r[1] / r[0]; }
+  var tbl = D.ACC808, allAcc = true;
+  Object.keys(tbl).forEach(function (k) { if (!near(accRatio(k), tbl[k], 1e-6)) { allAcc = false; console.log('   accent ratio ' + k + ' ' + accRatio(k) + ' vs ' + tbl[k]); } });
+  ok(allAcc && tbl.bd808 === 2.86 && tbl.ma808 === 1.67 && tbl.mt808 === 3.67 && Object.keys(tbl).length === 16, 'accent peak ratios follow the service notes table (1.67 to 3.67) on all 16 808 voices');
+  var cq = new RecCtx(), bq = D.create(cq, 'bd808'); bq.trigger(0, { vel: 1, accent: true });
+  var fq8 = osc0(cq).frequency.calls, dbl = fq8.filter(function (x) { return x[0] === 'setValueAtTime'; })[1], tq = fq8.filter(function (x) { return x[0] === 'setTargetAtTime'; });
+  ok(dbl && near(dbl[1], 112, 1e-9) && near(dbl[2], 0.006, 1e-9) && near(tq[0][2], 0.010, 1e-9) && tq[0][1] === 56, 'bd808 accent: frequency doubled (112 Hz) for 4 ms after the 6 ms shift, then 56 Hz');
+  var cn = new RecCtx(), bn = D.create(cn, 'bd808'); bn.trigger(0, { vel: 1 });
+  ok(osc0(cn).frequency.calls.filter(function (x) { return x[0] === 'setValueAtTime'; }).length === 1, 'bd808 unaccented: no doubling window');
+  function bodyTau(type, dec) { var cx = new RecCtx(), q = D.create(cx, type, { decay: dec }); q.trigger(0, { vel: 1, accent: true }); var best = 0; cx.nodes.forEach(function (n) { if (n.type_ === 'gain') n.gain.calls.forEach(function (c) { if (c[0] === 'setTargetAtTime' && c[3] > best) best = c[3]; }); }); return best; }
+  var LN10 = Math.LN10;
+  ok(near(bodyTau('bd808', 0.05) * LN10, 0.05, 1e-6) && near(bodyTau('bd808', 0.8) * LN10, 0.8, 1e-6) && D.spec('bd808').decay.min === 0.05 && D.spec('bd808').decay.max === 0.8 && D.spec('bd808').decay.value === 0.3, 'bd808 decay 50 ms to 800 ms, 300 ms at mid (to 1/10)');
+  ok(D.spec('cy808').decay.min === 0.35 && D.spec('cy808').decay.max === 1.2 && D.spec('cy808').decay.value === 0.8 && near(bodyTau('cy808', 1.2) * LN10, 1.2, 1e-6), 'cy808 decay 350 / 800 / 1200 ms');
+  ok(D.spec('oh808').decay.min === 0.09 && D.spec('oh808').decay.max === 0.6 && D.spec('oh808').decay.value === 0.45 && near(bodyTau('oh808', 0.09) * LN10, 0.09, 1e-6) && D.spec('ch808').decay.value === 0.05, 'oh808 decay 90 / 450 / 600 ms, ch808 50 ms');
+  function clapPulses(opts) { var cx = new RecCtx(), q = D.create(cx, 'cp808', opts); q.trigger(0, { vel: 1, accent: true }); var best = null; cx.nodes.forEach(function (n) { if (n.type_ === 'gain') { var sv = n.gain.calls.filter(function (c) { return c[0] === 'setValueAtTime' && c[1] > 0; }); var tg = n.gain.calls.filter(function (c) { return c[0] === 'setTargetAtTime'; }); if (sv.length > 1 && tg.length === sv.length) best = sv; } }); return best; }
+  var pu = clapPulses({}), pu2 = clapPulses({ bursts: 6, spacing: 0.03 }), pu3 = clapPulses({ bursts: 6, spacing: 0.01 });
+  ok(pu && pu.length === 3 && near(pu[1][2] - pu[0][2], 0.01, 1e-9) && near(pu[1][1] / pu[0][1], Math.exp(-0.01 / 0.0385), 1e-6), 'cp808 plays three pulses 10 ms apart with the 38.5 ms envelope');
+  ok(pu2 && pu2.length === 2 && pu3 && pu3.length === 4, 'the 30 ms gate limits the pulse count (spacing 30 ms: 2, 10 ms: 4)');
+  ok(near(bodyTau('cp808', 0.1) * LN10, 0.1, 1e-6) && D.spec('cp808').decay.value === 0.1 && D.spec('cp808').bursts.value === 3, 'cp808 main decay 100 ms after the third pulse');
+  function freqsOfType(type, o) { var cx = new RecCtx(), q = D.create(cx, type, o); q.trigger(0, { vel: 1 }); return cx.nodes.filter(function (n) { return n.type_ === 'osc'; }).map(function (n) { return n.frequency.calls[0][1]; }).sort(function (x, y) { return x - y; }); }
+  function filtersOfType(type, o) { var cx = new RecCtx(), q = D.create(cx, type, o); q.trigger(0, { vel: 1 }); return cx.nodes.filter(function (n) { return n.type_ === 'biquad'; }).map(function (n) { return n.type + ':' + n.frequency.value; }); }
+  ok(JSON.stringify(freqsOfType('sd808')) === '[238,476]' && filtersOfType('sd808', { tone: 0 }).join() === filtersOfType('sd808', { tone: 1 }).join(), 'sd808: resonators at 238 and 476 Hz, TONE does not touch the noise filter (it is a balance)');
+  ok(JSON.stringify(freqsOfType('cl808')) === '[2526]' && freqsOfType('rs808').join() === '452.5,1667' && filtersOfType('ma808')[0] === 'highpass:2340', 'cl808 2526 Hz, rs808 452.5 and 1667 Hz, ma808 high-pass 2340 Hz');
+  ok(D.spec('cl808').decay.value === 0.025 && D.spec('rs808').decay.value === 0.01 && D.spec('ma808').decay.value === 0.025 && D.spec('cb808').decay.value === 0.05, 'claves 25 ms, rim 10 ms, maracas 25 ms, cowbell 50 ms');
+  ok(['lt808', 'mt808', 'ht808', 'lc808', 'mc808', 'hc808'].map(function (k) { return D.spec(k).decay.value; }).join() === '0.2,0.13,0.1,0.18,0.1,0.08', 'tom and conga decays 200 / 130 / 100 and 180 / 100 / 80 ms');
+  ok(oscHz('mt808', 0) === 120 && oscHz('mt808', 100) === 160 && oscHz('ht808', 0) === 165 && oscHz('ht808', 100) === 220 && oscHz('lc808', 0) === 165 && oscHz('mc808', 100) === 310 && oscHz('hc808', 0) === 370, 'tom and conga tuning ends match the check table');
+  // 909 manual values
+  var fs9 = freqsOfType('sd909', { glide: 0 });
+  ok(near(fs9[1] / fs9[0], 1.47, 1e-9) && D.spec('sd909').ratio.value === 1.47 && D.spec('sd909').glideTime.value === 0.02, 'sd909: second oscillator at 1.47x, pitch bend about 20 ms');
+  ok(filtersOfType('rs909').filter(function (x) { return /bandpass/.test(x); }).join() === 'bandpass:219,bandpass:495,bandpass:1053'.split(',').sort(function (a, b) { return 0; }).join() || ['bandpass:495', 'bandpass:219', 'bandpass:1053'].every(function (x) { return filtersOfType('rs909').indexOf(x) >= 0; }), 'rs909 band-passes at 495, 219 and 1053 Hz');
+  ok(filtersOfType('cp909').indexOf('highpass:185') >= 0 && D.spec('rs909').decay.value === 0.005, 'cp909 high-pass 185 Hz, rs909 ringing 5 ms');
+  ok(D.spec('bd909').clickDecay.value === 0.0007 && D.spec('bd909').tune.value === 0.007 && D.spec('bd909').decay.max === 0.35 && D.spec('bd909').tune.max === 0.04 && D.spec('lt909').decay.min === 0.038 && D.spec('lt909').decay.max === 0.38, 'bd909 click 0.7 ms, Tune up to 40 ms, Decay up to 350 ms; tom decay 38 to 380 ms');
+  var a9 = [false, true].map(function (acc) { var cx = new RecCtx(), q = D.create(cx, 'bd909'); q.trigger(0, { vel: 1, accent: acc }); return peakAny(cx); });
+  ok(near(a9[1] / a9[0], 2, 1e-6), '909 accent is 6 dB (x2)');
   // toms: the 909 hold and tune endpoints
   var ct = new RecCtx(), tm = D.create(ct, 'lt909', { decay: 0.15 }); tm.trigger(0, {});
   var tg9 = ct.nodes.filter(function (n) { return n.type_ === 'gain'; }).map(function (n) { return n.gain.calls.filter(function (x) { return x[0] === 'setTargetAtTime' && x[3] === 0.15; })[0]; }).filter(Boolean)[0];
@@ -277,10 +304,13 @@ console.log('8. 909 sampled-voice fallbacks');
   ok(n1 === 1 && n2 === 2 && c.bufs.length === 2, 'each hat buffer is rendered once per context and reused (' + c.bufs.length + ' buffers)');
   var b = c.bufs[0], d = b.getChannelData(0), pk = 0, e = 0, i;
   for (i = 0; i < d.length; i++) { if (!isFinite(d[i])) pk = Infinity; pk = Math.max(pk, Math.abs(d[i])); e += d[i] * d[i]; }
-  ok(isFinite(pk) && pk > 0.85 && pk <= 0.9001 && e > 0 && b.duration >= 0.45, 'closed-hat buffer is finite, normalised to 0.9, not silent');
+  var sixbit = true; for (i = 0; i < d.length; i++) if (Math.abs(d[i] * 32 - Math.round(d[i] * 32)) > 1e-5) sixbit = false;
+  ok(isFinite(pk) && pk > 0.85 && pk <= 0.92 && e > 0, 'closed-hat buffer is finite, peaks at 0.9, not silent');
+  ok(b.sampleRate === 30000 && b.length === 8192 && near(b.duration, 0.2731, 1e-4) && c.bufs[1].sampleRate === 30000 && c.bufs[1].length === 24576 && near(c.bufs[1].duration, 0.8192, 1e-4), '909 sample clock 30 kHz: closed hat 8192 samples (0.273 s), open hat 24576 samples (0.819 s)');
+  ok(sixbit, 'the ROM buffers are 6-bit (every sample a multiple of 1/32 at the default crush)');
   var cr = new RecCtx(), x = D.create(cr, 'cr909', { crush: 0 }), y = D.create(cr, 'rd909', { crush: 1 });
   x.trigger(0, {}); y.trigger(0, {});
-  ok(cr.bufs.length === 2 && cr.bufs[0].duration > 3 && cr.bufs[1].duration > 2.5, 'crash and ride buffers are seconds long (envelope baked in)');
+  ok(cr.bufs.length === 2 && near(cr.bufs[0].duration, 1.0923, 2e-3) && cr.bufs[1].sampleRate === 30000 && cr.bufs[1].length === 32768 && near(cr.bufs[1].duration, 1.0923, 1e-3), 'crash and ride are 32768 samples (1.09 s); crush 0 is a clean buffer at the context rate');
   var rate = x._live[0].srcs[0].playbackRate.calls[0][1];
   ok(rate === 1, 'crash plays at rate 1 with Tune 0');
   x.set('tune', 0.5); x.trigger(1, {});
@@ -289,7 +319,7 @@ console.log('8. 909 sampled-voice fallbacks');
   ok(hc.get('decay') === 0.008 && ho.get('decay') === 0.069 && D.spec('ch909').hold.value === 0.006 && D.spec('oh909').hold.value === 0.012, '909 hat defaults: 8 ms and 69 ms time constants, 6 ms and 12 ms hold');
   hc.set('decay', 9); ho.set('decay', 0); ok(hc.get('decay') === 0.06 && ho.get('decay') === 0.03, '909 hat decay clamps at 60 ms (closed max) and 30 ms (open min)');
   ok(D.spec('oh909').decay.max === 0.16 && D.spec('ch909').decay.min === 0.008, 'hat decay ranges 8 to 60 ms closed, 30 to 160 ms open');
-  ok(D.spec('sd909').tone.min === 0.04 && D.spec('sd909').tone.max === 0.2 && D.spec('bd909').decay.min === 0.012 && D.spec('bd909').decay.max === 0.1 && D.spec('bd909').tune.min === 0.007 && D.spec('bd909').tune.max === 0.0294, 'snare Tone 40 to 200 ms, bass drum Decay 12 to 100 ms, Tune 7 to 29.4 ms');
+  ok(D.spec('sd909').tone.min === 0.04 && D.spec('sd909').tone.max === 0.34 && D.spec('bd909').decay.min === 0.012 && D.spec('bd909').decay.max === 0.35 && D.spec('bd909').tune.min === 0.007 && D.spec('bd909').tune.max === 0.04, 'snare Tone 40 to 340 ms, bass drum Decay 12 to 350 ms, Tune 7 to 40 ms');
 })();
 
 console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks failed' : 'OK: ' + checks + ' checks passed');
