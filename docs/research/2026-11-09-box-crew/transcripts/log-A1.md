@@ -63,3 +63,29 @@ To check whether two failing tool checks were already failing at HEAD, I ran `gi
   - With `programs.js`: `importProgram` from a folder map (one sample loaded, one missing), `exportProgram` (SFZ text and the file list), `mapFiles`. I confirmed these checks run by forcing two of them to fail in a scratch copy.
 - Other checks now: `tools/browser-check.js`, `processors-check.js`, `step-view-check.js`, `synths-check.js`, `system-editor-check.js` and `widgets-check.js` exit 0. `tools/faces-check.js` exits 1: a lint problem, `decorrelate: no face definition`, A3's, the same at HEAD. `tools/analysis-check.js` exits 1: the pre-delay check, the analysis builder's, the same at HEAD.
 - Not verified: the program path's sound (A7's trigger is not finished), importing a real .sfz library, Electron reading of `#include` files, and a Chromium run of the program calls.
+
+## Follow-ups (coordinator's three items after the batch-1 hand-backs)
+
+1. **`host.detectPitch(bufferId) -> Promise<{hz, midi, cents, confidence}>`** runs `Programs.detectPitch` on channel 0 of the loaded buffer one tick later (so the button can repaint first). It writes `doc.audio[id].analysis` in the same shape as on load and emits `'audio'` `{id, status: 'analysed'}`. `confidence` is YIN's clarity. It rejects when the file is not loaded or `programs.js` is missing. **To A3:** the "Re-detect pitch" button can wait on this promise.
+2. **`Project.pickFiles({shell, directory, multiple, accept})`.**
+   - Web: `<input type=file multiple webkitdirectory>` (the `webkitdirectory` property and attribute are both set), resolving `[File]` with `webkitRelativePath`, or null on cancel.
+   - Electron: `HavantechnoShell.openFiles({directory, multiple, filters, binary: true})`. Without it, `openFile` with the same options (an array result is used as is; a single result is wrapped).
+   - **To A6:** the shell's `openFile` today opens a single file only (`properties: ['openFile']`). Please add `openFiles({directory, multiple, filters, binary}) -> [{name, path, relativePath, bytes}] | null`: `openDirectory` or `multiSelections`, a recursive walk for a folder, `relativePath` from the chosen folder, the same audio and sfz extension and size rules as `readFile`. Until then, in Electron "Sampler track from folder…" gets one file.
+   - `Project.importProgram({host, shell, files, directory})` picks an .sfz (in Electron through `openFile` with an SFZ filter; on the web a folder) and calls `host.importProgram`. In a folder it takes the least deep .sfz as the root, because included files usually sit in subfolders. **To A4:** both menu items can call these two.
+3. **`#include` and `default_path`.**
+   - In Electron, includes go through `HavantechnoShell.readText(path, {})` with absolute paths joined from the root .sfz folder. On the web they go through the dropped list (`files` may now be an array of Files with `webkitRelativePath`; the Host keys it by relative path, case-insensitive on a miss).
+   - Include paths resolve against the **root** .sfz folder, also inside nested includes. That is my reading of SFZ practice and is unverified; say if sfizz differs.
+   - `default_path` is applied by `Programs.parseSfz` to every sample, the included regions too.
+   - Unresolved includes come back as `unresolvedIncludes`, and each one is also a warning (`{opcode: '#include', why: 'include not found: …'}`, added unless `parseSfz` already reported it).
+4. Also fixed in my selfcheck: section 5's "every instrument type has a device" now checks the song's instruments. A7's new drum-machine types are not in the Guidance song, so the old wording failed although nothing was wrong.
+
+Verification:
+- `node --check` on `host.js`, `project.js`, `selfcheck.js`: exit 0 each.
+- `node app/engine/selfcheck.js`: exit 0, `OK: 392 checks passed`. The new section 9 covers:
+  - detectPitch: 220 Hz found on a sine, analysis written, the event fires, a rejection for an id that is not loaded.
+  - pickFiles: Electron `openFiles` options, the `openFile` fallback, cancel, and the web input on a fake DOM.
+  - Electron includes, nested, through `readText` (three regions); an unreadable include becomes a warning.
+  - Web: a dropped list with a root .sfz, an included file in a subfolder, `default_path`, a missing include and a missing sample; a selection without an .sfz is refused.
+- `tools/synths-check.js`, `faces-check.js`, `step-view-check.js` and `system-editor-check.js` exit 0.
+- Not verified: the real Electron dialogs (`openFiles` doesn't exist yet) and a real browser folder pick.
+- No git stash, checkout, reset or clean was used this time.
