@@ -814,7 +814,7 @@ function section8() {
   var H = sb.Host, P = sb.Project, SDoc = sb.SongDoc, hasPrograms = !!sb.Programs;
   var made = [], oc = sb.Synths.create;
   sb.Synths.create = function (ctx, type, opts) { if (type === 'sampler') made.push(opts); return oc.apply(this, arguments); };
-  var spec = sb.Synths.spec('sampler') || {}, programPath = !!spec.program;
+  var spec = sb.Synths.spec('sampler') || {}, programPath = /getProgram/.test(fs.readFileSync(path.join(__dirname, 'synths.js'), 'utf8'));   // A7's program path reads opts.getProgram
 
   // 8a. the document
   var json0 = SDoc.save(sb.Song.document());
@@ -866,11 +866,12 @@ function section8() {
     ok(pid === 'pads' && host.program('pads').name === 'Pads' && host.removeProgram('pads') && !host.program('pads') && pev.join() === 'pads:added,pads:removed', "addProgram / removeProgram with 'program' events");
     pev.length = 0;
     var dev = []; host.on('document', function (e) { dev.push(e.rebuilt); });
+    var tune0 = host.document().programs.kit.regions[1].tune;
     host.editor().setRegion('kit', 1, { tune: 25 });
     var rb = host.commit();
     ok(rb === false && host.document().programs.kit.regions[1].tune === 25 && pev.join() === 'kit:changed', "a region edit commits in place (rebuilt false) and emits 'program' changed");
     host.editor().undo(); host.commit();
-    ok(host.document().programs.kit.regions[1].tune === undefined && pev.join() === 'kit:changed,kit:changed', 'undo reverts setRegion');
+    ok(host.document().programs.kit.regions[1].tune === tune0 && pev.join() === 'kit:changed,kit:changed', 'undo reverts setRegion');
     var ass = host.addProgram({ name: 'Two', global: { release: 0.3 }, regions: [{ buffer: 'sd' }] });
     ok(host.assignProgram('drums', ass) && host.editor().track('drums').params.program === 'two' && (!spec.release || host.editor().track('drums').params.release === 0.3) && host.assignProgram('kick', ass) === false && host.assignProgram('drums', 'nope') === false, 'assignProgram sets params.program and copies global; refused for a non-sampler or an unknown program');
     host.assignProgram('drums', 'kit');
@@ -898,7 +899,7 @@ function section8() {
       ok(ids[0] === 'bd' && ids[1] === 'sd', 'the files relink to the program\'s missing entries (bd, sd)');
       ok(A.bd.meta && A.bd.meta.rate === 22050 && A.bd.meta.root === 62 && Math.abs(A.bd.meta.fraction - 0.5) < 1e-6 && JSON.stringify(A.bd.meta.loops) === '[[100,300]]', 'meta from fmt and smpl: rate 22050, root 62, fraction 0.5, loop 100..300 (' + JSON.stringify(A.bd.meta) + ')');
       ok(A.sd.meta && A.sd.meta.rate === 44100 && A.sd.meta.root === 40, 'without smpl the acid root is used (40)');
-      ok(A[ids[2]].meta && A[ids[2]].meta.rate === 32000 && !A.raw && A[ids[3]].meta === undefined, 'a truncated header gives what it could (rate), non-WAV bytes give no meta; nothing throws');
+      ok(A[ids[2]].meta && A[ids[2]].meta.rate === 32000 && A[ids[3]] && A[ids[3]].meta === undefined, 'a truncated header gives what it could (rate), non-WAV bytes give no meta; nothing throws');
       ok(lh.programs()[0].missing === 0 && JSON.stringify(SDoc.load(SDoc.save(lh.document())).audio.bd.meta) === JSON.stringify(A.bd.meta), 'the program has no missing region now; meta survives save and load');
       // 8d. a sampler track playing a two-region program (key 36 on step 1, a key lock 38 on step 5)
       var before = srcs.length, bdB = lh.buffer('bd'), sdB = lh.buffer('sd'), gp = made[made.length - 1].getProgram;
@@ -906,7 +907,7 @@ function section8() {
       var played = srcs.slice(before).map(function (n) { return n.buffer === bdB ? 'bd' : n.buffer === sdB ? 'sd' : '?'; });
       ok(gp('kit').regions[0].buffer === 'bd' && gp('kit').regions[1].buffer === 'sd' && lh.buffer('bd').length === 400 * 2 + 0 || true, 'getProgram resolves both regions to loaded buffers');
       if (programPath) ok(played.join() === 'bd,sd', 'the program plays region bd for key 36 and region sd for the key-38 lock (' + played.join() + ')');
-      else ok(played.length === 0, 'synths.js has no program path yet: the track is silent and nothing throws (A7 builds it)');
+      else ok(played.length === 0, 'synths.js does not read getProgram yet: the program track is silent and nothing throws (A7 is building the program path)');
       // 8e. reload with the project: one sample readable, one missing
       var json = P.serialize(lh.document()), reads = [];
       var shell = {

@@ -595,7 +595,15 @@
     // programs.js is loaded; until then this fallback reads fmt (rate), smpl (unity note, fraction, loops) and acid (root).
     function wavMeta(ab) {
       var M = root.Programs;
-      if (M && typeof M.readWavMeta === 'function') { try { return M.readWavMeta(ab) || null; } catch (e) { return null; } }
+      if (M && typeof M.readWavMeta === 'function') {
+        try {
+          var r = M.readWavMeta(ab);                         // always an object; empty (rate 0) when it is not a WAV
+          if (!r || (!(r.rate > 0) && r.root == null && !(r.loops && r.loops.length))) return null;
+          var o = {};
+          for (var k in r) if (has(r, k) && r[k] != null && !(isArr(r[k]) && !r[k].length)) o[k] = r[k];
+          return o;
+        } catch (e) { return null; }
+      }
       try {
         if (!isBuf(ab) || ab.byteLength < 12) return null;
         var dv = new DataView(ab), len = ab.byteLength;
@@ -622,8 +630,9 @@
       var M = root.Programs;
       if (!M || typeof M.detectPitch !== 'function' || !buf || typeof buf.getChannelData !== 'function') return null;
       try {
-        var r = M.detectPitch(buf.getChannelData(0), buf.sampleRate);
-        return r ? { pitch: r.hz == null ? null : r.hz, root: r.midi == null ? null : r.midi, cents: r.cents, clarity: r.clarity } : { pitch: null, root: null };
+        var r = M.detectPitch(buf.getChannelData(0), buf.sampleRate) || {};
+        var hz = r.hz > 0 ? r.hz : 0;                        // Programs.autoMap reads analysis.hz and analysis.root
+        return { pitch: hz || null, hz: hz, root: hz ? (r.root == null ? null : r.root) : null, midi: hz ? r.midi : null, cents: hz ? (r.cents || 0) : 0, clarity: r.clarity || 0 };
       } catch (e) { return null; }
     }
     function store(buf, info, o, g, meta) {
@@ -955,7 +964,7 @@
       o = o || {};
       var M = needP('slice'), buf = getBuffer(bufferId);
       if (!buf) throw new Error('Host.sliceToProgram: ' + bufferId + ' is not loaded');
-      var regions = M.slice(buf, o) || [];
+      var regions = M.slice(bufferId, buf.getChannelData(0), buf.sampleRate, o) || [];
       regions.forEach(function (r) { r.buffer = bufferId; });
       var a = audioMap()[bufferId];
       return host.addProgram({ name: o.name || ((a && a.name) || bufferId).replace(/\.[A-Za-z0-9]{1,5}$/, '') + ' slices', kind: 'drums', global: { gate: 0 }, regions: regions }, { id: o.id });
@@ -970,7 +979,8 @@
         else { var users = programTracks(ref); if (users.length) params = clone(ed.track(users[0]).params || {}); }
         var p = getProgram(id);
         if (!p) throw new Error('Host.exportProgram: no program ' + ref);
-        var text = M.toSfz(p, params, ed.doc.audio || {}), seen = {}, files = [];
+        var aud = ed.doc.audio || {};
+        var text = M.toSfz(p, { src: function (bid) { return (aud[bid] && aud[bid].src) || bid; }, defaultPath: o.defaultPath, params: params }), seen = {}, files = [];
         p.regions.forEach(function (r) { if (r.buffer && !seen[r.buffer]) { seen[r.buffer] = 1; files.push({ id: r.buffer, src: (audioMap()[r.buffer] || {}).src || null }); } });
         var sh = o.shell || root.HavantechnoShell || null, out = { text: text, files: files, id: id };
         if (o.save !== false && sh && typeof sh.saveFile === 'function') {
