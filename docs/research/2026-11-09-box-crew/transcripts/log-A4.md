@@ -24,3 +24,11 @@ Files touched: `app/ui/system-editor.js`, `tools/system-editor-check.js`, this l
 
 - A real folder drop in a browser or Electron (the check fakes `webkitGetAsEntry` entries) and the real `<input webkitdirectory>` picker.
 - The stub host stands in for `importProgram` / `mapFiles`; the real Host's handling of these arguments was read, not run from this view.
+
+## Batch 2: TR-808 / TR-909 kits and single drum voices
+
+- **"+ track" menu** gained "TR-808 kit", "TR-909 kit" and "Drum voice…" (a submenu listing every `Drums.types()` entry, labelled `type · voice name` from a small name table such as `bd808 · Bass drum 808`; the spec itself carries no display names). Disabled when `Drums` is not loaded.
+- **Kit** = one `ed.addTrack({name, type, inst: type, family: 'drums', gain: 0.8, variants: {A: empty pattern}})` per core voice (808: bd sd cp ch oh cb lt mt ht; 909: bd sd cp ch oh lt mt ht rs cr rd) inside one `ed.group`, then one `host.commit()`: one undo entry. A name already taken gets `_2`, `_3`. The first new track is selected. Rows sit under DRUMS (family drums) and, like a fresh sampler, become played by the current section on the first step edit.
+- `tools/system-editor-check.js` now also loads `engine/drums.js` and `engine/programs.js`. New cases (real Host): menu lists the three entries; 808 kit adds 9 tracks with the right types, family drums, empty patterns, one undo entry, rows under DRUMS, one undo removes the whole kit; 909 kit adds 11 in one entry; submenu lists all `Drums.types()`; one voice adds one track of that type in one entry; a second copy is named `cy808_2`.
+- Verified, exit codes read directly: `node --check` 0 (both files); `node tools/system-editor-check.js` `OK: 97 checks passed`, 0; `node tools/browser-check.js` `RESULT: PASS (26 checks)`, 0.
+- Not verified: sound of the added voices, the voice faces (A3), a real browser click-through of the submenu.

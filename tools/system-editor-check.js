@@ -489,4 +489,40 @@ function programTests() {
   }).then(function () { view2.dispose(); }, function (e) { view2.dispose(); throw e; });
 }
 
-samplerTests().then(programTests).then(finish, function (e) { console.log('FAIL: ' + e.message); process.exitCode = 1; });
+
+// ------------------------------------------------------------------ drum machines: kits and single voices from the + track menu
+function drumTests() {
+  if (hostKind !== 'real Host.create()' || !sb.Drums) { console.log('  (drum cases skipped: need the real Host and Drums)'); return Promise.resolve(); }
+  function plus() { return mountEl.find(function (x) { return hasClass(x, 'se-btn') && x.textContent === '+ track'; })[0]; }
+  function item(re) { return mountEl.find(function (x) { return hasClass(x, 'se-menuitem') && re.test(x.textContent); })[0]; }
+  function types() { return host.document().tracks.map(function (t) { return t.type || t.inst; }); }
+  function undoN() { return host.editor()._undo.length; }
+  var n0 = host.document().tracks.length, u0 = undoN(), expect808 = ['bd808', 'sd808', 'cp808', 'ch808', 'oh808', 'cb808', 'lt808', 'mt808', 'ht808'];
+  plus().fire('click');
+  ok(item(/TR-808 kit/) && item(/TR-909 kit/) && item(/Drum voice/), 'the + track menu lists TR-808 kit, TR-909 kit and Drum voice...');
+  item(/TR-808 kit/).fire('click');
+  var d = host.document(), added = d.tracks.slice(n0);
+  ok(added.length === 9 && added.map(function (t) { return t.type; }).join() === expect808.join(), 'TR-808 kit adds nine tracks with the core voice types (' + added.map(function (t) { return t.type; }).join(',') + ')');
+  ok(undoN() === u0 + 1, 'the 808 kit is one undo entry (+' + (undoN() - u0) + ')');
+  ok(added.every(function (t) { return t.family === 'drums' && t.variants.A.cells.every(function (c) { return c === null; }); }), 'kit tracks are family drums with an empty pattern');
+  var names = mountEl.find(function (x) { return x.attrs['data-track']; }).map(function (x) { return x.attrs['data-track']; });
+  ok(names.indexOf('bd808') >= 0 && names.indexOf('bd808') <= 6 + 9 + 1 && mountEl.find(function (x) { return x.attrs['data-track'] === 'bd808'; })[0].attrs['data-fam'] === 'drums', 'kit rows render under DRUMS');
+  host.editor().undo(); host.commit();
+  ok(host.document().tracks.length === n0, 'one undo removes the whole kit');
+  var u1 = undoN(); plus().fire('click'); item(/TR-909 kit/).fire('click');
+  var a9 = host.document().tracks.slice(n0).map(function (t) { return t.type; });
+  ok(a9.join() === 'bd909,sd909,cp909,ch909,oh909,lt909,mt909,ht909,rs909,cr909,rd909' && undoN() === u1 + 1, 'TR-909 kit adds eleven tracks in one undo entry (' + a9.length + ')');
+  host.editor().undo(); host.commit();
+  // single voice through the submenu
+  var n1 = host.document().tracks.length, u2 = undoN();
+  plus().fire('click'); item(/Drum voice/).fire('click');
+  var voices = mountEl.find(function (x) { return hasClass(x, 'se-menuitem'); });
+  ok(voices.length === sb.Drums.types().length && /Cowbell|cb808/.test(voices.map(function (v) { return v.textContent; }).join()), 'Drum voice... lists every Drums type (' + voices.length + ')');
+  item(/^cy808/).fire('click');
+  ok(host.document().tracks.length === n1 + 1 && types()[n1] === 'cy808' && undoN() === u2 + 1, 'a single voice adds one track of that type in one undo entry');
+  plus().fire('click'); item(/Drum voice/).fire('click'); item(/^cy808/).fire('click');
+  ok(host.document().tracks.slice(-1)[0].name === 'cy808_2', 'a second copy of a voice gets a unique track name');
+  return Promise.resolve();
+}
+
+samplerTests().then(programTests).then(drumTests).then(finish, function (e) { console.log('FAIL: ' + e.message); process.exitCode = 1; });
