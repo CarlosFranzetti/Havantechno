@@ -133,19 +133,19 @@
   }
 
   // pre-delay: lag of the first 6 dB rise of the side channel (wet) behind the mid-channel (dry) onset, from aligned
-  // averages of all hits. Valid only for a centred dry source: if the dry side/mid in the first 3 ms is above -30 dB
-  // (a panned or wide source) the value is null with that reason (L1 transcript 6.2.3: the panned hat read 0.8 ms).
+  // averages of all hits. Valid only for a centred dry source: if the dry hit's pan gain (side coherent with mid in
+  // its first 3 ms) is above -30 dB (a panned source) the value is null with that reason (L1 transcript 6.2.3: the panned hat read 0.8 ms).
   function predelay(L, R, sr) {
     if (!R) return { ms: null, reason: 'mono file: no side channel' };
-    var M = D.mono(L, R), S = D.side(L, R), on = D.onsets(M, sr, { rearm: 20 }), n = Math.round(0.06 * sr), pre = 200, i, k;
+    var M = D.mono(L, R), S = D.side(L, R), on = D.onsets(M, sr), n = Math.round(0.06 * sr), pre = 200, i, k;
     var em = new Float64Array(n), es = new Float64Array(n), dm = 0, ds = 0, w3 = Math.round(0.003 * sr), c = 0;
     for (i = 0; i < on.length - 1; i++) {
       var a = on[i] - pre; if (a < 0 || a + n > M.length) continue;
       for (k = 0; k < n; k++) { em[k] += M[a + k] * M[a + k]; es[k] += S[a + k] * S[a + k]; }
-      dm += D.energy(M, on[i], on[i] + w3); ds += Math.max(0, D.energy(S, on[i], on[i] + w3) - D.energy(S, on[i] - w3, on[i])); c++;   // side added by the hit, not earlier tails
+      for (k = on[i]; k < on[i] + w3; k++) { dm += M[k] * M[k]; ds += S[k] * M[k]; } c++;   // pan gain of the dry hit: side coherent with mid
     }
     if (c < 2) return { ms: null, reason: 'fewer than 3 hits' };
-    var dryRatio = D.db(ds / (dm + 1e-30));
+    var dryRatio = 20 * Math.log10(Math.abs(ds) / (dm + 1e-30) + 1e-15);   // |<S,M>|/<M,M>: tails are incoherent with the new hit
     if (dryRatio > -30) return { ms: null, reason: 'dry source is panned or wide (dry side/mid ' + dryRatio.toFixed(1) + ' dB)', dryRatioDb: dryRatio };
     function smooth(v) { var y = new Float64Array(v.length), s, j, q; for (j = 0; j < v.length; j++) { s = 0; q = 0; for (var t = j - 5; t <= j + 5; t++) if (t >= 0 && t < v.length) { s += v[t]; q++; } y[j] = D.db(s / q); } return y; }
     var Lm = smooth(em), Ls = smooth(es), mx = -Infinity, im = 0, is = -1;
