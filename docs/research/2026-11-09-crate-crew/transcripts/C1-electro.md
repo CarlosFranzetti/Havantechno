@@ -66,3 +66,12 @@ Next in line: Kraftwerk Numbers (documented, but the rhythm box is not an 808, s
 - Tempo for every row (measure from the owner's file).
 - Gear for rows 2, 13 to 15, 17 to 20 (nothing searched).
 - Whether Hip Hop Be Bop uses an 808 or a DMX (no source found; Parrish says it was edited together, src 5).
+
+## Second pass (2026-11-09 ET): blocked, nothing upgraded
+
+The coordinator said reverb.com, daily.redbullmusicacademy.com and others were reachable. Four fetches were tried in parallel (Reverb classic-electro article, Red Bull Mr. Mixx interview, Red Bull Newcleus Key Tracks, Reverb Atkins MS-10 article). **All four failed with "getaddrinfo ENOTFOUND"** for reverb.com and daily.redbullmusicacademy.com, the same error as in the first pass. Per the tool's instruction I stopped fetching (4 of 8 used). So the sandbox network allowlist has not taken effect in this session; it may need a session restart or a new session.
+
+Consequences:
+- No [S-weak] or [M] claim was upgraded. The table and the top five above stand unchanged.
+- The Egypt, Egypt conflict (Jupiter-8 per Reverb summary vs SH-101 and SVC-350 on a Wikipedia mirror) and the Clear year (1982 or 1983) remain unresolved.
+- To redo: re-run once the hosts resolve (test with a single fetch of reverb.com first). Priority pages: Reverb classic-electro article; Red Bull Mr. Mixx; Red Bull Newcleus; Reverb Atkins MS-10; Sound on Sound Planet Rock; Wikipedia Egyptian Lover.

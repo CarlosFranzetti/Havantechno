@@ -72,3 +72,12 @@ Not in my five: Daft Punk (layered, sample-heavy, many instruments) and Villalob
 - Per-track gear is missing for Basic Channel, Maurizio, Mills, Green Velvet and Villalobos in everything I saw. Next step: interviews, or the Ear Crew's measurements.
 - The RBMA Hood page should be read in full once its host is allowed.
 - Tempos and instrument counts need confirming against files the owner supplies.
+
+## Second pass (2026-11-09 ET, after the coordinator's message)
+
+Result: no upgrades possible. Seven fetches were attempted (RBMA Hood page, Wikipedia Acid Tracks, Wikipedia Spastik, Equipboard Hawtin, Mixmag Homework list, Wikipedia Basic Channel, GearNews Mills). All seven failed with `getaddrinfo ENOTFOUND` for daily.redbullmusicacademy.com, en.wikipedia.org, equipboard.com, mixmag.net and www.gearnews.com. In this session those hosts still do not resolve, so they are still not allowed, whatever the coordinator's note says. I did not retry or try other sites. One fetch of the allowed eight was left unused.
+
+- No [M] claim was upgraded to [S]. Every claim keeps its first-pass tag.
+- Spastik's drum machine is still unsettled: 808, 909 or both, with sources disagreeing (first-pass search summaries only).
+- The top five stands unchanged: Minimal Nation, Gak, Acid Tracks, The Bells, Phylyps Trak.
+- To finish the pass, the network settings must allow the five hosts above (the coordinator named only the first four of Wikipedia, RBMA, Equipboard, Sound on Sound and Discogs, and mixmag.net and gearnews.com are also needed). Re-run once the coordinator confirms.
