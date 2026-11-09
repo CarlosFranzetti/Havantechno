@@ -251,6 +251,22 @@ function registerIpc() {
       return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
     } catch (err) { return null; }
   });
+  // readText(path, {base}) -> string | null. Same rules as readFile, for text files (.sfz, .txt, .json) up to 4 MiB:
+  // main window only, absolute path or relative to opts.base, null when missing or refused. For SFZ #include files.
+  ipcMain.handle('shell:readText', async function (e, p, opts) {
+    if (!fromMain(e)) return null;
+    try {
+      p = String(p || '');
+      if (!p || p.length > 4096 || p.indexOf('\0') >= 0) return null;
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(p)) return null;
+      var base = opts && typeof opts.base === 'string' && path.isAbsolute(opts.base) ? opts.base : null;
+      var full = path.isAbsolute(p) ? p : (base ? path.resolve(base, p) : null);
+      if (!full || !/\.(sfz|txt|json)$/i.test(full)) return null;
+      var st = await fs.promises.stat(full);
+      if (!st.isFile() || st.size > 4 * 1024 * 1024) return null;
+      return await fs.promises.readFile(full, 'utf8');
+    } catch (err) { return null; }
+  });
   ipcMain.handle('shell:appDataPath', function () { return app.getPath('userData'); });
   // Small named files in the app-data folder (autosave, preferences).
   ipcMain.handle('shell:readAppData', async function (e, name) {

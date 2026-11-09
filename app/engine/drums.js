@@ -82,10 +82,11 @@
     target(g, 0, t + 0.0003 + hold, tc);
     return t + 0.0003 + hold + tc * 9 + 0.01;
   }
-  // soft clip with a gentle drive range (own curve: the engine's Kit.shaperCurve is too hard for the default drives)
+  // soft clip with a gentle drive range (own curve: the engine's Kit.shaperCurve is too hard for the default drives).
+  // drive 0 is a straight line, so a voice is transparent until the knob is turned.
   function driveCurve(drive) {
-    var n = 1024, c = new Float32Array(n), k = 1 + clamp(drive, 0, 1) * 6, d = Math.tanh(k);
-    for (var i = 0; i < n; i++) c[i] = Math.tanh((i * 2 / (n - 1) - 1) * k) / d;
+    var n = 1024, c = new Float32Array(n), k = clamp(drive, 0, 1) * 6, d = Math.tanh(k), i;
+    for (i = 0; i < n; i++) { var x = i * 2 / (n - 1) - 1; c[i] = k < 0.01 ? x : Math.tanh(x * k) / d; }
     return c;
   }
 
@@ -326,13 +327,13 @@
         var tcB = tcOf(p.decay), tcN = tcOf(p.noiseDecay), end = t + Math.max(p.decay, p.noiseDecay, 0.06) * 1.6 + 0.05;
         var bus = v.gain(1), o1 = v.osc('sine', p.tune, t, end), o2 = v.osc('sine', p.tune * p.ratio, t, end);
         var gA = v.gain(0), gB = v.gain(0);
-        expEnv(gA.gain, t, a * 0.55, 0, tcB);
-        expEnv(gB.gain, t, a * 0.3 * sn, 0, tcOf(0.05));
+        expEnv(gA.gain, t, a * 0.3, 0, tcB);
+        expEnv(gB.gain, t, a * 0.15 * sn, 0, tcOf(0.05));
         con(o1, gA); con(o2, gA); con(o1, gB); con(o2, gB); con(gA, bus); con(gB, bus);
         var n = v.noise(t, end);
         if (n) {
           var hp = v.filter('highpass', 800 + p.tone * 2200, 0.7), gN = v.gain(0);
-          expEnv(gN.gain, t, a * 0.9 * sn, 0, tcN);
+          expEnv(gN.gain, t, a * 0.7 * sn, 0, tcN);
           con(n, hp); con(hp, gN); con(gN, bus);
         }
         con(bus, outOf(v, inst, null, t));
@@ -428,7 +429,7 @@
                      [v.filter('highpass', METAL.hp, 1.5), 0.21, 0.15 + 0.85 * p.tone]];
         for (var i = 0; i < bands.length; i++) {
           var g = v.gain(0);
-          expEnv(g.gain, t, a * 1.2 * bands[i][2], 0, tcOf(p.decay * bands[i][1]));
+          expEnv(g.gain, t, a * 0.95 * bands[i][2], 0, tcOf(p.decay * bands[i][1]));
           con(sum, bands[i][0]); con(bands[i][0], g); con(g, mix);
         }
         con(mix, outOf(v, inst, null, t));
@@ -483,7 +484,7 @@
           var o = v.osc('sine', f * (1 + p.sweep), t, end);
           target(o.frequency, f, t, 0.02 / 3);
           var g = v.gain(0);
-          expEnv(g.gain, t, a * 0.9, 0, tcOf(p.decay));
+          expEnv(g.gain, t, a * 0.65, 0, tcOf(p.decay));
           con(o, g); con(g, mix);
           var n = v.noise(t, end);
           if (n) {
@@ -556,7 +557,7 @@
         var n = v.noise(t, end);
         if (!n) return;
         var hp = v.filter('highpass', p.tone, 0.7), g = v.gain(0);
-        setV(g.gain, 0, t); lin(g.gain, a * 0.9, t + 0.0002); lin(g.gain, 0, t + 0.0002 + p.decay);
+        setV(g.gain, 0, t); lin(g.gain, a * 0.5, t + 0.0002); lin(g.gain, 0, t + 0.0002 + p.decay);
         con(n, hp); con(hp, g); con(g, outOf(v, inst, null, t));
       };
     }
@@ -602,7 +603,7 @@
   BUILD.sd909 = {
     spec: base({
       tune: P(-0.5, 0.5, 0, 'oct', 'paper', 'preset.ts 76 TuneMapping, applied to the tone part only'),
-      tone: P(0.04, 0.2, 0.2, 's (time constant)', 'paper', 'noise decay, preset.ts 73, default 200 ms'),
+      tone: P(0.04, 0.2, 0.09, 's (time constant)', 'paper', 'noise decay, preset.ts 73 range 40 to 200 ms; the 200 ms default belongs to a recorded noise that decays by itself, so this synthesised default is a choice'),
       snappy: P(-18, 6, 0, 'dB', 'paper', 'noise gain, snaredrum.ts 24; the range is a choice'),
       base: P(120, 300, 190, 'Hz', 'prior', 'body oscillator 1; 180/330 Hz is memory, ER-99 220'),
       ratio: P(1.4, 2.4, 1.83, 'x', 'prior', 'oscillator 2 over 1, from 180/330 memory'),
@@ -617,7 +618,7 @@
         var p = inst.params, a = ampOf(ev) * stepAmp(ev), v = voice(ctx, inst), ng = dbToGain(p.snappy + (ev.accent ? 3 : 0));
         var f1 = p.base * Math.pow(2, p.tune), tcB = tcOf(p.bodyDecay), end = t + Math.max(p.bodyDecay, p.tone * 7) + 0.05;
         var bus = v.gain(1), gB = v.gain(0);
-        expEnv(gB.gain, t, a * 0.6, 0, tcB);
+        expEnv(gB.gain, t, a * 0.4, 0, tcB);
         for (var i = 0; i < 2; i++) {
           var f = f1 * (i ? p.ratio : 1), o = v.osc('sine', f * (1 + p.glide), t, end);
           target(o.frequency, f, t, p.glideTime / 3);
@@ -627,7 +628,7 @@
         var n = v.noise(t, end);
         if (n) {
           var hp = v.filter('highpass', p.hpf, 0.7), gN = v.gain(0);
-          expEnv(gN.gain, t, a * 0.45 * ng, 0, p.tone);
+          expEnv(gN.gain, t, a * 0.35 * ng, 0, p.tone);
           con(n, hp); con(hp, gN); con(gN, bus);
         }
         con(bus, outOf(v, inst, null, t));
@@ -643,7 +644,7 @@
     return {
       spec: base({
         tune: P(-0.5, 0.5, 0, 'oct', 'paper', 'preset.ts 76 TuneMapping around the tom base'),
-        decay: P(0.04, 0.15, 0.15, 's (time constant)', 'paper', 'preset.ts 72, default 150 ms'),
+        decay: P(0.04, 0.15, 0.08, 's (time constant)', 'paper', 'preset.ts 72 range 40 to 150 ms; the 150 ms default belongs to a recorded tom that decays by itself, so this synthesised default is a choice'),
         hold: P(0.01, 0.1, 0.03, 's', 'paper', 'processor.ts 139-143 release start 30 ms'),
         base: P(f0 * 0.6, f0 * 1.6, f0, 'Hz', 'prior', 'ER-99 100/200/300 adjusted, memory'),
         depth: P(0, 3, 1, 'x', 'prior', 'pitch envelope extra = f x depth; ER-99 2x'),

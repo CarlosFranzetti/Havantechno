@@ -261,7 +261,7 @@ console.log('7. kick pitch tracks, hold and step levels');
   var ca = new RecCtx(), ba = D.create(ca, 'bd808'); ba.trigger(0, { vel: 1, accent: true });
   ok(osc0(ca).frequency.calls.filter(function (x) { return x[0] === 'setTargetAtTime'; })[0][1] === 49.5, 'accent does not move the settled pitch');
   // toms: the 909 hold and tune endpoints
-  var ct = new RecCtx(), tm = D.create(ct, 'lt909'); tm.trigger(0, {});
+  var ct = new RecCtx(), tm = D.create(ct, 'lt909', { decay: 0.15 }); tm.trigger(0, {});
   var tg9 = ct.nodes.filter(function (n) { return n.type_ === 'gain'; }).map(function (n) { return n.gain.calls.filter(function (x) { return x[0] === 'setTargetAtTime' && x[3] === 0.15; })[0]; }).filter(Boolean)[0];
   ok(tg9 && near(tg9[2], 0.0003 + 0.03, 1e-9), 'lt909 holds 30 ms then decays with the 150 ms time constant');
   // 808 tom tune end points

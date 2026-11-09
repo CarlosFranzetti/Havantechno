@@ -13,7 +13,7 @@ Views: the **System Editor** (the voted layout) and the **Step View** (same fram
 ## Load order (app/index.html)
 
 ```
-engine/core.js  engine/synths.js  engine/processors.js  engine/songdoc.js  engine/sequencer.js  engine/song.js
+engine/core.js  engine/programs.js  engine/synths.js  engine/drums.js  engine/processors.js  engine/songdoc.js  engine/sequencer.js  engine/song.js
 engine/host.js  engine/project.js
 ui/theme.css   ui/widgets.js  ui/faces.js  ui/facedefs.js  ui/windows.js  ui/system-editor.js  ui/step-view.js  ui/app.js
 ```
