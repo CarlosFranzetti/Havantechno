@@ -23,7 +23,7 @@
   var REGION = {
     buffer: '', lokey: 0, hikey: 127, root: 60, lovel: 1, hivel: 127, tune: 0, transpose: 0, keytrack: 100,
     gain: 0, pan: 0, veltrack: 1, offset: 0, end: 0, loop: 'none', loopStart: 0, loopEnd: 0, xfade: 0, xfCurve: 'power',
-    seq: 1, seqLen: 1, lorand: 0, hirand: 1, group: '', offBy: '', offMode: 'fast', notePoly: 0,
+    seq: 1, seqLen: 1, lorand: 0, hirand: 1, group: '', offBy: '', offMode: 'fast', notePoly: 0, rootFile: false,
     env: null, filter: null, fenv: null, vib: null, lfo: null, reverse: 0, extra: {}
   };
   var LOOPS = ['none', 'oneshot', 'continuous', 'sustain'];
@@ -36,7 +36,7 @@
     r = r || {};
     for (k in r) if (has(r, k) && r[k] !== undefined) out[k] = clone(r[k]);
     if (LOOPS.indexOf(out.loop) < 0) out.loop = 'none';
-    out.root = clamp(out.root | 0, 0, 127); out.lokey = clamp(out.lokey | 0, 0, 127); out.hikey = clamp(out.hikey | 0, 0, 127);
+    out.root = clamp(out.root | 0, 0, 127); out.lokey = clamp(out.lokey | 0, -1, 127); out.hikey = clamp(out.hikey | 0, 0, 127);
     out.lovel = clamp(out.lovel | 0, 1, 127); out.hivel = clamp(out.hivel | 0, 1, 127);
     out.seqLen = Math.max(1, out.seqLen | 0); out.seq = clamp(out.seq | 0, 1, out.seqLen);
     return out;
@@ -60,7 +60,7 @@
   function noteValue(v) {
     if (typeof v === 'number') return v === v ? clamp(Math.round(v), 0, 127) : null;
     var s = String(v == null ? '' : v).trim().toLowerCase();
-    if (/^-?\d+$/.test(s)) return clamp(parseInt(s, 10), 0, 127);
+    if (/^-?\d+$/.test(s)) return clamp(parseInt(s, 10), -1, 127);   // -1 is kept for lokey (never plays from keys)
     var m = /^([a-g])(#|b)?(-?\d+)$/.exec(s);
     if (!m) return null;
     var midi = (parseInt(m[3], 10) + 1) * 12 + PC[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0);
@@ -132,7 +132,7 @@
     var samples = [], defaultPath = '';
     var ctlAll = tokens(src).filter(function (t) { return t.op === 'default_path'; });
     if (ctlAll.length) defaultPath = ctlAll[0].value;
-    var prog = { name: '', kind: 'pitched', source: { format: 'sfz' }, global: {}, regions: [] };
+    var prog = { name: '', kind: 'pitched', source: { format: 'sfz' }, global: { gate: 1 }, regions: [] };
     var regions = [];
     regions = parseRegions(src, opts, warnings, defaultPath, samples);
     prog.regions = regions.map(normRegion);
@@ -195,7 +195,8 @@
       else if (op === 'pitch_keycenter' || op === 'lokey' || op === 'hikey' || op === 'lovel' || op === 'hivel' || op === 'group' ||
                op === 'off_by' || op === 'seq_length' || op === 'seq_position' || op === 'note_polyphony') {
         var f = T1_NOTE[op];
-        if (op === 'pitch_keycenter' || op === 'lokey' || op === 'hikey') r[f] = noteOrNum(v);
+        if (op === 'pitch_keycenter' && v.trim().toLowerCase() === 'sample') r.rootFile = true;
+        else if (op === 'pitch_keycenter' || op === 'lokey' || op === 'hikey') r[f] = noteOrNum(v);
         else if (op === 'group' || op === 'off_by') r[f] = v;
         else if (op === 'off_mode') r.offMode = v;
         else r[f] = parseFloat(v) || 0;
@@ -238,6 +239,18 @@
       else if (tierTwo(op)) { r.extra[op] = v; warnings.push({ line: line, opcode: op, why: 'kept verbatim, not played' }); }
       else { r.extra[op] = v; warnings.push({ line: line, opcode: op, why: 'unknown opcode, kept verbatim' }); }
     }
+    if (has_fil && fil.type === undefined) fil.type = 'lowpass';      // fil_type absent: lpf_2p (SFZ default)
+    if (r.rootFile) {
+      // pitch_keycenter=sample: the root is the file's own (WAV smpl or acid), 0 with a warning when the file has none
+      var mt = opts.meta ? opts.meta(r.buffer) : null;
+      if (mt && typeof mt.root === 'number') r.root = mt.root;
+      else { r.root = 0; warnings.push({ line: 0, opcode: 'pitch_keycenter', why: 'sample has no root; using 0' }); }
+    }
+    if (r.loop === 'continuous' && !r.loopEnd) {
+      // loop_continuous without loop points: the file's first loop when it has one (one_shot ignores file loops)
+      var lm = opts.meta ? opts.meta(r.buffer) : null;
+      if (lm && lm.loops && lm.loops.length) { r.loopStart = lm.loops[0][0]; r.loopEnd = lm.loops[0][1]; }
+    }
     if (has_env) r.env = env;
     if (has_fenv) r.fenv = fenv;
     if (has_fil) r.filter = fil;
@@ -266,7 +279,7 @@
   function regionOps(r, srcOf) {
     var o = [], d = REGION;
     o.push(['sample', srcOf(r.buffer)]);
-    o.push(['lokey', fmtNum(r.lokey)], ['hikey', fmtNum(r.hikey)], ['pitch_keycenter', fmtNum(r.root)]);
+    o.push(['lokey', fmtNum(r.lokey)], ['hikey', fmtNum(r.hikey)], ['pitch_keycenter', r.rootFile ? 'sample' : fmtNum(r.root)]);
     o.push(['lovel', fmtNum(r.lovel)], ['hivel', fmtNum(r.hivel)]);
     o.push(['tune', fmtNum(r.tune)], ['transpose', fmtNum(r.transpose)], ['pitch_keytrack', fmtNum(r.keytrack)]);
     o.push(['volume', fmtNum(r.gain)], ['pan', fmtNum(r.pan * 100)], ['amp_veltrack', fmtNum(r.veltrack * 100)]);
@@ -517,6 +530,10 @@
   }
 
   // ------------------------------------------------------------ WAV header (RIFF): rate, smpl loops, acid root
+  // Chunk layout constants (byte offsets inside each chunk's data). UNVERIFIED: written from the common WAV smpl and acid
+  // descriptions, not yet checked against a file a sampler wrote. Change here only.
+  var SMPL = { UNITY: 12, FRACTION: 16, NLOOPS: 28, LOOPS: 36, LOOP_REC: 24, LOOP_TYPE: 4, LOOP_START: 8, LOOP_END: 12 };
+  var ACID_ROOT = 4;
   function readWavMeta(buf) {
     var out = { rate: 0, channels: 0, root: null, fraction: 0, loops: [], loopType: [] };
     try {
@@ -527,15 +544,15 @@
         var size = dv.getUint32(p + 4, true), d = p + 8, avail = Math.min(size, n - d);
         if (id === 'fmt ' && avail >= 8) { out.channels = dv.getUint16(d + 2, true); out.rate = dv.getUint32(d + 4, true); }
         if (id === 'smpl' && avail >= 36) {
-          out.root = dv.getUint32(d + 12, true);
-          out.fraction = dv.getUint32(d + 16, true) / 4294967296;
-          var nl = dv.getUint32(d + 28, true), lp = d + 36;
-          for (var i = 0; i < nl && lp + 24 <= d + avail; i++, lp += 24) {
-            out.loops.push([dv.getUint32(lp + 8, true), dv.getUint32(lp + 12, true)]);
-            out.loopType.push(dv.getUint32(lp + 4, true));
+          out.root = dv.getUint32(d + SMPL.UNITY, true);
+          out.fraction = dv.getUint32(d + SMPL.FRACTION, true) / 4294967296;
+          var nl = dv.getUint32(d + SMPL.NLOOPS, true), lp = d + SMPL.LOOPS;
+          for (var i = 0; i < nl && lp + SMPL.LOOP_REC <= d + avail; i++, lp += SMPL.LOOP_REC) {
+            out.loops.push([dv.getUint32(lp + SMPL.LOOP_START, true), dv.getUint32(lp + SMPL.LOOP_END, true)]);
+            out.loopType.push(dv.getUint32(lp + SMPL.LOOP_TYPE, true));
           }
         }
-        if (id === 'acid' && avail >= 6 && out.root == null) out.root = dv.getUint16(d + 4, true);
+        if (id === 'acid' && avail >= 6 && out.root == null) out.root = dv.getUint16(d + ACID_ROOT, true);
         p = d + size + (size & 1);
       }
     } catch (e) { /* a truncated chunk: keep what was read */ }

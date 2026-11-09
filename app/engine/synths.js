@@ -632,6 +632,7 @@
   }
   function chokeVoice(v, t) {
     chokeUnregister(v);
+    if (v.model) { fadeVoice(v.model, t, PROG_FADE_MS); return; }   // program voices: a dB-safe fade
     var g = v.env;
     if (g) {
       try { var cur = g.gain.value; K.cancel(g.gain, t); setV(g.gain, cur, t); lin(g.gain, 0.0001, t + 0.005); } catch (e) {}
@@ -772,6 +773,173 @@
   }
   function rf(r, k, d) { return (r && r[k] !== undefined && r[k] !== null) ? r[k] : d; }
 
+  // ------------------------------------------------------------ program trigger
+  // A hit on a program sampler: the keys (ev.notes, ev.midi, ev.note, else params.key), each + params.shift; the velocity
+  // layers from the velocity (1..127); the regions whose key, velocity and lorand/hirand range fit; round robin by seq;
+  // one voice per region, with pitch from key, root, keytrack, tune, transpose and fine; the amp envelope (attack, hold,
+  // decay, sustain, release, dB-linear), the filter (cutoff, reso, key and velocity tracking, filter envelope in cents,
+  // LFO), vibrato, amp LFO, pan, polyphony (steal), note polyphony and off_by/off_mode choke.
+  var PROG_FADE_MS = 6;           // the fast off mode, the choke fade and the steal fade (ms)
+  var PROG_LOOP_LEN = 8;          // seconds a loop with no gate and no dur plays
+  var FIL_TYPES = { lowpass: 'lowpass', highpass: 'highpass', bandpass: 'bandpass', notch: 'notch', lp24: 'lowpass', hp24: 'highpass' };
+  function dbAmp(db) { return Math.pow(10, (db || 0) / 20); }
+  function progKeys(P, ev) {
+    var base = [], i;
+    if (ev && ev.notes && ev.notes.length) { for (i = 0; i < ev.notes.length; i++) if (typeof ev.notes[i] === 'number') base.push(ev.notes[i]); }
+    else if (ev && typeof ev.midi === 'number') base.push(ev.midi);
+    else if (ev && typeof ev.note === 'number') base.push(48 + ev.note);
+    else base.push(P.key);
+    return base.map(function (k) { return clamp(Math.round(k + P.shift), 0, 127); });
+  }
+  // the regions that sound for key k, velocity v127 (1..127) and the random draw rnd; rr counts hits per sequence group
+  function progPick(prog, k, v127, rnd, rr) {
+    var groups = {}, order = [], picked = [], i, r;
+    for (i = 0; i < prog.regions.length; i++) {
+      r = prog.regions[i];
+      if (!r.buffer || r.lokey < 0) continue;                       // lokey -1: never plays from keys
+      if (k < r.lokey || k > r.hikey || v127 < r.lovel || v127 > r.hivel) continue;
+      if (rnd < r.lorand || rnd >= r.hirand) continue;
+      var gk = [r.lokey, r.hikey, r.lovel, r.hivel, r.seqLen].join(':');
+      if (!groups[gk]) { groups[gk] = []; order.push(gk); }
+      groups[gk].push(r);
+    }
+    for (i = 0; i < order.length; i++) {
+      var list = groups[order[i]], len = list[0].seqLen, n = (rr[order[i]] = (rr[order[i]] || 0) + 1);
+      var want = len > 1 ? ((n - 1) % len) + 1 : null;
+      for (var j = 0; j < list.length; j++) if (want === null || list[j].seq === want) picked.push(list[j]);
+    }
+    return picked;
+  }
+  // the voice to take when the polyphony is full: a voice in its release (lowest level first), else the oldest
+  function progSteal(list, t) {
+    var best = null, i, m;
+    for (i = 0; i < list.length; i++) {
+      m = list[i].model;
+      if (m.relAt != null && m.relAt <= t) { var lv = voiceLevel(m, t); if (!best || best.rel !== true || lv < best.lv) best = { v: list[i], rel: true, lv: lv }; }
+    }
+    if (!best) for (i = 0; i < list.length; i++) if (!best || list[i].model.t0 < best.v.model.t0) best = { v: list[i], rel: false };
+    if (best) { fadeVoice(best.v.model, t, PROG_FADE_MS); best.v.model.tEnd = t; }
+  }
+  function progLive(inst, t) {
+    return inst._live.filter(function (x) { return x.model && x.model.t0 <= t && x.model.tEnd > t; });
+  }
+  function programTrigger(inst, ctx, P, t, ev) {
+    var prog = null;
+    try { prog = typeof inst._getProgram === 'function' ? inst._getProgram(P.program) : null; } catch (e) { prog = null; }
+    if (!prog || !prog.regions || !prog.regions.length) return;
+    var st = inst._prog || (inst._prog = { rr: {}, n: 0 });
+    var keys = progKeys(P, ev), vf = clamp(vel(ev), 0, 1), v127 = Math.max(1, Math.min(127, Math.round(vf * 127)));
+    for (var ki = 0; ki < keys.length; ki++) {
+      var k = keys[ki];
+      st.n++;
+      var rnd = mulberry((Math.imul(st.n, 0x9E3779B1) ^ (k * 40503)) | 0)();
+      var picked = progPick(prog, k, v127, rnd, st.rr);
+      for (var pi = 0; pi < picked.length; pi++) progPlay(inst, ctx, P, picked[pi], t, ev, k, vf);
+    }
+  }
+  function progPlay(inst, ctx, P, r, t, ev, k, vf) {
+    var getBuf = inst._getBuffer, buf = null, meta = null;
+    if (typeof getBuf !== 'function') return;
+    try { buf = getBuf(r.buffer); } catch (e) { buf = null; }
+    if (!buf || !(buf.length > 0)) return;
+    try { meta = typeof inst._getMeta === 'function' ? inst._getMeta(r.buffer) : null; } catch (e) { meta = null; }
+    var scale = meta && meta.rate > 0 ? buf.sampleRate / meta.rate : 1, N = buf.length;
+    var src_buf = buf, off = clamp(Math.round(r.offset * scale), 0, N - 1);
+    var endF = r.end > 0 ? clamp(Math.round(r.end * scale), off + 1, N) : N;
+    var loop = r.loop === 'continuous' || r.loop === 'sustain', ls = off, le = endF;
+    if (loop && r.loopEnd > 0) { ls = clamp(Math.round(r.loopStart * scale), 0, N - 1); le = clamp(Math.round(r.loopEnd * scale), ls + 1, N); }
+    if (r.reverse) {                                                 // mirror the positions onto the reversed copy
+      src_buf = reversedBuffer(ctx, buf);
+      var o2 = N - endF; var l2 = N - le; le = N - ls; ls = l2; endF = N - off; off = o2;
+    }
+    if (endF <= off) return;
+    if (loop && r.xfade > 0) src_buf = bakeLoop(ctx, src_buf, ls, le, r.xfade * scale, r.xfCurve);
+    var sr = src_buf.sampleRate || ctx.sampleRate;
+    var semis = (k - r.root) * r.keytrack / 100 + r.transpose + (r.tune + P.fine) / 100, rate = Math.pow(2, semis / 12);
+    var segSec = (endF - off) / sr / rate, dur = ev && typeof ev.dur === 'number' && ev.dur > 0 ? ev.dur : null;
+    var relAt = null;
+    if (dur != null && r.loop !== 'oneshot' && (P.gate >= 0.5 || loop)) relAt = t + dur;   // gate: the note-off; oneshot ignores dur
+    var e = { delay: P.delay, attack: P.attack, hold: P.hold, decay: P.decay, sustain: P.sustain, release: P.release }, q;
+    if (r.env) for (q in r.env) if (r.env.hasOwnProperty(q) && r.env[q] != null) e[q] = r.env[q];
+    var rel = Math.max(e.release || 0.001, 0.001);
+    var vAmp = clamp(1 - r.veltrack * (1 - vf * vf), 0, 2);          // amp_veltrack: squared curve
+    var finalStop = relAt != null ? relAt + rel + 0.03 : (loop ? t + (dur || PROG_LOOP_LEN) : t + segSec + 0.03);
+    var v = voice(ctx, inst), src = ctx.createBufferSource();
+    var m = { env: e, base: 0.0001, peak: dbAmp(r.gain) * vAmp, t0: t, rel: rel, relAt: null, lvlRel: 0, tEnd: finalStop,
+              srcs: v.srcs, p: null, regionKey: r.buffer + '|' + r.lokey + '|' + r.hikey + '|' + r.lovel + '|' + r.hivel + '|' + r.seq,
+              key: k };
+    v.model = m;
+    // polyphony: note polyphony (same region) first, then the track's poly
+    // (this voice is already in inst._live, so it is left out of every count)
+    var live = progLive(inst, t).filter(function (x) { return x !== v; });
+    if (r.notePoly > 0) {
+      var same = live.filter(function (x) { return x.model.regionKey === m.regionKey && x.model.key === k; });
+      if (same.length >= r.notePoly) progSteal(same, t);
+    }
+    live = progLive(inst, t).filter(function (x) { return x !== v; });
+    if (live.length >= P.poly) progSteal(live, t);
+    // off_by (SFZ): this hit's group turns off the live voices whose off_by names that group, in their own off_mode
+    // ('fast': a 6 ms fade; 'normal': the voice's release). Those voices sit in the registry under 'off:' + off_by.
+    var reg = chokeGroups(ctx);
+    if (r.group && reg['off:' + r.group]) {
+      var olds = reg['off:' + r.group].slice();
+      for (var oi = 0; oi < olds.length; oi++) {
+        if (!olds[oi].model) continue;
+        if (olds[oi].model.offMode === 'normal') releaseVoice(olds[oi].model, t); else fadeVoice(olds[oi].model, t, PROG_FADE_MS);
+      }
+    }
+    src.buffer = src_buf;
+    val(src.playbackRate, rate);
+    var offSec = off / sr, durSec = (endF - off) / sr;
+    if (loop) { src.loop = true; src.loopStart = ls / sr; src.loopEnd = le / sr; }
+    var node = src;
+    // filter: cutoff, reso, key and velocity tracking (cents), filter envelope and LFO on the cutoff's detune
+    var fl = r.filter || null, ftype = fl && fl.type ? fl.type : P.filter;
+    var bq = null;
+    if (ftype && ftype !== 'off') {
+      var cutoff = fl && fl.cutoff != null ? fl.cutoff : P.cutoff, reso = fl && fl.reso != null ? fl.reso : P.reso;
+      var fKey = fl && fl.key != null ? fl.key : P.fKey, fKc = fl && fl.keyCenter != null ? fl.keyCenter : 60;
+      var fVel = fl && fl.vel != null ? fl.vel : P.fVel;
+      var fq = clamp(cutoff * Math.pow(2, (fKey * (k - fKc) + fVel * vf) / 1200), 20, 20000);
+      bq = v.filter(FIL_TYPES[ftype] || 'lowpass', fq, reso);
+      node.connect(bq); node = bq;
+      var fe = { delay: 0, attack: P.fAttack, decay: P.fDecay, sustain: P.fSustain, release: P.fRelease }, fpk = P.fEnv;
+      if (r.fenv) { for (q in r.fenv) if (r.fenv.hasOwnProperty(q) && r.fenv[q] != null && q !== 'depth') fe[q] = r.fenv[q]; if (r.fenv.depth != null) fpk = r.fenv.depth; }
+      if (fpk && bq.detune) schedLinEnv(bq.detune, m, relAt, fe, fpk);
+      var lc = r.lfo && r.lfo.cutoff != null ? r.lfo.cutoff : P.lfoCutoff, lr = r.lfo && r.lfo.rate != null ? r.lfo.rate : P.lfoRate;
+      if (lc && bq.detune) { var lo = v.osc(LFO_WAVE(P.lfoWave), lr, t, finalStop), ld = v.gain(0); setV(ld.gain, lc, t); lo.connect(ld); ld.connect(bq.detune); }
+    }
+    // amp envelope
+    var env = v.gain(0);
+    m.p = env.gain;
+    schedADSR(env.gain, m, relAt);
+    node.connect(env); node = env;
+    // amp LFO: a multiplier around 1
+    var la = r.lfo && r.lfo.amp != null ? r.lfo.amp : P.lfoAmp;
+    if (la > 0) { var am = v.gain(1), ao = v.osc(LFO_WAVE(P.lfoWave), r.lfo && r.lfo.rate != null ? r.lfo.rate : P.lfoRate, t, finalStop), ag = v.gain(0); setV(ag.gain, la * 0.5, t); ao.connect(ag); ag.connect(am.gain); node.connect(am); node = am; }
+    // vibrato on the source's detune, after its delay
+    var vd = r.vib && r.vib.depth != null ? r.vib.depth : P.vibDepth, vr = r.vib && r.vib.rate != null ? r.vib.rate : P.vibRate;
+    var vdl = r.vib && r.vib.delay != null ? r.vib.delay : P.vibDelay;
+    if (vd > 0 && src.detune) { var vo = v.osc('sine', vr, t, finalStop), vg = v.gain(0); setV(vg.gain, 0, t); setV(vg.gain, 0, t + vdl); lin(vg.gain, vd, t + vdl + 0.01); vo.connect(vg); vg.connect(src.detune); }
+    var pn = v.pan(r.pan);
+    if (pn) { node.connect(pn); node = pn; }
+    node.connect(inst.pre);
+    // the source, started on the file's segment (loops run until the stop)
+    v.pending++; src.onended = function () { v.pending--; if (v.pending <= 0) v.dispose(); };
+    v.nodes.push(src); v.srcs.push(src);
+    try { if (loop) src.start(t, offSec); else src.start(t, offSec, durSec); } catch (ex) {}
+    try { src.stop(finalStop); } catch (ex) {}
+    m.tEnd = finalStop;
+    m.offMode = r.offMode;
+    if (r.offBy) {
+      v.group = 'off:' + r.offBy; v.ctx = ctx;
+      (reg[v.group] || (reg[v.group] = [])).push(v);
+      var od = v.dispose;
+      v.dispose = function () { chokeUnregister(v); od(); };
+    }
+  }
+  function LFO_WAVE(w) { return w === 'sine' || w === 'square' || w === 'sawtooth' ? w : 'triangle'; }
+
   BUILD.sampler = {
     spec: { buffer: { value: '' }, start: { min: 0, max: 1, value: 0 }, end: { min: 0, max: 1, value: 0 },
             pitch: { min: -24, max: 24, value: 0, unit: 'st' },
@@ -795,6 +963,7 @@
     build: function (inst) {
       var ctx = inst.ctx, P = inst.params;
       inst.trigger = function (t, ev) {
+        if (P.program) { programTrigger(inst, ctx, P, t, ev); return; }
         var getBuf = inst._getBuffer;
         if (!P.buffer || typeof getBuf !== 'function') return;
         var buf = null;
@@ -854,11 +1023,17 @@
     var inst = makeInst(ctx || null, type, spec, opts, def.build);
     // the sampler's buffer resolver (the Host's table); not a parameter, so it is kept on the instance
     if (type === 'sampler' && opts && typeof opts.getBuffer === 'function') inst._getBuffer = opts.getBuffer;
+    if (type === 'sampler') {
+      if (opts && typeof opts.getProgram === 'function') inst._getProgram = opts.getProgram;
+      if (opts && typeof opts.getMeta === 'function') inst._getMeta = opts.getMeta;
+      var basePanic = inst.panic;
+      inst.panic = function () { inst._prog = null; basePanic(); };   // round robin and the note seed restart
+    }
     return inst;
   }
 
   // 'sampler' is created by name but not listed: selfcheck.js (A1) iterates types() and expects every listed type to
   // start sources on a fake context with no buffer loaded, and to have a device.
   root.Synths = { create: create, types: function () { return TYPES.slice(); }, spec: function (t) { return BUILD[t] ? BUILD[t].spec : null; },
-                  chokeGroups: chokeGroups };
+                  chokeGroups: chokeGroups, bakeLoop: bakeLoop, reversed: reversedBuffer, adsrLevel: adsrLevel, fadeVoice: fadeVoice };
 })();

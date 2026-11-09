@@ -55,11 +55,13 @@
   }
   function toDb(e) { var y = f64(e.length), i; for (i = 0; i < e.length; i++) y[i] = 20 * Math.log10(e[i] + 1e-10); return y; }
 
-  // hysteresis onsets (L1 transcript 3.1): a 3 ms envelope arms `off` dB under the peak and fires `on` dB under it;
-  // each onset is refined back to the last sample 50 dB under the following 50 ms maximum of a 1 ms envelope.
+  // hysteresis onsets (L1 transcript 3.1): a 3 ms envelope fires `on` dB under the file's peak and re-arms when it falls
+  // `off` dB under that peak or `rearm` dB under the peak since the last onset (off by default; pass it for wet, dense
+  // material where tails never fall 45 dB between hits); each onset is refined back to the last sample 50 dB under the following 50 ms maximum of a
+  // 1 ms envelope.
   function onsets(x, sr, o) {
     o = o || {};
-    var on = o.on == null ? -30 : o.on, off = o.off == null ? -45 : o.off, gap = Math.round((o.minGap || 0.08) * sr);
+    var on = o.on == null ? -30 : o.on, off = o.off == null ? -45 : o.off, rearm = o.rearm == null ? Infinity : o.rearm, lp = -Infinity, gap = Math.round((o.minGap || 0.08) * sr);
     var e = toDb(env(x, 3, sr)), e1 = toDb(env(x, 1, sr)), pk = -Infinity, i, j, out = [], armed = true, last = -1e12;
     for (i = 0; i < e.length; i++) if (e[i] > pk) pk = e[i];
     var w50 = Math.round(0.05 * sr), w30 = Math.round(0.03 * sr);
@@ -68,8 +70,8 @@
         var loc = -Infinity, a = Math.max(1, i - w30), k = a;
         for (j = i; j < Math.min(e1.length, i + w50); j++) if (e1[j] > loc) loc = e1[j];
         for (j = i; j >= a; j--) if (e1[j] < loc - 50) { k = j + 1; break; }
-        out.push(k); last = i; armed = false;
-      } else if (!armed && e[i] < pk + off) armed = true;
+        out.push(k); last = i; armed = false; lp = e[i];
+      } else if (!armed) { if (e[i] > lp) lp = e[i]; if (e[i] < pk + off || e[i] < lp - rearm) armed = true; }
     }
     return out;
   }

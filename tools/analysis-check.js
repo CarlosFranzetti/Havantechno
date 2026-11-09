@@ -54,6 +54,8 @@ check('A cap lifted toward synth by a fixed formant', dTone.value === 'synth' &&
 function ir(rt, pre, lp) {
   var n = Math.round((rt * 1.3 + pre) * SR), L = new Float64Array(n), R = new Float64Array(n), p = Math.round(pre * SR), i, a = Math.exp(-2 * Math.PI * lp / SR), yl = 0, yr = 0;
   for (i = p; i < n; i++) { var e = Math.pow(10, -3 * ((i - p) / SR) / rt); yl = (1 - a) * (rnd() * 2 - 1) * e + a * yl; yr = (1 - a) * (rnd() * 2 - 1) * e + a * yr; L[i] = yl; R[i] = yr; }
+  var en = 0; for (i = 0; i < n; i++) en += L[i] * L[i] + R[i] * R[i];
+  en = Math.sqrt(en / 2); for (i = 0; i < n; i++) { L[i] /= en; R[i] /= en; }   // unit energy: mix is the wet/dry energy ratio
   return [L, R];
 }
 function conv(x, h) {
@@ -64,16 +66,19 @@ function conv(x, h) {
 }
 function wetStereo(dry, I, mix) { var l = conv(dry, I[0]), r = conv(dry, I[1]), L = new Float64Array(dry.length), R = new Float64Array(dry.length); for (var i = 0; i < dry.length; i++) { L[i] = dry[i] + mix * l[i]; R[i] = dry[i] + mix * r[i]; } return [L, R]; }
 var IR1 = ir(1.5, 0.020, 6000), IR2 = ir(0.6, 0.005, 2500);
-var dryNoise = track(function () { return decayNoise(HIT, 0.03); }, 8, 0.6), dryTone = track(function () { return tone; }, 8, 0.6);
-var wetA = wetStereo(dryNoise, IR1, 0.05), wetB = wetStereo(dryTone, IR1, 0.05), wetC = wetStereo(track(function () { return decayNoise(HIT, 0.02); }, 8, 0.6), IR2, 0.08);
+function sawHit(n) { var y = new Float64Array(n), i; for (i = 0; i < n; i++) y[i] = (2 * ((i * 220 / SR) % 1) - 1) * Math.exp(-i / (0.06 * SR)); return y; }
+var sawOne = sawHit(HIT);
+var dryNoise = track(function () { return decayNoise(HIT, 0.03); }, 8, 0.6), dryTone = track(function () { return sawOne; }, 8, 0.6);
+var wetA = wetStereo(dryNoise, IR1, 0.3), wetB = wetStereo(dryTone, IR1, 0.3), wetC = wetStereo(track(function () { return decayNoise(HIT, 0.02); }, 8, 0.6), IR2, 0.4);
 var rDry = X.reverb(F.freeDecay(dryNoise, dryNoise, SR)), rWet = X.reverb(F.freeDecay(wetA[0], wetA[1], SR), F.predelay(wetA[0], wetA[1], SR));
 check('D dry hits: no reverb', rDry.value.present === false, 'late ' + (rDry.value.rt60 || 'none') + ', ' + rDry.confidence);
 check('D wet hits: reverb present', rWet.value.present === true, rWet.confidence);
 check('D RT60 within 10 % of 1.5 s', Math.abs(rWet.value.rt60 / 1.5 - 1) < 0.1, 'rt60 ' + (rWet.value.rt60 || NaN).toFixed(2));
-check('D pre-delay within 2 ms of 20 ms', rWet.value.predelayMs != null && Math.abs(rWet.value.predelayMs - 20) < 2, 'pre-delay ' + rWet.value.predelayMs);
+var pdA = F.predelay(wetA[0], wetA[1], SR);
+check('D pre-delay within 2 ms of 20 ms', rWet.value.predelayMs != null && Math.abs(rWet.value.predelayMs - 20) < 2, 'pre-delay ' + rWet.value.predelayMs + (pdA.reason ? ', ' + pdA.reason : ''));
 var sh = X.sharedOrSpecific([{ name: 'noise', sig: F.tailSignature(wetA[0], wetA[1], SR) }, { name: 'tone', sig: F.tailSignature(wetB[0], wetB[1], SR) }, { name: 'other', sig: F.tailSignature(wetC[0], wetC[1], SR) }]);
 check('D two sources on one reverb: shared', sh.elements.noise && sh.elements.noise.value === 'shared (send or bus)' && sh.elements.tone.value === 'shared (send or bus)', JSON.stringify(sh.groups));
-check('D a source on its own reverb: element-specific', sh.elements.other && sh.elements.other.value === 'element-specific', sh.pairs.map(function (p) { return p.a + '~' + p.b + ' ' + p.colourDb.toFixed(1) + ' dB/' + p.rtLogRatio.toFixed(2); }).join('; '));
+check('D a source on its own reverb: element-specific', sh.elements.other && sh.elements.other.value === 'element-specific', sh.pairs.map(function (p) { return p.a + '~' + p.b + ' ' + (p.colourDb === p.colourDb ? p.colourDb.toFixed(1) : 'n/a') + ' dB/' + p.rtLogRatio.toFixed(2); }).join('; '));
 var panned = [new Float64Array(wetA[0].length), new Float64Array(wetA[0].length)];
 for (var i = 0; i < panned[0].length; i++) { panned[0][i] = 0.8 * dryNoise[i] + 0.05 * (wetA[0][i] - dryNoise[i]); panned[1][i] = 0.4 * dryNoise[i] + 0.05 * (wetA[1][i] - dryNoise[i]); }
 var pp = F.predelay(panned[0], panned[1], SR);

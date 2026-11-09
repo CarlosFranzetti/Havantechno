@@ -60,12 +60,30 @@
   // items = [{name, sig}] with sig = features.tailSignature; only items with a reverb (late slope >= 0.5 s) take part.
   // The report says "shared (send or bus)" or "element-specific" and never "built-in" or "outboard" (coordinator's
   // ruling 5, 2026-11-08): the two cannot be told apart from audio.
+  function quadFit(x, y) {
+    // least-squares y ~ c0 + c1 x + c2 x^2, returns the fitted values (normal equations, 3x3 Cramer)
+    var S = [0, 0, 0, 0, 0], T = [0, 0, 0], i, n = x.length;
+    for (i = 0; i < n; i++) { var p = 1; for (var k = 0; k < 5; k++) { S[k] += p; if (k < 3) T[k] += p * y[i]; p *= x[i]; } }
+    function det(m) { return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]); }
+    var M = [[S[0], S[1], S[2]], [S[1], S[2], S[3]], [S[2], S[3], S[4]]], dm = det(M), c = [];
+    for (var j = 0; j < 3; j++) { var Mj = M.map(function (r, ri) { return r.map(function (v, ci) { return ci === j ? T[ri] : v; }); }); c.push(dm ? det(Mj) / dm : 0); }
+    return x.map(function (v) { return c[0] + c[1] * v + c[2] * v * v; });
+  }
   function sameReverb(a, b) {
-    var dc = 0, n = 0, i, dr = 0;
-    for (i = 0; i < a.colour.length && i < b.colour.length; i++) if (a.colour[i] === a.colour[i] && b.colour[i] === b.colour[i]) { dc += (a.colour[i] - b.colour[i]) * (a.colour[i] - b.colour[i]); n++; }
-    dc = n ? Math.sqrt(dc / n) : NaN;
+    var i, idx = [], ma = -Infinity, mb = -Infinity, dc = NaN, dr = 0;
+    for (i = 0; i < a.headDb.length; i++) { ma = Math.max(ma, a.headDb[i]); mb = Math.max(mb, b.headDb[i]); }
+    // compare colour only where both sources excite the band (head within 30 dB of its own loudest band)
+    for (i = 0; i < a.colour.length && i < b.colour.length; i++) if (a.headDb[i] > ma - 30 && b.headDb[i] > mb - 30) idx.push(i);
+    if (idx.length >= 4) {
+      // the broad shape of the difference: a quadratic in band index, least squares. A tonal source puts one or two
+      // partials in a low band, so single bands scatter by +-5 dB around a shared reverb (L1 check); reverb colour
+      // differences (damping, bandwidth) are broad. The level offset is removed: send amounts differ.
+      var d = idx.map(function (k) { return a.colour[k] - b.colour[k]; }), fit = quadFit(idx, d), m = 0, s2 = 0;
+      fit.forEach(function (v) { m += v / fit.length; }); fit.forEach(function (v) { s2 += (v - m) * (v - m); });
+      dc = Math.sqrt(s2 / fit.length);
+    }
     for (i = 0; i < a.rt.length; i++) if (a.rt[i] > 0 && b.rt[i] > 0) dr = Math.max(dr, Math.abs(Math.log(a.rt[i] / b.rt[i])));
-    return { colourDb: dc, rtLogRatio: dr, same: dc < 4 && dr < 0.25 };
+    return { colourDb: dc, bandsCompared: idx.length, rtLogRatio: dr, same: dr < 0.25 && (dc !== dc || dc < 4) };
   }
   function sharedOrSpecific(items) {
     var wet = items.filter(function (it) { return it.sig && it.sig.late >= 0.5; }), parent = {}, i, j, pairs = [];

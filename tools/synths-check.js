@@ -72,7 +72,7 @@ FakeContext.prototype.flush = function () { var s = this.srcs.splice(0); for (va
 FakeContext.prototype.createGain = function () { var n = new Node(this, 'gain'); n.gain = new Param(this, 1); return n; };
 FakeContext.prototype.createOscillator = function () { var n = new Src(this, 'osc'); n.frequency = new Param(this, 440); n.detune = new Param(this, 0); n.type = 'sine'; return n; };
 FakeContext.prototype.createBufferSource = function () {
-  var n = new Src(this, 'bufsrc'); n.buffer = null; n.loop = false; n.loopStart = 0; n.loopEnd = 0; n.playbackRate = new Param(this, 1); return n;
+  var n = new Src(this, 'bufsrc'); n.buffer = null; n.loop = false; n.loopStart = 0; n.loopEnd = 0; n.playbackRate = new Param(this, 1); n.detune = new Param(this, 0); return n;
 };
 // a fake AudioBuffer: what a decoded file looks like to the instrument (duration, sampleRate, numberOfChannels)
 function fakeBuffer(seconds, sampleRate, channels) {
@@ -505,6 +505,242 @@ console.log('9. Ear Crew V3: kick attack, swell, length, harmonic, clickDecay; s
     ok(ids.indexOf('bed') >= 0 && ids.indexOf('tick') >= 0 && ids.indexOf('burst_r') >= 0 && H.sections().length === 15, 'Host.create({doc: Song.documentV3()}) opens the 15-section V3 with its tracks (' + ids.length + ' instruments)');
     ok(H.getParam('master.limiter.clipOn') === true && H.isBypassed('master:glue') === true, 'the Host applies the V3 master (clipOn, glue bypassed)');
   }
+})();
+
+// ------------------------------------------------------------------ 10. sampler programs (B1 5.x, checks 1-34 of 9.1)
+console.log('10. sampler programs: keys, layers, round robin, pitch, frames, envelopes, filter, polyphony, choke, programs.js');
+(function () {
+  var sb = appSandbox();
+  vm.runInContext(fs.readFileSync(path.join(ENGINE, 'programs.js'), 'utf8'), sb, { filename: 'programs.js' });
+  var PR = sb.Programs;
+  var meta = {};
+  function fillBuf(ctx, v, secs, sr) {
+    var b = ctx.createBuffer(1, Math.round(secs * (sr || ctx.sampleRate)), sr || ctx.sampleRate), d = b.getChannelData(0);
+    for (var i = 0; i < d.length; i++) d[i] = v;
+    return b;
+  }
+  // one sampler with a program 'p'; bufs maps ids to AudioBuffers
+  function make(ctx, bufs, regions, popts, opts) {
+    var prog = PR.normalize({ name: 't', regions: regions, global: (popts && popts.global) || {} });
+    var o = { getBuffer: function (id) { return bufs[id] || null; }, getProgram: function (id) { return id === 'p' ? prog : null; },
+              getMeta: function (id) { return meta[id] || null; }, program: 'p' };
+    if (opts) for (var k in opts) o[k] = opts[k];
+    return sb.Synths.create(ctx, 'sampler', o);
+  }
+  function reg(buf, lokey, hikey, extra) {
+    var r = { buffer: buf, lokey: lokey, hikey: hikey, root: lokey };
+    if (extra) for (var k in extra) r[k] = extra[k];
+    return r;
+  }
+  function srcsOf(ctx) { return ctx.srcs.slice(); }
+  function fillOf(src) { return src.buffer.getChannelData(0)[0]; }
+
+  // region by key (9.1 check 2) and params.key (check 3)
+  var ctx = new FakeContext(44100), bufs = { A: fillBuf(ctx, 0.1, 0.5), B: fillBuf(ctx, 0.2, 0.5), C: fillBuf(ctx, 0.3, 0.5) };
+  var rs = [reg('A', 36, 36), reg('B', 38, 38), reg('C', 42, 42)];
+  var s1 = make(ctx, bufs, rs);
+  s1.trigger(1, { midi: 38, vel: 0.8 });
+  ok(ctx.srcs.length === 1 && near(fillOf(ctx.srcs[0]), 0.2, 1e-6), 'a hit on key 38 starts one source, region B');
+  s1.set('key', 42); s1.trigger(2, {vel: 0.8});
+  ok(ctx.srcs.length === 2 && near(fillOf(ctx.srcs[1]), 0.3, 1e-6), 'no midi uses params.key (42): region C');
+  ok(!s1.trigger(3, { midi: 50, vel: 0.8 }) && ctx.srcs.length === 2, 'a key with no region plays nothing');
+
+  // velocity layers (check 4): vel 0.3 -> lower layer, 0.9 and accent -> upper layer
+  ctx = new FakeContext(44100); bufs = { L1: fillBuf(ctx, 0.1, 0.5), L2: fillBuf(ctx, 0.9, 0.5) };
+  var sv = make(ctx, bufs, [reg('L1', 60, 60, { lovel: 1, hivel: 63 }), reg('L2', 60, 60, { lovel: 64, hivel: 127 })]);
+  sv.trigger(1, { midi: 60, vel: 0.3 }); sv.trigger(2, { midi: 60, vel: 0.9 }); sv.trigger(3, { midi: 60, vel: 1.2, accent: true });
+  var lay = ctx.srcs.map(fillOf);
+  ok(near(lay[0], 0.1, 1e-6) && near(lay[1], 0.9, 1e-6) && near(lay[2], 0.9, 1e-6), 'velocity 0.3 picks the lower layer; 0.9 and an accent pick the upper');
+
+  // ev.notes chord and pitch formula (checks 5 and 6)
+  ctx = new FakeContext(44100); bufs = { A: fillBuf(ctx, 0.1, 0.5) };
+  var sc = make(ctx, bufs, [reg('A', 48, 72, { root: 60 })]);
+  sc.trigger(1, { notes: [60, 64, 67], vel: 0.8 });
+  var rates = ctx.srcs.map(function (s) { return s.playbackRate.value; });
+  ok(rates.length === 3 && near(rates[1], Math.pow(2, 4 / 12), 1e-9) && near(rates[2], Math.pow(2, 7 / 12), 1e-9), 'ev.notes [60,64,67] start three sources at 2^((n-root)/12)');
+  ctx = new FakeContext(44100); bufs = { A: fillBuf(ctx, 0.1, 0.5) };
+  var sp = make(ctx, bufs, [reg('A', 36, 84, { root: 60, tune: -50 })], null, { fine: 25 });
+  sp.trigger(1, { midi: 72, vel: 0.8 });
+  ok(near(ctx.srcs[0].playbackRate.value, Math.pow(2, (12 + (-50 + 25) / 100) / 12), 1e-9), 'pitch: key 72 on root 60, tune -50 and fine +25 ct gives 2^((12 - 0.25)/12)');
+
+  // frame positions use meta.rate (check 7): 22050 frames at rate 22050 in a 44100 buffer -> 1.0 s
+  ctx = new FakeContext(44100); bufs = { F: fillBuf(ctx, 0.5, 2) };
+  meta.F = { rate: 22050, root: null, loops: [] };
+  var sf = make(ctx, bufs, [reg('F', 0, 127, { root: 60, offset: 22050 })]);
+  sf.trigger(1, { midi: 60, vel: 0.8 });
+  ok(near(ctx.srcs[0].startArgs[1], 1.0, 1e-9), 'offset 22050 frames at meta.rate 22050 starts at 1.0 s in a 44100 Hz buffer');
+  delete meta.F;
+
+  // round robin (check 8): six hits A B C A B C; panic restarts at A
+  ctx = new FakeContext(44100); bufs = { A: fillBuf(ctx, 0.1, 0.2), B: fillBuf(ctx, 0.2, 0.2), C: fillBuf(ctx, 0.3, 0.2) };
+  var rr = make(ctx, bufs, [reg('A', 0, 127, { root: 60, seq: 1, seqLen: 3 }), reg('B', 0, 127, { root: 60, seq: 2, seqLen: 3 }), reg('C', 0, 127, { root: 60, seq: 3, seqLen: 3 })]);
+  for (var h = 0; h < 6; h++) rr.trigger(1 + h * 0.5, { midi: 60, vel: 0.8 });
+  var seq = ctx.srcs.map(fillOf).map(function (x) { return Math.round(x * 10); }).join(',');
+  ok(seq === '1,2,3,1,2,3', 'round robin over three regions plays A B C A B C (' + seq + ')');
+  rr.panic(); ctx.flush(); rr.trigger(5, { midi: 60, vel: 0.8 });
+  ok(near(fillOf(ctx.srcs[ctx.srcs.length - 1]), 0.1, 1e-6), 'panic() restarts the round robin at A');
+
+  // random round robin (check 9): two fresh instruments give the same 20 picks; both halves are used
+  function picks(seedless) {
+    var c = new FakeContext(44100), b = { A: fillBuf(c, 0.1, 0.2), B: fillBuf(c, 0.2, 0.2) };
+    var s = make(c, b, [reg('A', 0, 127, { root: 60, lorand: 0, hirand: 0.5 }), reg('B', 0, 127, { root: 60, lorand: 0.5, hirand: 1 })]);
+    for (var i = 0; i < 20; i++) s.trigger(i * 0.1, { midi: 60, vel: 0.8 });
+    return c.srcs.map(fillOf).map(function (x) { return Math.round(x * 10); }).join('');
+  }
+  var pa = picks(), pb = picks();
+  ok(pa === pb && /1/.test(pa) && /2/.test(pa), 'lorand/hirand picks repeat between fresh instruments and use both halves');
+
+  // gate and loop stop times (checks 17-19)
+  ctx = new FakeContext(44100); bufs = { A: fillBuf(ctx, 0.1, 2) };
+  var g0 = make(ctx, bufs, [reg('A', 0, 127, { root: 60, loop: 'none' })], null, { gate: 0 });
+  g0.trigger(1, { midi: 60, vel: 0.8, dur: 0.5 });
+  ok(near(ctx.srcs[0].stopAt, 1 + 2 + 0.03, 1e-6), 'gate 0, no loop: the release ends at the slice end (stop 3.03 s), whatever dur says');
+  var g1 = make(ctx, bufs, [reg('A', 0, 127, { root: 60, loop: 'none' })], null, { gate: 1 });
+  g1.trigger(10, { midi: 60, vel: 0.8, dur: 0.5 });
+  var rel1 = ctx.srcs[1].stopAt;
+  ok(near(rel1, 10 + 0.5 + 0.02 + 0.03, 1e-6), 'gate 1: release starts at t + dur (stop ' + rel1.toFixed(3) + ')');
+  var o1 = make(ctx, bufs, [reg('A', 0, 127, { root: 60, loop: 'oneshot' })], null, { gate: 1 });
+  o1.trigger(20, { midi: 60, vel: 0.8, dur: 0.1 });
+  ok(near(ctx.srcs[2].stopAt, 20 + 2 + 0.03, 1e-6), 'loop oneshot ignores dur even with gate 1');
+  ctx = new FakeContext(44100); bufs = { A: fillBuf(ctx, 0.1, 2) };
+  var lc = make(ctx, bufs, [reg('A', 0, 127, { root: 60, loop: 'continuous', loopStart: 22050, loopEnd: 44100 })], null, { gate: 1 });
+  lc.trigger(1, { midi: 60, vel: 0.8, dur: 0.3 });
+  var sl = ctx.srcs[0];
+  ok(sl.loop === true && near(sl.loopStart, 0.5, 1e-9) && near(sl.loopEnd, 1.0, 1e-9) && near(sl.stopAt, 1 + 0.3 + 0.02 + 0.03, 1e-6), 'loop continuous: loopStart/loopEnd in seconds, stop = t + dur + release + 0.03');
+
+  // envelope levels (check 22): attack linear, decay in dB stops at sustain, never <= 0
+  var e22 = { attack: 0.1, hold: 0, decay: 1, sustain: 0.5 };
+  var lv = [0.05, 0.1, 0.5, 2].map(function (dt) { return sb.Synths.adsrLevel(e22, dt, 0.0001, 1); });
+  ok(near(lv[0], 0.0001 + (1 - 0.0001) * 0.5, 1e-6) && near(lv[1], 1, 1e-9) && near(sb.Synths.adsrLevel(e22, 2, 0.0001, 1), 0.5, 1e-6), 'envelope: linear attack to the peak, decay stops at sustain 0.5');
+  var mono = true, prev = 2;
+  for (var di = 0; di <= 40; di++) { var lvl = sb.Synths.adsrLevel(e22, 0.1 + di * 0.02, 0.0001, 1); if (lvl > prev + 1e-12 || lvl <= 0) mono = false; prev = lvl; }
+  ok(mono, 'decay is monotone and never <= 0');
+
+  // filter (check 23): off makes no biquad; lowpass with Q = reso; the cutoff tracks the key and velocity in cents
+  ctx = new FakeContext(44100); bufs = { A: fillBuf(ctx, 0.1, 1) };
+  var biq = recordCreated(ctx, 'createBiquadFilter');
+  var sfl = make(ctx, bufs, [reg('A', 0, 127, { root: 60, filter: { type: 'lowpass', cutoff: 800, reso: 3, key: 100, keyCenter: 60, vel: 0 } })]);
+  sfl.trigger(1, { midi: 72, vel: 0.8 });
+  ok(biq.length === 1 && biq[0].Q.value === 3, 'lowpass biquad created with Q = reso (' + biq.length + ' biquad, Q ' + (biq[0] && biq[0].Q.value) + ')');
+  ok(biq.length === 1 && near(biq[0].frequency.value, 800 * Math.pow(2, 100 * 12 / 1200), 1e-6), 'fKey 100 ct per key: key 72 is 12 keys above the centre, +1200 ct (cutoff 1600 Hz)');
+  ctx = new FakeContext(44100); bufs = { A: fillBuf(ctx, 0.1, 1) }; biq = recordCreated(ctx, 'createBiquadFilter');
+  var soff = make(ctx, bufs, [reg('A', 0, 127, { root: 60 })]);
+  soff.trigger(1, { midi: 60, vel: 0.8 });
+  ok(biq.length === 0, "filter 'off' creates no biquad");
+
+  // a free-running lfo and vibrato only when the depth is set (check 24)
+  ctx = new FakeContext(44100); bufs = { A: fillBuf(ctx, 0.1, 1) }; var oscs = recordCreated(ctx, 'createOscillator');
+  var sv0 = make(ctx, bufs, [reg('A', 0, 127, { root: 60 })]); sv0.trigger(1, { midi: 60, vel: 0.8 });
+  ok(oscs.length === 0, 'vibrato and LFO depth 0 create no oscillator');
+  var sv1 = make(ctx, bufs, [reg('A', 0, 127, { root: 60, vib: { rate: 5, depth: 30, delay: 0 } })]); sv1.trigger(2, { midi: 60, vel: 0.8, dur: 0.5 });
+  ok(oscs.length === 1 && ctx.srcs[ctx.srcs.length - 1].detune && oscs[0].connections.length > 0, 'vibrato depth 30: one oscillator, connected to the source detune');
+
+  // reverse (check 25): the reversed copy starts with the original's last sample; offsets mirror
+  ctx = new FakeContext(44100); var ramp = ctx.createBuffer(1, 1000, 44100), rd = ramp.getChannelData(0);
+  for (var ri = 0; ri < 1000; ri++) rd[ri] = ri / 1000;
+  var srev = make(ctx, { R: ramp }, [reg('R', 0, 127, { root: 60, reverse: 1 })]);
+  srev.trigger(1, { midi: 60, vel: 0.8 });
+  ok(near(fillOf(ctx.srcs[0]), 999 / 1000, 1e-6), 'reverse 1 plays the reversed copy (first sample = the original last)');
+
+  // missing buffer silent, others play; throwing or null program silent; no context silent (checks 26, 27)
+  ctx = new FakeContext(44100); bufs = { B: fillBuf(ctx, 0.2, 1) };
+  var sm = make(ctx, bufs, [reg('MISSING', 60, 60, { root: 60 }), reg('B', 60, 60, { root: 60 })]);
+  var threw = false; try { sm.trigger(1, { midi: 60, vel: 0.8 }); } catch (e) { threw = true; }
+  ok(!threw && ctx.srcs.length === 1 && near(fillOf(ctx.srcs[0]), 0.2, 1e-6), 'a missing region buffer is silent; the other region plays');
+  ctx = new FakeContext(44100);
+  var sthrow = sb.Synths.create(ctx, 'sampler', { program: 'p', getProgram: function () { throw new Error('boom'); }, getBuffer: function () { return null; } });
+  threw = false; try { sthrow.trigger(1, { midi: 60, vel: 0.8 }); } catch (e) { threw = true; }
+  ok(!threw && ctx.srcs.length === 0, 'a throwing getProgram is silent and does not throw');
+  threw = false; try { sb.Synths.create(null, 'sampler', { program: 'p' }).trigger(1, { midi: 60 }); } catch (e) { threw = true; }
+  ok(!threw, 'no context: the program sampler is silent and throws nothing');
+
+  // polyphony (check 14): poly 4, the fifth hit steals the oldest voice (scheduled ahead of currentTime)
+  ctx = new FakeContext(44100); bufs = { A: fillBuf(ctx, 0.1, 10) };
+  var spo = make(ctx, bufs, [reg('A', 0, 127, { root: 60 })], null, { poly: 4 });
+  for (var pi = 0; pi < 5; pi++) spo.trigger(10 + pi * 0.05, { midi: 60, vel: 0.8, dur: 3 });
+  var voices = spo._live.filter(function (x) { return x.model; });
+  var alive = voices.filter(function (x) { return x.model.tEnd > 10.2 + 1e-9; }).length;
+  ok(voices[0].model.tEnd === 10.2 && alive === 4, 'poly 4: the fifth hit steals exactly the oldest voice (alive ' + alive + ')');
+
+  // note polyphony (check 13): a second hit on the same key steals; another key does not
+  ctx = new FakeContext(44100); bufs = { A: fillBuf(ctx, 0.1, 10) };
+  var snp = make(ctx, bufs, [reg('A', 36, 84, { root: 60, notePoly: 1 })]);
+  snp.trigger(1, { midi: 60, vel: 0.8, dur: 3 }); snp.trigger(1.5, { midi: 60, vel: 0.8, dur: 3 }); snp.trigger(1.6, { midi: 64, vel: 0.8, dur: 3 });
+  var nv = snp._live.filter(function (x) { return x.model; });
+  ok(nv[0].model.tEnd === 1.5 && nv[1].model.tEnd > 2 && nv[2].model.tEnd > 2, 'note_polyphony 1: a second hit on the same key steals; key 64 leaves it alone');
+
+  // choke (check 11): off_by voices are faded by the group hit; the fade starts at t
+  ctx = new FakeContext(44100); bufs = { O: fillBuf(ctx, 0.1, 2), C: fillBuf(ctx, 0.1, 0.2) };
+  var sch = make(ctx, bufs, [reg('O', 0, 127, { root: 60, offBy: 'ch', offMode: 'fast' }), reg('C', 0, 127, { root: 60, group: 'ch' })]);
+  sch.trigger(1, { midi: 60, vel: 0.8, dur: 2 });
+  var opn = sch._live[0].model;
+  sch.trigger(1.5, { midi: 60, vel: 0.8 });
+  ok(near(opn.tEnd, 1.5 + 0.006, 1e-9), 'a closed hit (group ch) fades the open voice (off_by ch) in 6 ms');
+  ok(hasCall(opn.p, 'linearRampToValueAtTime', 0.0001, 1.5 + 0.006), 'the fade ramps the open voice to -80 dB, not from gain.value');
+
+  // programs.js (checks 30-34)
+  var sfz = [
+    '#define $K 36', '// a comment', '<control>', 'default_path=samples/',
+    '<global>', 'ampeg_release=0.3', '<group>', 'group=1 off_by=2 off_mode=fast',
+    '<region> sample=kick.wav key=$K volume=-3 pan=50 amp_veltrack=-50 loop_mode=loop_continuous',
+    '<region> sample=sn nare.wav lokey=38 hikey=38 pitch_keycenter=sample /* block */',
+    '<region> sample=hat.wav lokey=42 hikey=42 unknownop=7 fil_type=lpf_2p cutoff=900'
+  ].join('\n');
+  var meta2 = { 'samples/kick.wav': { root: null, loops: [[100, 200]] }, 'samples/sn nare.wav': { root: 50, loops: [] } };
+  var pr = PR.parseSfz(sfz, { resolve: function (p) { return p; }, meta: function (id) { return meta2[id] || null; } });
+  var R = pr.program.regions;
+  ok(R.length === 3 && near(R[0].gain, -3, 1e-9) && near(R[0].pan, 0.5, 1e-9) && near(R[0].veltrack, -0.5, 1e-9), 'SFZ: volume, pan and amp_veltrack (-50 is -0.5) are mapped; #define and default_path work');
+  ok(R[0].loop === 'continuous' && R[0].loopStart === 100 && R[0].loopEnd === 200 && R[0].lokey === 36, 'loop_continuous takes the first loop of the file when it has no loop points');
+  ok(R[1].rootFile === true && R[1].root === 50 && R[1].buffer === 'samples/sn nare.wav', 'pitch_keycenter=sample takes the root from the file (50)');
+  ok(pr.program.global.gate === 1 && pr.program.global.env && pr.program.global.env.release === 0.3 && R[0].env === null && R[0].group === '1' && R[0].offBy === '2', 'gate 1 on import; ampeg_release hoisted to global env; group and off_by parsed');
+  ok(R[2].extra.unknownop === '7' && pr.warnings.some(function (w) { return w.opcode === 'unknownop'; }) && R[2].filter.type === 'lowpass' && R[2].filter.cutoff === 900, 'unknown opcode kept in extra with a warning; fil_type default lpf_2p');
+  var nomd = PR.parseSfz('<region> sample=x.wav key=60 pitch_keycenter=sample', { resolve: function (p) { return p; } });
+  ok(nomd.program.regions[0].root === 0 && nomd.warnings.some(function (w) { return w.opcode === 'pitch_keycenter'; }), 'pitch_keycenter=sample with no file root uses 0 and warns');
+  var lokeyNeg = PR.normalize({ regions: [{ buffer: 'x', lokey: -1, hikey: 127 }] });
+  ok(lokeyNeg.regions[0].lokey === -1, 'lokey -1 is kept (never plays from keys)');
+  var rt = PR.parseSfz(PR.toSfz(pr.program, { src: function (id) { return id; } }), { resolve: function (p) { return p; }, meta: function (id) { return meta2[id] || null; } });
+  ok(JSON.stringify(rt.program.regions) === JSON.stringify(PR.normalize(pr.program).regions), 'round trip: parseSfz(toSfz(p)) gives the same regions');
+  // WAV header (check 32): hand-built smpl and acid chunks
+  function chunk(id, body) { var b = Buffer.alloc(8 + body.length + (body.length & 1)); b.write(id, 0, 'ascii'); b.writeUInt32LE(body.length, 4); body.copy(b, 8); return b; }
+  var fmt = Buffer.alloc(16); fmt.writeUInt16LE(1, 0); fmt.writeUInt16LE(2, 2); fmt.writeUInt32LE(22050, 4);
+  var smpl = Buffer.alloc(36 + 24); smpl.writeUInt32LE(60, 12); smpl.writeUInt32LE(0, 16); smpl.writeUInt32LE(1, 28);
+  smpl.writeUInt32LE(0, 36 + 4); smpl.writeUInt32LE(100, 36 + 8); smpl.writeUInt32LE(200, 36 + 12);
+  var acid = Buffer.alloc(24); acid.writeUInt16LE(62, 4);
+  function riff(parts) { var body = Buffer.concat(parts); var h = Buffer.alloc(12); h.write('RIFF', 0, 'ascii'); h.writeUInt32LE(body.length + 4, 4); h.write('WAVE', 8, 'ascii'); return Buffer.concat([h, body]); }
+  var wavS = riff([chunk('fmt ', fmt), chunk('smpl', smpl)]);
+  var mS = PR.readWavMeta(wavS.buffer.slice(wavS.byteOffset, wavS.byteOffset + wavS.length));
+  ok(mS.rate === 22050 && mS.channels === 2 && mS.root === 60 && mS.loops.length === 1 && mS.loops[0][0] === 100 && mS.loops[0][1] === 200, 'readWavMeta: rate 22050, unity 60, one loop 100..200 from smpl');
+  var wavA = riff([chunk('fmt ', fmt), chunk('acid', acid)]);
+  var mA = PR.readWavMeta(wavA.buffer.slice(wavA.byteOffset, wavA.byteOffset + wavA.length));
+  ok(mA.root === 62, 'readWavMeta: acid root 62 when there is no smpl');
+  var trunc = wavS.slice(0, 50);
+  var mT = PR.readWavMeta(trunc.buffer.slice(trunc.byteOffset, trunc.byteOffset + trunc.length));
+  ok(mT.rate === 22050, 'a truncated file returns what it could read and does not throw');
+  // ffmpeg-written file (the rate of a file another tool wrote)
+  var ff = require('child_process').spawnSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.1', '-ar', '32000', '-f', 'wav', path.join(require('os').tmpdir(), 'a7-ffmpeg-check.wav')]);
+  if (ff.status === 0) {
+    var fb = fs.readFileSync(path.join(require('os').tmpdir(), 'a7-ffmpeg-check.wav'));
+    var mF = PR.readWavMeta(fb.buffer.slice(fb.byteOffset, fb.byteOffset + fb.length));
+    ok(mF.rate === 32000 && mF.channels === 1, 'readWavMeta reads the rate of a WAV ffmpeg wrote (' + mF.rate + ' Hz, ' + mF.channels + ' ch)');
+  } else ok(true, 'ffmpeg not available: the ffmpeg WAV check is skipped');
+  // pitch detection (check 33) and names and auto-map (check 34)
+  function sine(f, secs, sr) { var n = Math.round(secs * sr), a = new Float32Array(n); for (var i = 0; i < n; i++) a[i] = 0.5 * Math.sin(2 * Math.PI * f * i / sr); return a; }
+  var cents = function (hz, f) { return 1200 * Math.log(hz / f) / Math.LN2; };
+  [41.2, 110, 440, 1046.5].forEach(function (f) {
+    var d = PR.detectPitch(sine(f, 1.5, 44100), 44100);
+    ok(Math.abs(cents(d.hz, f)) <= 5 && d.clarity >= 0.9, 'detectPitch ' + f + ' Hz within 5 ct (read ' + d.hz.toFixed(2) + ', clarity ' + d.clarity.toFixed(2) + ')');
+  });
+  var nz = new Float32Array(66150), sd = 7; for (var ni = 0; ni < nz.length; ni++) { sd = (sd * 16807) % 2147483647; nz[ni] = sd / 2147483647 - 0.5; }
+  ok(PR.detectPitch(nz, 44100).hz === 0, 'white noise is unpitched');
+  var pn = PR.parseName('Snare rr3.wav'), pv = PR.parseName('Piano C4 v100.wav'), pk = PR.parseName('bass_A#2_mf.wav'), pd = PR.parseName('kick_v127_rr2.wav');
+  ok(pn.drumKey === 38 && pn.rr === 3 && pn.key === null, "parseName 'Snare rr3.wav': snare 38, rr 3");
+  ok(pv.key === 60 && pv.vel === 100, "parseName 'Piano C4 v100.wav': key 60, vel 100");
+  ok(pk.key === 46 && pk.vel === 80, "parseName 'bass_A#2_mf.wav': key 46, mf 80");
+  ok(pd.drumKey === 36 && pd.vel === 127 && pd.rr === 2, "parseName 'kick_v127_rr2.wav': kick 36, vel 127, rr 2");
+  var ents = [];
+  ['C2', 'C3', 'C4'].forEach(function (n) { [64, 127].forEach(function (v) { [1, 2].forEach(function (r) { ents.push({ id: n + v + r, name: n + ' v' + v + ' rr' + r + '.wav' }); }); }); });
+  var am = PR.autoMap(ents, { mode: 'pitched', keys: 'mid' });
+  ok(am.regions.length === 12 && am.regions.every(function (x) { return x.seqLen === 2; }) && am.regions.some(function (x) { return x.root === 36; }) && am.regions.some(function (x) { return x.root === 60; }), 'autoMap: 12 regions, two velocity layers and two round-robin members per root (36, 48, 60)');
 })();
 
 console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');

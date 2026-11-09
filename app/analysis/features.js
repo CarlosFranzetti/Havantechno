@@ -137,12 +137,12 @@
   // (a panned or wide source) the value is null with that reason (L1 transcript 6.2.3: the panned hat read 0.8 ms).
   function predelay(L, R, sr) {
     if (!R) return { ms: null, reason: 'mono file: no side channel' };
-    var M = D.mono(L, R), S = D.side(L, R), on = D.onsets(M, sr), n = Math.round(0.06 * sr), pre = 200, i, k;
+    var M = D.mono(L, R), S = D.side(L, R), on = D.onsets(M, sr, { rearm: 20 }), n = Math.round(0.06 * sr), pre = 200, i, k;
     var em = new Float64Array(n), es = new Float64Array(n), dm = 0, ds = 0, w3 = Math.round(0.003 * sr), c = 0;
     for (i = 0; i < on.length - 1; i++) {
       var a = on[i] - pre; if (a < 0 || a + n > M.length) continue;
       for (k = 0; k < n; k++) { em[k] += M[a + k] * M[a + k]; es[k] += S[a + k] * S[a + k]; }
-      dm += D.energy(M, on[i], on[i] + w3); ds += D.energy(S, on[i], on[i] + w3); c++;
+      dm += D.energy(M, on[i], on[i] + w3); ds += Math.max(0, D.energy(S, on[i], on[i] + w3) - D.energy(S, on[i] - w3, on[i])); c++;   // side added by the hit, not earlier tails
     }
     if (c < 2) return { ms: null, reason: 'fewer than 3 hits' };
     var dryRatio = D.db(ds / (dm + 1e-30));
@@ -151,27 +151,28 @@
     var Lm = smooth(em), Ls = smooth(es), mx = -Infinity, im = 0, is = -1;
     for (k = 0; k < n; k++) if (Lm[k] > mx) mx = Lm[k];
     for (k = 0; k < n; k++) if (Lm[k] > mx - 20) { im = k; break; }
+    // the reference is the side level at the dry onset (silence, or earlier hits' tails); the wet onset is the first
+    // 3 dB rise above it (6 dB missed dense material where earlier tails fill the side channel)
     var ref = Ls[Math.min(n - 1, im + 5)];
-    for (k = im + 5; k < n; k++) if (Ls[k] > ref + 6) { is = k; break; }
+    for (k = im + 5; k < n; k++) if (Ls[k] > ref + 3) { is = k; break; }
     return is < 0 ? { ms: null, reason: 'no wet onset within 60 ms', dryRatioDb: dryRatio } : { ms: 1000 * (is - im) / sr, dryRatioDb: dryRatio };
   }
 
   // late-tail signature for the shared/element-specific test: late RT in three bands, the tail/head colour over
-  // sixteen 1/3-octave bands from 250 Hz (mean removed; for a linear reverb this is the reverb's own colouring),
+  // sixteen 1/3-octave bands from 250 Hz with the head level per band (for a linear reverb tail/head is the reverb's
+  // own colouring wherever the source has energy; decide.sameReverb compares only bands both sources excite),
   // and the tail's L/R correlation.
   function tailSignature(L, R, sr) {
-    var fd = freeDecay(L, R, sr), a = Math.round(fd.lastOnset * sr), sig = { rt: fd.bands.map(function (b) { return b.late; }), colour: [], lrCorr: NaN, late: fd.late };
+    var fd = freeDecay(L, R, sr), a = Math.round(fd.lastOnset * sr), sig = { rt: fd.bands.map(function (b) { return b.late; }), colour: [], headDb: [], lrCorr: NaN, late: fd.late };
     if (!(a >= 0)) return sig;
-    var end = Math.min(L.length, a + sr), Ls = L.slice(a, end), Rs = R ? R.slice(a, end) : null, i, mean = 0;
+    var end = Math.min(L.length, a + sr), Ls = L.slice(a, end), Rs = R ? R.slice(a, end) : null, i;
     var t4 = Math.round(0.4 * sr), h5 = Math.round(0.05 * sr);
     for (i = 0; i < 16; i++) {
       var fc = 250 * Math.pow(2, i / 3), lo = fc / Math.pow(2, 1 / 6), hi = Math.min(fc * Math.pow(2, 1 / 6), sr * 0.49);
       var bl = D.band(Ls, lo, hi, sr, 4), br = Rs ? D.band(Rs, lo, hi, sr, 4) : bl;
       var tail = D.energy(bl, t4, bl.length) + D.energy(br, t4, br.length), head = D.energy(bl, 0, h5) + D.energy(br, 0, h5);
-      sig.colour.push(D.db(tail) - D.db(head));
+      sig.colour.push(D.db(tail) - D.db(head)); sig.headDb.push(D.db(head));
     }
-    for (i = 0; i < 16; i++) mean += sig.colour[i] / 16;
-    sig.colour = sig.colour.map(function (v) { return v - mean; });
     if (Rs && Ls.length > t4) sig.lrCorr = D.corr(Ls.slice(t4), Rs.slice(t4));
     return sig;
   }
