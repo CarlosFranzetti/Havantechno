@@ -15,6 +15,8 @@
  *   sections: [{title, params: ['cutoff', {p:'wave', widget:'select', label:'wave', options:[...]}], widget:'knob'|'slider'}],
  *   strip: [param names for the strip density], width: {strip, face, window}, height: {strip, face, window},
  *   heroH: {strip, face, window}, labels: {param: 'text'}, options: {param: [choices] | function (device, host) -> [choices]},
+ *   skin: {ink, dim, wash} overrides the family colours for this face (the 808 and 909 looks); a spec entry with basis 'prior'
+ *   (a guessed value, not fitted) gets a small dotted ring on its control,
  *   panels: [{density: ['window'], build: function ({device, host, density, width}) -> {el, update(), resize(w,h)?, dispose()?}}]
  *           extra DOM between the hero and the sections (the sampler's zone map, region panel and buttons),
  *   quick: [param names] shown instead of the sections at face density (like strip), live: true | function (device, host),
@@ -51,8 +53,10 @@
   };
   var FAMILY = {
     kick: 'drums', clap: 'drums', hat_closed: 'drums', hat_open: 'drums', shaker: 'drums', perc: 'drums', sub: 'bass', bass: 'bass',
-    stab: 'keys', lead: 'keys', pad: 'keys', riser: 'fx', impact: 'fx', compressor: 'dynamics', limiter: 'dynamics', sidechain: 'dynamics',
-    delay: 'time', reverb: 'time', chorus: 'time', filter: 'tone', eq3: 'tone', saturator: 'tone', widener: 'utility', decorrelate: 'utility', channel: 'utility', sampler: 'drums'
+    stab: 'keys', fm: 'keys', lead: 'keys', pad: 'keys', riser: 'fx', impact: 'fx', compressor: 'dynamics', limiter: 'dynamics', sidechain: 'dynamics',
+    delay: 'time', reverb: 'time', chorus: 'time', filter: 'tone', eq3: 'tone', saturator: 'tone', widener: 'utility', decorrelate: 'utility', channel: 'utility', sampler: 'drums',
+    bd808: 'drums', sd808: 'drums', cp808: 'drums', ch808: 'drums', oh808: 'drums', cy808: 'drums', cb808: 'drums', lt808: 'drums', mt808: 'drums', ht808: 'drums', lc808: 'drums', mc808: 'drums', hc808: 'drums', rs808: 'drums', cl808: 'drums', ma808: 'drums',
+    bd909: 'drums', sd909: 'drums', lt909: 'drums', mt909: 'drums', ht909: 'drums', rs909: 'drums', cp909: 'drums', ch909: 'drums', oh909: 'drums', cr909: 'drums', rd909: 'drums'
   };
   var DEFAULT_W = { strip: 176, face: 380, window: 560 };
   var HERO_H = { strip: 40, face: 76, window: 170 };
@@ -133,7 +137,12 @@
 
   // ------------------------------------------------------------------ palette for hero code
   function readPalette(R, colors) {
-    var fam = familyOf(R.device), f = FAM[fam] || FAM.utility, dashed = !!(R.device.ref && R.device.ref._bypassed);
+    var fam = familyOf(R.device), f = FAM[fam] || FAM.utility, dashed = !!(R.device.ref && R.device.ref._bypassed), sk = R.layout.skin;
+    if (sk) {
+      f = sk;
+      if (colors && colors.ink) colors = Object.assign({}, colors, { ink: sk.ink, famDim: sk.dim, wash: sk.wash });
+      else return { ink: sk.ink, dim: sk.dim, wash: sk.wash, fg: '#d8d8e6', line: '#2a2a3a', bg: '#15151e', on: '#75f97f', dashed: dashed };
+    }
     if (colors && colors.ink) {            // Widgets.curve passes resolved colours as the fourth draw argument
       return { ink: colors.ink, dim: colors.famDim || f.dim, wash: colors.wash || f.wash, fg: colors.fg || '#d8d8e6', line: colors.line || '#2a2a3a',
                bg: colors.panel || '#15151e', on: colors.on || '#75f97f', dashed: dashed };
@@ -273,6 +282,14 @@
       if (c.w && c.w.setStock) safe(function () { c.w.setStock(entry.value); });
     }
     c.el = c.w && c.w.el;
+    if (c.el && entry.basis === 'prior') {                // a guessed value, not fitted: a small dotted ring, no words
+      var ring = h('span', 'hv-prior');
+      ring.style.cssText = 'position:absolute;top:1px;right:1px;width:7px;height:7px;box-sizing:border-box;border:1.5px dotted var(--fam-ink, currentColor);border-radius:50%;pointer-events:none';
+      setAttr(ring, 'aria-hidden', 'true'); setAttr(ring, 'data-basis', 'prior');
+      if (entry.label) setAttr(ring, 'title', entry.label);
+      if (c.el.style && !c.el.style.position) c.el.style.position = 'relative';
+      add(c.el, ring);
+    }
     R.controls.push(c);
     return c;
   }
@@ -325,6 +342,8 @@
   function tag(R, el, cls) {
     el.className = cls;
     setAttr(el, 'data-fam', familyOf(R.device)); setAttr(el, 'data-type', R.device.type); setAttr(el, 'data-device', R.device.id || '');
+    var sk = R.layout.skin;
+    if (sk && el.style && el.style.setProperty) { el.style.setProperty('--fam-ink', sk.ink); el.style.setProperty('--fam-dim', sk.dim); el.style.setProperty('--fam-wash', sk.wash); }
   }
 
   function renderChip(R) {
@@ -573,6 +592,8 @@
     var S = root.Synths, P = root.Processors;
     if (S && S.types) { var ts = S.types(); for (i = 0; i < ts.length; i++) if (!specs[ts[i]]) specs[ts[i]] = S.spec(ts[i]); }
     if (P && P.types) { var tp = P.types(); for (i = 0; i < tp.length; i++) if (!specs[tp[i]]) specs[tp[i]] = P.spec(tp[i]); }
+    var Dr = root.Drums;
+    if (Dr && Dr.types) { var td = Dr.types(); for (i = 0; i < td.length; i++) if (!specs[td[i]]) specs[td[i]] = Dr.spec(td[i]); }
     for (t in defs) {
       if (!Object.prototype.hasOwnProperty.call(defs, t)) continue;
       if (!specs[t] && S && S.spec) specs[t] = S.spec(t);

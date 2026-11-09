@@ -67,7 +67,7 @@ global.getComputedStyle = undefined;
 
 // ---------------------------------------------------------------- load
 var base = path.join(__dirname, '..', 'app');
-['core', 'synths', 'processors', 'songdoc', 'sequencer', 'song', 'host'].forEach(function (f) { require(path.join(base, 'engine', f + '.js')); });
+['core', 'synths', 'processors', 'drums', 'songdoc', 'sequencer', 'song', 'host'].forEach(function (f) { require(path.join(base, 'engine', f + '.js')); });
 ['widgets', 'faces', 'facedefs'].forEach(function (f) { require(path.join(base, 'ui', f + '.js')); });
 var Faces = global.Faces, Widgets = global.Widgets;
 check(!!Faces && !!Widgets && !!global.Host, 'Faces, Widgets and Host are loaded');
@@ -80,13 +80,13 @@ var created = [];
   Widgets[n] = function (o) { created.push({ kind: n, opts: o }); return orig.apply(Widgets, arguments); };
 });
 
-var TYPES = ['kick', 'sub', 'bass', 'stab', 'clap', 'hat_closed', 'hat_open', 'shaker', 'perc', 'lead', 'pad', 'riser', 'impact',
-  'filter', 'saturator', 'delay', 'reverb', 'eq3', 'compressor', 'limiter', 'sidechain', 'widener', 'chorus', 'channel', 'sampler', 'decorrelate'];
+var TYPES = ['kick', 'sub', 'bass', 'fm', 'stab', 'clap', 'hat_closed', 'hat_open', 'shaker', 'perc', 'lead', 'pad', 'riser', 'impact',
+  'filter', 'saturator', 'delay', 'reverb', 'eq3', 'compressor', 'limiter', 'sidechain', 'widener', 'chorus', 'channel', 'sampler', 'decorrelate'].concat(global.Drums.types());
 var DENS = ['chip', 'strip', 'face', 'window'];
-eq(TYPES.length, 26, 'type list is 14 instruments + 11 processor types + channel');
+eq(TYPES.length, 54, 'type list is 15 instruments + 11 processor types + channel + 27 drum voices');
 TYPES.forEach(function (t) { check(Faces.has(t), 'Faces.has(' + t + ')'); });
 check(!Faces.has('nonesuch'), 'Faces.has is false for an unknown type');
-eq(Faces.types().length, 26, 'exactly 26 definitions (14 instruments, 11 processor types, channel)');
+eq(Faces.types().length, 54, 'exactly 54 definitions (15 instruments, 11 processor types, channel, 27 drum voices)');
 
 // ---------------------------------------------------------------- host, with a spy on the writes
 var host = global.Host.create();
@@ -102,7 +102,7 @@ var byType = {};
 devices.forEach(function (d) { if (!byType[d.type]) byType[d.type] = d; });
 TYPES.forEach(function (t) {
   if (byType[t]) return;
-  var spec = (global.Synths.spec(t) || global.Processors.spec(t));
+  var spec = (global.Synths.spec(t) || global.Processors.spec(t) || global.Drums.spec(t));
   byType[t] = { id: 'synthetic:' + t, type: t, kind: 'insert', track: 'zz', name: t, family: null, spec: spec, pathPrefix: 'zz.' + t, ref: null, synthetic: true };
 });
 check(byType.channel && byType.channel.kind === 'channel', 'a channel device exists');
@@ -459,7 +459,7 @@ devices.forEach(function (d) {
   var ex = all(f.el, function (x) { return x.tagName === 'button' && /Export/.test(x.textContent); })[0]; fire(ex, 'click', {});
   check(calls.length === 1 && calls[0][0] === 'export' && calls[0][1] === 'zz', 'Export SFZ calls host.exportProgram for the track');
   var rd = all(f.el, function (x) { return x.tagName === 'button' && /Re-detect/.test(x.textContent); })[0];
-  eq(rd.disabled === true, true, 'Re-detect pitch is disabled until the host has detectPitch');
+  eq(rd.disabled === true, typeof sh.detectPitch !== 'function', 'Re-detect pitch is enabled exactly when the host has detectPitch');
   f.dispose();
   // face and strip density: quick view only, no panels
   created.length = 0;
@@ -471,6 +471,28 @@ devices.forEach(function (d) {
   // single-sample path still works when the program id is unknown
   ov['zz.program'] = 'nope'; var u = Faces.render(d, 'window', sh); u.update(); eq(u.error(), null, 'unknown program id falls back to the single-sample hero'); u.dispose();
   ov['zz.program'] = ''; 
+})();
+
+// ---------------------------------------------------------------- drum voices: skins, prior rings, one definition per voice
+(function () {
+  var Dr = global.Drums, n808 = 0, n909 = 0;
+  Dr.types().forEach(function (t) {
+    var d = byType[t], spec = Dr.spec(t), priors = Object.keys(spec).filter(function (k) { return spec[k].basis === 'prior'; }).length;
+    var f = Faces.render(d, 'window', host); f.update();
+    var rings = all(f.el, function (x) { return /hv-prior/.test(x.className); });
+    eq(rings.length, priors, t + ': one dotted ring per prior control (' + priors + ')');
+    check(rings.every(function (r) { return r.getAttribute('aria-hidden') === 'true' && r.textContent === ''; }), t + ': rings carry no words');
+    var ink = f.el.style._p['--fam-ink'];
+    eq(ink, /808$/.test(t) ? '#ff5a36' : '#cfd3da', t + ': skin (808 orange-red, 909 grey-black)');
+    if (/808$/.test(t)) n808++; else n909++;
+    eq(f.error(), null, t + ' hero');
+    f.dispose();
+  });
+  eq(n808, 16, '16 voices of 808'); eq(n909, 11, '11 voices of 909');
+  check(Faces.has('lt808') && Faces.has('hc808') && Faces.has('rd909'), 'toms, congas and cymbals have faces');
+  var ctl = Faces.render(byType.bd808, 'face', host), lvl = all(ctl.el, function (x) { return x.getAttribute('aria-label') === 'level'; });
+  eq(all(lvl[0] || ctl.el, function (x) { return /hv-prior/.test(x.className); }).length, 0, 'a fitted control (level) has no ring');
+  ctl.dispose();
 })();
 
 // ---------------------------------------------------------------- lint

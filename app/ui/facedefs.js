@@ -794,6 +794,25 @@
     { density: ['window'], build: function (a) { return buttonsPanel(a); } }
   ];
 
+
+  // FM (DX-style pair): the sideband spectrum from Bessel functions of the index, and the carrier and modulator envelopes
+  function besselJ(n, x) { var sum = 0, k, term = Math.pow(x / 2, n) / fact(n); for (k = 0; k < 30; k++) { sum += term; term *= -(x * x / 4) / ((k + 1) * (k + 1 + n)); } return sum; }
+  function fact(n) { var r = 1; for (var i = 2; i <= n; i++) r *= i; return r; }
+  function heroFM(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), L = region(g, 0, 0.58), R = region(g, 0.64, 1), ratio = P(d, host, 'ratio'), idx = P(d, host, 'index') * (0.5 + 0.5 * (1 - P(d, host, 'indexEnv') * 0.5)), n;
+    var cx = L.x0 + L.w * 0.35, unit = L.w * 0.06 * Math.min(1, 2 / Math.max(ratio, 0.5));
+    line(c, L.x0, L.y1, L.x1, L.y1, p.line, 1);
+    for (n = -6; n <= 12; n++) {
+      var a = Math.abs(besselJ(Math.abs(n), idx)), x = cx + n * ratio * unit;
+      if (x < L.x0 || x > L.x1 || a < 0.02) continue;
+      line(c, x, L.y1, x, L.y1 - clamp(a, 0, 1) * L.h * 0.95, n === 0 ? p.fg : p.ink, 2);
+    }
+    var at = P(d, host, 'attack'), de = P(d, host, 'decay'), su = P(d, host, 'sustain'), re = P(d, host, 'release'), ma = P(d, host, 'modAttack'), md = P(d, host, 'modDecay'), HOLD = 0.4, T = at + de + HOLD + re;
+    envLine(c, R, T, function (t) { return t < at ? t / at : t < at + de ? 1 - (1 - su) * (t - at) / de : t < at + de + HOLD ? su : su * Math.max(0, 1 - (t - at - de - HOLD) / re); }, p.ink, 0.18);
+    path(c, sample(60, function (u) { var t = u * T, v = t < ma ? t / ma : Math.exp(-(t - ma) / md * 2); return [R.x0 + u * R.w, R.y1 - v * R.h * 0.92]; }), p.dim, 1.5, true);
+    if (!g.small) { txt(c, 'ratio ' + (Math.round(ratio * 100) / 100) + '  index ' + (Math.round(P(d, host, 'index') * 10) / 10), L.x0 + 2, g.y1 + 10); txt(c, 'carrier / modulator', R.x1, g.y1 + 10, 'right'); }
+  }
+
   // ------------------------------------------------------------------ definitions
   function W(s, f, w) { return { strip: s, face: f, window: w }; }
   function sec(title, params, widget) { var o = { title: title, params: params }; if (widget) o.widget = widget; return o; }
@@ -811,7 +830,7 @@
     reverb: '<path d="M2 3v10M2 5Q6 5 14 13"/>', chorus: '<path d="M1 8c2-6 4-6 5 0s3 6 5 0 3-3 4 0"/>',
     filter: '<path d="M1 6h8Q12 6 15 14"/>', eq3: '<path d="M1 10Q4 4 8 9T15 6"/><circle cx="3" cy="8" r="1"/><circle cx="8" cy="9" r="1"/><circle cx="13" cy="7" r="1"/>',
     saturator: '<path d="M2 13C7 13 5 3 14 3"/>', widener: '<path d="M3 3Q-1 8 3 13M13 3Q17 8 13 13M8 4v8"/>',
-    channel: '<path d="M5 2v12M11 2v12M3 6h4M9 10h4"/>', decorrelate: '<path d="M2 12V4M5 12V7M10 12V4M13 12V7"/>', sampler: '<path d="M2 8h1M4 5v6M6 3v10M8 6v4M10 2v12M12 5v6M14 7v2"/>'
+    channel: '<path d="M5 2v12M11 2v12M3 6h4M9 10h4"/>', fm: '<path d="M1 8q2-6 4 0t4 0t4 0M3 13h10"/>', decorrelate: '<path d="M2 12V4M5 12V7M10 12V4M13 12V7"/>', sampler: '<path d="M2 8h1M4 5v6M6 3v10M8 6v4M10 2v12M12 5v6M14 7v2"/>'
   };
 
   Faces.define('kick', { glyph: G.kick, hero: heroKick, width: W(176, 440, 560),
@@ -826,6 +845,9 @@
   Faces.define('stab', { glyph: G.stab, hero: heroStab, width: W(176, 540, 620),
     sections: [sec('voice', ['spread', 'detune']), sec('filter', ['cutoff', 'res', 'env', 'decay']), sec('hp', ['hp']), sec('amp', ['attack', 'release']), sec('drive', ['drive']), OUT],
     strip: ['cutoff', 'res', 'spread', 'drive'] });
+  Faces.define('fm', { glyph: G.fm, hero: heroFM, width: W(176, 500, 620),
+    sections: [sec('operators', ['ratio', 'index', 'indexEnv', 'feedback']), sec('amp', ['attack', 'decay', 'sustain', 'release']), sec('mod env', ['modAttack', 'modDecay']), sec('pitch', ['detune', 'glide']), OUT],
+    strip: ['ratio', 'index', 'decay', 'release'] });
   Faces.define('clap', { glyph: G.clap, hero: heroClap, width: W(176, 400, 520),
     sections: [sec('burst', ['flams', 'flam', 'decay']), sec('tone', ['tone', 'q']), sec('tail', ['tail', 'tailDecay']), OUT], strip: ['tone', 'decay', 'tail'] });
   var HAT = function (glyph) { return { glyph: glyph, hero: heroHat, width: W(176, 360, 480),
@@ -883,4 +905,152 @@
     sections: [sec('delay', ['time'])], strip: ['time'] });
   Faces.define('channel', { glyph: G.channel, hero: heroChannel, live: true, width: W(176, 280, 400), heroH: { strip: 44, face: 70, window: 110 },
     labels: { gain: 'level' }, sections: [sec('level', ['gain']), sec('pan', ['pan']), sec('mute', ['mute']), { title: 'sends', match: '^send\\.' }], strip: ['gain', 'pan', 'mute'] });
+  // ------------------------------------------------------------------ drum voices (A12, engine/drums.js): 27 types, 5 hero shapes
+  // One hero per shape, read from whichever params the voice has (so the three 808 toms and three congas, the 909 toms and the
+  // hats share a drawing). Controls marked basis 'prior' in the spec get a dotted ring (faces.js).
+  function pv(d, host, n, dflt) { var v = (d.spec && d.spec[n]) ? P(d, host, n) : undefined; return v == null ? dflt : v; }
+  var EXP60 = DB1000;
+  function envLine(c, g, T, fn, color, alpha) {
+    var pts = sample(90, function (u) { var t = u * T; return [g.x0 + u * g.w, g.y1 - clamp(fn(t), 0, 1) * g.h * 0.92]; });
+    area(c, pts, g.y1, color, alpha == null ? 0.18 : alpha); path(c, pts, color, 2);
+  }
+  // kick: pitch glide (log Hz) over the amplitude envelope. 808: tune x shift falling over shiftTime, droop; 909: start -> end with a time constant, hold, decay
+  function heroDKick(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), nine = pv(d, host, 'start', null) != null, f0, f1, T, pitch, amp;
+    if (nine) {
+      var st = pv(d, host, 'start', 274), en = pv(d, host, 'end', 53), tp = pv(d, host, 'tune', 0.007), hold = pv(d, host, 'hold', 0.06), td = pv(d, host, 'decay', 0.035);
+      T = Math.max(0.1, hold + td * 6); f0 = en; f1 = st;
+      pitch = function (t) { return en + (st - en) * Math.exp(-t / tp); };
+      amp = function (t) { return t < hold ? 1 : Math.exp(-(t - hold) / td); };
+    } else {
+      var tune = pv(d, host, 'tune', 50), shift = pv(d, host, 'shift', 2), sT = pv(d, host, 'shiftTime', 0.006), droop = pv(d, host, 'droop', 0.1), dec = pv(d, host, 'decay', 0.35);
+      T = Math.max(0.15, dec * 1.1); f0 = tune; f1 = tune * shift;
+      pitch = function (t) { return (t < sT ? tune * Math.pow(shift, 1 - t / sT) : tune) * (1 - droop * 0.2 * (t / dec)); };
+      amp = function (t) { return Math.exp(-t / dec * EXP60); };
+    }
+    function Y(f) { return g.y1 - lx(f, 30, 450) * g.h; }
+    if (!g.small) [50, 100, 200].forEach(function (f) { line(c, g.x0, Y(f), g.x1, Y(f), p.line, 1); txt(c, f, g.x1 - 2, Y(f) - 2, 'right'); });
+    envLine(c, { x0: g.x0, w: g.w, y1: g.y1, h: g.h * 0.5 }, T, amp, p.ink, 0.18);
+    path(c, sample(90, function (u) { var t = u * T; return [g.x0 + u * g.w, Y(pitch(t))]; }), p.ink, 2);
+    var click = pv(d, host, 'click', null);
+    if (click != null) line(c, g.x0 + 1, g.y1, g.x0 + 1, g.y1 - click * g.h * 0.6, p.fg, 2);
+    if (!g.small) { txt(c, Math.round(f1) + ' Hz', g.x0 + 4, Y(f1) - 3); txt(c, Math.round(f0) + ' Hz  ' + Math.round(T * 1000) + ' ms', g.x1, g.y1 + 10, 'right'); }
+  }
+  var TOM_HZ = { lt: 100, mt: 150, ht: 200, lc: 200, mc: 280, hc: 380 };
+  // toms and congas: short pitch sweep over the amplitude decay, a noise tail
+  function heroDTom(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), base = TOM_HZ[d.type.slice(0, 2)] || 150, nine = d.type.slice(2) === '909', f0, f1, tp, hold = 0, dec, T, nz;
+    if (nine) { f0 = pv(d, host, 'base', base) * Math.pow(2, pv(d, host, 'tune', 0)); f1 = f0 * (1 + pv(d, host, 'depth', 1)); tp = pv(d, host, 'pitchDecay', 0.1); hold = pv(d, host, 'hold', 0.03); dec = pv(d, host, 'decay', 0.08); nz = pv(d, host, 'noise', 0.05); }
+    else { f0 = base * (0.75 + 0.5 * pv(d, host, 'tune', 50) / 100); f1 = f0 * (1 + 2 * pv(d, host, 'sweep', 0.3)); tp = 0.012; dec = pv(d, host, 'decay', 0.2); nz = pv(d, host, 'noise', 0); }
+    T = Math.max(0.1, hold + dec * (nine ? 6 : 1.1));
+    function Y(f) { return g.y1 - lx(f, 40, 1200) * g.h; }
+    var amp = nine ? function (t) { return t < hold ? 1 : Math.exp(-(t - hold) / dec); } : function (t) { return Math.exp(-t / dec * EXP60); };
+    envLine(c, { x0: g.x0, w: g.w, y1: g.y1, h: g.h * 0.5 }, T, amp, p.ink, 0.18);
+    var nd = pv(d, host, 'noiseDecay', dec);
+    if (nz > 0) envLine(c, { x0: g.x0, w: g.w, y1: g.y1, h: g.h * 0.3 }, T, function (t) { return nz * Math.exp(-t / nd * EXP60); }, p.dim, 0.35);
+    path(c, sample(90, function (u) { var t = u * T; return [g.x0 + u * g.w, Y(f0 + (f1 - f0) * Math.exp(-t / tp))]; }), p.ink, 2);
+    if (!g.small) { txt(c, Math.round(f0) + ' Hz', g.x1 - 2, Y(f0) - 3, 'right'); txt(c, Math.round(T * 1000) + ' ms', g.x1, g.y1 + 10, 'right'); }
+  }
+  // snare: two resonators and the noise band on a log frequency axis
+  function heroDSnare(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), nine = d.type === 'sd909', f1, ratio = pv(d, host, 'ratio', 2), sn, nlo;
+    if (nine) { f1 = pv(d, host, 'base', 190) * Math.pow(2, pv(d, host, 'tune', 0)); sn = Math.pow(10, pv(d, host, 'snappy', 0) / 20) * 0.6; nlo = pv(d, host, 'hpf', 2000); }
+    else { f1 = pv(d, host, 'tune', 238); sn = pv(d, host, 'snappy', 0.5) * 1.1; nlo = 1000 + 3000 * pv(d, host, 'tone', 0.5); }
+    function X(f) { return g.x0 + lx(f, 80, 14000) * g.w; }
+    [100, 1000, 10000].forEach(function (f) { line(c, X(f), g.y0, X(f), g.y1, p.line, 1); if (!g.small) txt(c, fhz(f), X(f) + 2, g.y1 + 10); });
+    var x0 = X(nlo), nz = [[x0, g.y1], [x0, g.y1 - clamp(sn, 0, 1) * g.h * 0.5], [g.x1, g.y1 - clamp(sn, 0, 1) * g.h * 0.5], [g.x1, g.y1]];
+    c.beginPath(); c.moveTo(nz[0][0], nz[0][1]); nz.forEach(function (q) { c.lineTo(q[0], q[1]); }); c.closePath(); c.globalAlpha = 0.28; c.fillStyle = p.dim; c.fill(); c.globalAlpha = 1;
+    [[f1, 0.95], [f1 * ratio, 0.65]].forEach(function (r) { var x = X(r[0]); line(c, x, g.y1, x, g.y1 - r[1] * g.h * 0.92, p.ink, 3); dot(c, x, g.y1 - r[1] * g.h * 0.92, 3, p.ink); });
+    if (!g.small) { txt(c, Math.round(f1) + ' Hz', X(f1) - 3, g.y0 + 9, 'right'); txt(c, Math.round(f1 * ratio) + ' Hz', X(f1 * ratio) + 4, g.y0 + 9); txt(c, 'noise > ' + fhz(nlo), g.x1, g.y1 - 4, 'right'); }
+  }
+  var BANK = [205.3, 304.4, 369.6, 522.7, 540, 800];
+  // hats and cymbals: the six-oscillator metal bank as lines, the filter curve over them, and the voice's envelope
+  function heroDMetal(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), t = d.type, nine = /909$/.test(t), cb = t === 'cb808', L = region(g, 0, 0.62), R = region(g, 0.68, 1);
+    var ratio = nine ? Math.pow(2, pv(d, host, 'tune', 0)) : pv(d, host, 'tune', 1), spread = pv(d, host, 'spread', 0), freqs = cb ? BANK.slice(4) : BANK;
+    function X(f) { return L.x0 + lx(f, 150, 16000) * L.w; }
+    [1000, 10000].forEach(function (f) { line(c, X(f), L.y0, X(f), L.y1, p.line, 1); if (!g.small) txt(c, fhz(f), X(f) + 2, g.y1 + 10); });
+    var hp = pv(d, host, 'hp', 7000), tone = pv(d, host, 'tone', 0.5), bpf = cb ? pv(d, host, 'tone', 2640) : 3400;
+    function curve(fn, alpha, dashed) { path(c, sample(80, function (u) { var f = 150 * Math.pow(16000 / 150, u), db = clamp(fn(f), -40, 6); return [L.x0 + u * L.w, L.y1 - (db + 40) / 46 * L.h]; }), p.dim, 1.5, dashed); }
+    if (t === 'cy808') { curve(function (f) { return resp('bandpass', 3400, 1, 0, f) + 20 * Math.log10(Math.max(0.05, 1 - tone)); }, 1, true); curve(function (f) { return resp('highpass', 7000, 0, 0, f) + 20 * Math.log10(Math.max(0.05, tone)); }, 1, false); }
+    else if (!nine) { curve(function (f) { return resp('bandpass', bpf, 1, 0, f) + (cb ? 0 : resp('highpass', hp, 0, 0, f)); }, 1, false); }
+    else curve(function (f) { return resp('bandpass', 3400, 1, 0, f) + resp('highpass', 6000, 0, 0, f); }, 1, false);
+    freqs.forEach(function (f, i) {
+      var x = X(f * ratio); line(c, x, L.y1, x, L.y1 - L.h * 0.62, p.ink, 2);
+      if (spread > 0) { var j = f * ratio * 0.05 * spread; line(c, X(f * ratio - j), L.y1 - L.h * 0.3, X(f * ratio + j), L.y1 - L.h * 0.3, p.fg, 1); }
+    });
+    // envelope
+    var dec = pv(d, host, 'decay', 0.1), hold = pv(d, host, 'hold', 0), T, fn;
+    if (t === 'oh808') { T = Math.max(0.2, dec * 1.2); fn = function (u) { return u < 0.03 ? 1 - 0.75 * u / 0.03 : 0.25 * Math.exp(-(u - 0.03) / dec * EXP60); }; }
+    else if (t === 'ch808') { T = Math.max(0.1, dec * 1.3); fn = function (u) { return Math.exp(-u / dec * EXP60); }; }
+    else if (t === 'cy808') { T = dec * 1.1; fn = function (u) { return u < 0.005 ? u / 0.005 : Math.exp(-(u - 0.005) / dec * EXP60); }; }
+    else if (cb) { var fa = pv(d, host, 'fast', 0.015); T = Math.max(0.2, dec * 1.3); fn = function (u) { return u < fa ? 1 - 0.7 * u / fa : 0.3 * Math.exp(-(u - fa) / dec * EXP60); }; }
+    else if (t === 'cr909' || t === 'rd909') { T = t === 'cr909' ? 2.2 : 2.6; fn = function (u) { return Math.exp(-u / (T / 1.2) * EXP60 * 0.8); }; }
+    else { T = Math.max(0.05, hold + dec * 6); fn = function (u) { return u < hold ? 1 : Math.exp(-(u - hold) / dec); }; }
+    envLine(c, R, T, fn, p.ink, 0.2);
+    var cr = pv(d, host, 'crush', null);
+    if (cr != null && R.w > 20) for (var i = 0; i < Math.round(cr * 8); i++) line(c, R.x0 + 2 + i * 4, R.y0 + 2, R.x0 + 2 + i * 4, R.y0 + 8, p.fg, 2);
+    if (!g.small) { txt(c, (T >= 1 ? Math.round(T * 10) / 10 + ' s' : Math.round(T * 1000) + ' ms'), R.x1, g.y1 + 10, 'right'); if (ratio !== 1) txt(c, 'x' + (Math.round(ratio * 100) / 100), L.x0 + 2, g.y1 + 10); }
+  }
+  // claps: the burst train, then the tail
+  function heroDBurst(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), nine = d.type === 'cp909', n = Math.round(pv(d, host, 'bursts', 4)), sp = pv(d, host, nine ? 'spread' : 'spacing', 0.01), bd = pv(d, host, 'burstDecay', 0.008), dec = pv(d, host, 'decay', 0.2), tail = pv(d, host, 'tail', 0.5), i;
+    var tb = n * sp, T = tb + Math.max(dec, bd) * 1.1 + 0.01;
+    function X(t) { return g.x0 + t / T * g.w; }
+    for (i = 0; i < n; i++) path(c, [[X(i * sp), g.y1 - g.h * 0.8], [X(i * sp + bd * 3), g.y1]], p.ink, 2);
+    var tl = sample(60, function (u) { var t = u * dec; return [X(tb + t), g.y1 - Math.exp(-t / dec * EXP60) * (0.15 + 0.8 * tail) * g.h * 0.92]; });
+    area(c, tl, g.y1, p.ink, 0.2); path(c, tl, p.ink, 2); line(c, g.x0, g.y1, g.x1, g.y1, p.line, 1);
+    if (!g.small) txt(c, n + ' bursts x ' + (Math.round(sp * 10000) / 10) + ' ms   tail ' + Math.round(dec * 1000) + ' ms', g.x0 + 2, g.y1 + 10);
+  }
+  // rim, claves, maracas: resonator lines (log Hz) and a short envelope
+  function heroDShort(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), t = d.type, L = region(g, 0, 0.58), R = region(g, 0.64, 1), dec = pv(d, host, 'decay', 0.03), tune = pv(d, host, 'tune', 1), peaks, q = pv(d, host, 'q', 3);
+    if (t === 'rs808') peaks = [1700 * tune, 480 * tune]; else if (t === 'rs909') peaks = [1700 * tune]; else if (t === 'cl808') peaks = [tune, tune * 1.5]; else peaks = [];
+    function X(f) { return L.x0 + lx(f, 200, 12000) * L.w; }
+    [1000, 10000].forEach(function (f) { line(c, X(f), L.y0, X(f), L.y1, p.line, 1); });
+    if (t === 'ma808') { var hp = pv(d, host, 'tone', 5000); path(c, sample(60, function (u) { var f = 200 * Math.pow(60, u), db = clamp(resp('highpass', hp, 0, 0, f), -40, 3); return [L.x0 + u * L.w, L.y1 - (db + 40) / 43 * L.h]; }), p.ink, 2); }
+    peaks.forEach(function (f, i) {
+      var x = X(f), h0 = i ? 0.55 : 0.9;
+      if (t === 'rs909' || t === 'cl808') path(c, sample(40, function (u) { var ff = f * Math.pow(2, (u - 0.5) * 2); return [L.x0 + lx(ff, 200, 12000) * L.w, L.y1 - clamp(1 / (1 + Math.pow((ff / f - f / ff) * q, 2)), 0, 1) * h0 * L.h]; }), p.dim, 1);
+      line(c, x, L.y1, x, L.y1 - h0 * L.h, p.ink, 3);
+    });
+    var att = t === 'ma808' ? 0.003 : 0.0005, T = Math.max(0.03, dec * 1.4);
+    envLine(c, R, T, function (u) { return u < att ? u / att : Math.exp(-(u - att) / dec * EXP60); }, p.ink, 0.2);
+    var ck = pv(d, host, 'click', null); if (ck != null) line(c, R.x0 + 1, R.y1, R.x0 + 1, R.y1 - ck * R.h * 0.8, p.fg, 2);
+    if (!g.small) { txt(c, Math.round(dec * 1000) + ' ms', R.x1, g.y1 + 10, 'right'); if (peaks.length) txt(c, fhz(peaks[0]) + ' Hz', L.x0 + 2, g.y1 + 10); }
+  }
+
+  var SKIN808 = { ink: '#ff5a36', dim: '#a3402a', wash: '#2b0e08' }, SKIN909 = { ink: '#cfd3da', dim: '#767a82', wash: '#16171a' };
+  var DG = {   // glyphs
+    kick: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3"/>', snare: '<path d="M2 6h12M3 6v4Q8 13 13 10V6M5 3l2 3M11 3l-2 3"/>', clap: G.clap, hat: '<path d="M2 10Q8 4 14 10M8 10v4"/>',
+    cym: '<path d="M2 8Q8 2 14 8Q8 6 2 8M8 8v6"/>', tom: '<ellipse cx="8" cy="6" rx="5.5" ry="2.5"/><path d="M2.5 6v5Q8 14 13.5 11V6"/>', rim: '<path d="M3 12L8 4l5 8M5.5 8h5"/>', bell: '<path d="M4 12h8M5 12Q5 5 8 4Q11 5 11 12"/>', shaker: G.shaker
+  };
+  function drumFace(type, skin, hero, glyph, groups, strip, w) {
+    Faces.define(type, { glyph: glyph, hero: hero, skin: skin, width: W(176, w || 400, (w || 400) + 120), heroH: { strip: 44, face: 84, window: 180 },
+      sections: groups.map(function (g) { return sec(g[0], g[1]); }).concat([sec('out', ['drive', 'level'])]), strip: strip });
+  }
+  drumFace('bd808', SKIN808, heroDKick, DG.kick, [['pitch', ['tune', 'shift', 'shiftTime', 'droop']], ['body', ['decay', 'tone', 'click']]], ['tune', 'decay', 'tone']);
+  drumFace('sd808', SKIN808, heroDSnare, DG.snare, [['body', ['tune', 'ratio', 'decay']], ['snap', ['snappy', 'tone', 'noiseDecay']]], ['tune', 'tone', 'snappy']);
+  drumFace('cp808', SKIN808, heroDBurst, DG.clap, [['bursts', ['bursts', 'spacing', 'burstDecay']], ['tone', ['tone', 'q']], ['tail', ['decay', 'tail']]], ['tone', 'bursts', 'decay']);
+  drumFace('ch808', SKIN808, heroDMetal, DG.hat, [['metal', ['tune', 'spread']], ['filter', ['hp']], ['env', ['decay']]], ['tune', 'hp', 'decay']);
+  drumFace('oh808', SKIN808, heroDMetal, DG.hat, [['metal', ['tune', 'spread']], ['filter', ['hp']], ['env', ['decay']]], ['tune', 'hp', 'decay']);
+  drumFace('cy808', SKIN808, heroDMetal, DG.cym, [['metal', ['tune', 'spread']], ['filter', ['tone']], ['env', ['decay']]], ['tune', 'tone', 'decay']);
+  drumFace('cb808', SKIN808, heroDMetal, DG.bell, [['metal', ['tune']], ['filter', ['tone']], ['env', ['fast', 'decay']]], ['tune', 'tone', 'decay']);
+  ['lt', 'mt', 'ht', 'lc', 'mc', 'hc'].forEach(function (k) {
+    drumFace(k + '808', SKIN808, heroDTom, DG.tom, [['pitch', ['tune', 'sweep']], ['body', ['decay', 'click']], ['noise', ['noise', 'noiseDecay']]], ['tune', 'decay', 'sweep']);
+  });
+  drumFace('rs808', SKIN808, heroDShort, DG.rim, [['resonators', ['tune']], ['env', ['decay', 'click']]], ['tune', 'decay']);
+  drumFace('cl808', SKIN808, heroDShort, DG.rim, [['tone', ['tune', 'q']], ['env', ['decay']]], ['tune', 'decay']);
+  drumFace('ma808', SKIN808, heroDShort, DG.shaker, [['tone', ['tone']], ['env', ['decay']]], ['tone', 'decay']);
+  drumFace('bd909', SKIN909, heroDKick, DG.kick, [['pitch', ['start', 'end', 'tune']], ['body', ['attack', 'hold', 'decay']], ['click', ['clickDecay', 'clickLp']]], ['start', 'end', 'decay'], 460);
+  drumFace('sd909', SKIN909, heroDSnare, DG.snare, [['body', ['base', 'tune', 'ratio', 'bodyDecay']], ['glide', ['glide', 'glideTime']], ['snap', ['snappy', 'tone', 'hpf']]], ['tune', 'tone', 'snappy'], 460);
+  ['lt', 'mt', 'ht'].forEach(function (k) {
+    drumFace(k + '909', SKIN909, heroDTom, DG.tom, [['pitch', ['base', 'tune', 'depth', 'pitchDecay']], ['body', ['hold', 'decay']], ['noise', ['noise']]], ['tune', 'decay', 'depth']);
+  });
+  drumFace('rs909', SKIN909, heroDShort, DG.rim, [['resonator', ['tune', 'q']], ['env', ['decay']]], ['tune', 'q', 'decay']);
+  drumFace('cp909', SKIN909, heroDBurst, DG.clap, [['bursts', ['bursts', 'spread', 'burstDecay']], ['tone', ['tone', 'q']], ['tail', ['decay', 'tail']]], ['tone', 'bursts', 'decay']);
+  drumFace('ch909', SKIN909, heroDMetal, DG.hat, [['env', ['decay', 'hold']], ['crush', ['crush']]], ['decay', 'hold', 'crush']);
+  drumFace('oh909', SKIN909, heroDMetal, DG.hat, [['env', ['decay', 'hold']], ['crush', ['crush']]], ['decay', 'hold', 'crush']);
+  drumFace('cr909', SKIN909, heroDMetal, DG.cym, [['metal', ['tune']], ['crush', ['crush']]], ['tune', 'crush']);
+  drumFace('rd909', SKIN909, heroDMetal, DG.cym, [['metal', ['tune']], ['crush', ['crush']]], ['tune', 'crush']);
 })();
