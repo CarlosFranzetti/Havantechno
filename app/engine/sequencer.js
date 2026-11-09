@@ -368,6 +368,7 @@
           saved[k] = tr.inst.params[k]; tr.inst.params[k] = lv;
         }
       }
+      if (ev) ev.hit = seq._hitCount[tr.name];   // hit index within this run (round robin); ev.step is the absolute step
       try { tr.inst.trigger(t, ev); }
       finally { if (saved) for (k in saved) if (saved.hasOwnProperty(k)) tr.inst.params[k] = saved[k]; }
       seq._hitCount[tr.name]++;
@@ -405,7 +406,7 @@
         if (cell.prob != null && cell.prob < 1 && chance(tr.name, absStep, variation) >= cell.prob) continue;
         var tc = ts + (cell.nudge ? cell.nudge * sd : 0);
         if (tc < tFloor) tc = tFloor;
-        var e = { vel: cell.vel == null ? 0.85 : cell.vel, accent: !!cell.acc };
+        var e = { vel: cell.vel == null ? 0.85 : cell.vel, accent: !!cell.acc, step: absStep };
         if (tr.kind === 'melody') {
           if (cell.note == null) continue;
           e.midi = cell.note;
