@@ -22,6 +22,8 @@ research in `docs/research/` (see **Roundtable** below).
 
 ![A device window floating over the System Editor](docs/screenshots/app-device-window.png)
 
+![A TR-808 kit added from the track menu, with the bass drum's window open; dotted rings mark controls whose values are still priors](docs/screenshots/app-808-kit.png)
+
 The archived studio, for comparison:
 
 ![The studio playing a section](docs/screenshots/studio-playing.png)
