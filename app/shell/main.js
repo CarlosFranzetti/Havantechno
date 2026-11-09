@@ -267,6 +267,56 @@ function registerIpc() {
       return await fs.promises.readFile(full, 'utf8');
     } catch (err) { return null; }
   });
+  // openFiles({directory, multiple, filters, binary, title}) -> [{name, path, relativePath, bytes?}] | null
+  // A dialog with openDirectory (walks the chosen folder recursively) or openFile with multiSelections. Only audio
+  // and .sfz files (the extensions readFile accepts), at most 2000 files, depth 8, no dotfiles or symlinks.
+  // relativePath is relative to the chosen folder (the file name for plain file picks). bytes (Uint8Array) only when
+  // binary is true; each file up to 1 GiB, 2 GiB in total. Main window only.
+  var PICK_EXT = /\.(wav|wave|mp3|ogg|oga|opus|flac|m4a|aac|aif|aiff|webm|sfz)$/i;
+  async function walk(dir, root, out, depth) {
+    if (depth > 8 || out.length >= 2000) return;
+    var ents;
+    try { ents = await fs.promises.readdir(dir, { withFileTypes: true }); } catch (e) { return; }
+    ents.sort(function (a, b) { return a.name < b.name ? -1 : 1; });
+    for (var i = 0; i < ents.length && out.length < 2000; i++) {
+      var en = ents[i];
+      if (en.name.charAt(0) === '.') continue;
+      var full = path.join(dir, en.name);
+      if (en.isDirectory()) await walk(full, root, out, depth + 1);
+      else if (en.isFile() && PICK_EXT.test(en.name)) out.push({ name: en.name, path: full, relativePath: path.relative(root, full).split(path.sep).join('/') });
+    }
+  }
+  ipcMain.handle('shell:openFiles', async function (e, opts) {
+    if (!fromMain(e)) return null;
+    opts = opts || {};
+    var props = [opts.directory ? 'openDirectory' : 'openFile'];
+    if (opts.multiple) props.push('multiSelections');
+    var r = await dialog.showOpenDialog(parentFor(e), { properties: props, filters: opts.directory ? undefined : dialogFilters(opts.filters), title: opts.title });
+    if (r.canceled || !r.filePaths.length) return null;
+    var list = [];
+    for (var i = 0; i < r.filePaths.length; i++) {
+      var p = r.filePaths[i];
+      var st = null;
+      try { st = await fs.promises.stat(p); } catch (err) { continue; }
+      if (st.isDirectory()) await walk(p, p, list, 0);
+      else if (st.isFile() && list.length < 2000) list.push({ name: path.basename(p), path: p, relativePath: path.basename(p) });
+    }
+    if (opts.binary) {
+      var total = 0, out = [];
+      for (var j = 0; j < list.length; j++) {
+        try {
+          var s2 = await fs.promises.stat(list[j].path);
+          if (s2.size > 1024 * 1024 * 1024 || total + s2.size > 2 * 1024 * 1024 * 1024) continue;
+          var buf = await fs.promises.readFile(list[j].path);
+          total += buf.length;
+          list[j].bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+          out.push(list[j]);
+        } catch (err2) { /* unreadable: skipped */ }
+      }
+      list = out;
+    }
+    return list;
+  });
   ipcMain.handle('shell:appDataPath', function () { return app.getPath('userData'); });
   // Small named files in the app-data folder (autosave, preferences).
   ipcMain.handle('shell:readAppData', async function (e, name) {

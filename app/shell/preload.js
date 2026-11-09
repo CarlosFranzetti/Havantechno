@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('HavantechnoShell', {
   },
   // readText(path, {base}) -> Promise<string | null> (.sfz, .txt, .json only)
   readText: function (p, opts) { return ipcRenderer.invoke('shell:readText', p, opts || {}); },
+  // openFiles({directory, multiple, filters, binary}) -> Promise<[{name, path, relativePath, bytes?}] | null>
+  openFiles: function (opts) { return ipcRenderer.invoke('shell:openFiles', opts || {}); },
   appDataPath: function () { return ipcRenderer.invoke('shell:appDataPath'); },
   readAppData: function (name) { return ipcRenderer.invoke('shell:readAppData', name); },
   writeAppData: function (name, text) { return ipcRenderer.invoke('shell:writeAppData', name, text); },
