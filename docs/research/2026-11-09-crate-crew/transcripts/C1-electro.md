@@ -67,11 +67,31 @@ Next in line: Kraftwerk Numbers (documented, but the rhythm box is not an 808, s
 - Gear for rows 2, 13 to 15, 17 to 20 (nothing searched).
 - Whether Hip Hop Be Bop uses an 808 or a DMX (no source found; Parrish says it was edited together, src 5).
 
-## Second pass (2026-11-09 ET): blocked, nothing upgraded
+## Second pass (2026-11-09 ET): pages read with curl through the proxy
 
-The coordinator said reverb.com, daily.redbullmusicacademy.com and others were reachable. Four fetches were tried in parallel (Reverb classic-electro article, Red Bull Mr. Mixx interview, Red Bull Newcleus Key Tracks, Reverb Atkins MS-10 article). **All four failed with "getaddrinfo ENOTFOUND"** for reverb.com and daily.redbullmusicacademy.com, the same error as in the first pass. Per the tool's instruction I stopped fetching (4 of 8 used). So the sandbox network allowlist has not taken effect in this session; it may need a session restart or a new session.
+Method: `curl -sS -L` to the scratchpad, tags stripped with python html.parser, text read. 8 pages fetched, 6 read; two (hiphopelectronic.com Hashim and Kraftwerk Numbers) failed with proxy 403, so no upgrade for Hashim's synths and none for Numbers. Reverb skipped (bot wall).
 
-Consequences:
-- No [S-weak] or [M] claim was upgraded. The table and the top five above stand unchanged.
-- The Egypt, Egypt conflict (Jupiter-8 per Reverb summary vs SH-101 and SVC-350 on a Wikipedia mirror) and the Clear year (1982 or 1983) remain unresolved.
-- To redo: re-run once the hosts resolve (test with a single fetch of reverb.com first). Priority pages: Reverb classic-electro article; Red Bull Mr. Mixx; Red Bull Newcleus; Reverb Atkins MS-10; Sound on Sound Planet Rock; Wikipedia Egyptian Lover.
+Pages read [P]:
+- P1 https://daily.redbullmusicacademy.com/2016/07/mr-mixx-interview
+- P2 https://daily.redbullmusicacademy.com/2015/06/key-tracks-newcleus-jam-on-it
+- P3 https://www.soundonsound.com/techniques/classic-tracks-afrika-bambaataa-soulsonic-force-planet-rock
+- P4 https://en.wikipedia.org/wiki/Clear_(Cybotron_song)
+- P5 https://en.wikipedia.org/wiki/Egyptian_Lover
+- P6 https://en.wikipedia.org/wiki/The_Album_(Mantronix_album)
+
+Upgrades and corrections:
+- **Throw the D (1986)** [P1]: Mixx writes "sustained kick sounds from the Roland TR-808"; "festive, Caribbean-inspired percussion sounds"; "slack samples from blue comedian Rudy Ray Moore". He found an 808 at a pawnshop for $300 and says it "programmed in the same way and theory as the TR-606 that I already had". Year 1986 confirmed. No synth. Instrument count stands (808, percussion sounds, comedy samples, rap, scratching). Upgraded to [P].
+- **Jam On It** [P2], from Cozmo D: "I programmed the rhythm on the 808. Pro 1 was the bassline, TB 303 played the sequence and RS 09 did the chords." The [S-weak] claim is now [P] and confirmed, and it adds that RS-09 played chords. Instruments: 808, Pro-One, TB-303, RS-09, vocoder/chipmunk vocals. The 303 played sequence, not just arps. Released on Mayhew in 1983 then Sunnyview (re-release), so the year is 1983/84 depending on pressing. Raises difficulty only slightly: stays 3.
+- **Clear** [P4]: Wikipedia gives "Released 1983, Recorded April 1982", label Fantasy, from the album Enter (1983), third single, composed by Atkins and Richard Davis, produced by Atkins. **Year resolved: single 1983, recorded 1982.** The page names no gear; the 808, MS-10 and Pro-One list stays [S] from the Reverb summary, not [P].
+- **Egypt, Egypt** [P5]: Wikipedia's Equipment section lists TR-808 (central), **Jupiter-8 (polyphonic leads and pads), SH-101 (basslines and arpeggios), SVC-350 vocoder** (robotic vocals), with analog desks, tape-based production and no MIDI sequencing. On the Nile 1984, Egyptian Empire. **The conflict is resolved as a union, not a contradiction**: the earlier mirrors each listed a subset. Caveat: the page gives these as his general rig, not as a per-track credit, so for this track it is [P] for the rig and [M] for the exact assignment. So it is at least 4 sound sources (808, Jupiter-8, SH-101, vocoder) plus vocals: raise difficulty from 2 to 3.
+- **Planet Rock** [P3]: Baker says the 808 was hired from a man called Joe via a Village Voice ad ($30 a session); Robie brought a Micromoog and a Prophet 5; the Fairlight orchestra hit; Lexicon PCM41 delay and Sony reverb in the studio; released June 1982, R&B number four. Confirmed [P]. Tempo still unmeasured.
+- **Mantronix** [P6]: the duo arrived with an 808; Mantronik "used a Juno synthesizer" for Bassline; Tee used a vocoder on Needle to the Groove; two songs recorded at INS. **Correction**: the earlier summary said no SH-101 (still true) but there is a Juno. Needle to the Groove: 808 + vocoder + (undocumented synth) + scratches; Bassline: 808 + Juno. Which Juno (60 vs 106) is not named. Upgrade to [P] for 808, Juno, vocoder.
+- Hashim, Kraftwerk Numbers, Sucker M.C.'s, Man Parrish: no new page read, unchanged. Sucker M.C.'s drum machine is still unverified.
+
+## Corrected top five
+
+1. **2 Live Crew, Throw the D** (diff 1): 808 confirmed by the maker [P1]. Unchanged.
+2. **Run-D.M.C., Sucker M.C.'s** (diff 1): still unverified drum machine; do a gear check before building. Note P1 says the New York scene mostly used Linn and DMX with the 808 "used in some records, but not too many", so DMX is plausible here.
+3. **Hashim, Al-Naafiysh** (diff 2): still no gear page; keep as the "approximate an unknown synth" test.
+4. **Cybotron, Clear** (diff 2): year settled (1983 single, recorded 1982). Gear still from the Reverb summary only.
+5. **Newcleus, Jam On It** (diff 3), replacing Egypt, Egypt: the best-documented four-box kit now confirmed first-hand [P2] (808, Pro-One bass, TB-303 sequence, RS-09 chords, plus vocoded voices). Egypt, Egypt moves out because its confirmed rig is four sound sources and is not assigned per track [P5]; it stays on the reserve list with Mantronix Bassline (808 + Juno [P6]) and Kraftwerk Numbers.

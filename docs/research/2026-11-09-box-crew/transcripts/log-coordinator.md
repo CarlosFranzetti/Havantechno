@@ -37,3 +37,7 @@ After the environment change: dl.fbaipublicfiles.com 200 (the Demucs weights), s
 ## 2026-11-08 23:52 EST (04:52 UTC) — why the second passes failed at first: the fetch tool bypasses the proxy
 
 C1 and C2 reported every page fetch failing with ENOTFOUND after the hosts were allowed. Cause: the agents' WebFetch tool resolves DNS itself and does not use the session's HTTPS proxy, so the environment's allowlist never applies to it; curl in Bash goes through the proxy and works (en.wikipedia.org 200 with the page; sfzformat.com, soundonsound.com 200). reverb.com answers 403 to any client (its own bot wall) and stays unusable. Rule for every crew from here: fetch pages with curl through the proxy and strip tags with python3 html.parser. All six agents told; C1 and C2 rerun their second passes.
+
+## 2026-11-08 23:53 EST (04:53 UTC) — C2 second pass (curl)
+
+C2-minimal.md "Second pass" rewritten from pages read in full (RBMA Hood interview, Wikipedia Acid Tracks, Spastik, Minimal Nation): Hood's gear confirmed (SH-101, Juno 2, TR-909, DX100, QY, 4-channel mixer; no reverb or compression in recording, a little reverb added at mastering); Spastik is TR-808 percussion (1993, Plus 8 / NovaMute), correcting C2's table; Acid Tracks confirms the 303 and the slow-down from about 130 to about 120 BPM; the 707/727 stay reported only. Corrected top five: Minimal Nation "Rhythm of Vision", Spastik, Acid Tracks, The Bells, Minimal Nation "Acrylic". Equipboard answers with a bot wall and Wikipedia rate-limited one page (429). Committed.

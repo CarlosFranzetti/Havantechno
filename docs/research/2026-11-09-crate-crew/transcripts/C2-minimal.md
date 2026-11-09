@@ -73,11 +73,22 @@ Not in my five: Daft Punk (layered, sample-heavy, many instruments) and Villalob
 - The RBMA Hood page should be read in full once its host is allowed.
 - Tempos and instrument counts need confirming against files the owner supplies.
 
-## Second pass (2026-11-09 ET, after the coordinator's message)
+## Second pass (2026-11-09 ET, via curl through the proxy)
 
-Result: no upgrades possible. Seven fetches were attempted (RBMA Hood page, Wikipedia Acid Tracks, Wikipedia Spastik, Equipboard Hawtin, Mixmag Homework list, Wikipedia Basic Channel, GearNews Mills). All seven failed with `getaddrinfo ENOTFOUND` for daily.redbullmusicacademy.com, en.wikipedia.org, equipboard.com, mixmag.net and www.gearnews.com. In this session those hosts still do not resolve, so they are still not allowed, whatever the coordinator's note says. I did not retry or try other sites. One fetch of the allowed eight was left unused.
+Method: curl to scratchpad, tags stripped, text read. 8 pages tried. Read in full: RBMA Hood track-by-track, Wikipedia Acid Tracks, Wikipedia Spastik, Wikipedia Minimal Nation. Not obtained: Wikipedia Basic Channel (HTTP 429, too many requests), Equipboard Hawtin, Equipboard Jeff Mills and Equipboard Daft Punk (all returned only a "Just a moment... enable JavaScript" bot wall). So Mills, Basic Channel and Daft Punk are unchanged from the first pass. Mixmag/GearNews stay unseen.
 
-- No [M] claim was upgraded to [S]. Every claim keeps its first-pass tag.
-- Spastik's drum machine is still unsettled: 808, 909 or both, with sources disagreeing (first-pass search summaries only).
-- The top five stands unchanged: Minimal Nation, Gak, Acid Tracks, The Bells, Phylyps Trak.
-- To finish the pass, the network settings must allow the five hosts above (the coordinator named only the first four of Wikipedia, RBMA, Equipboard, Sound on Sound and Discogs, and mixmag.net and gearnews.com are also needed). Re-run once the coordinator confirms.
+### Upgrades to [S] (pages read)
+
+- **Minimal Nation (RBMA, Hood quoted).** Gear confirmed: blue Roland SH-101, Roland Juno 2, Roland TR-909 bought from Gerald Donald; Yamaha DX100 borrowed from Jeff Mills; Yamaha QY pocket sequencer; four-channel mixer. "Everything was punched in live on my Yamaha QY." No reverb, compression or effects were used in recording; mastering engineer Ron Murphy added "a little reverb here and there". Correction to the first pass: my table said "chorus on Juno; some delay [M]": the delay claim is not supported; the only effect is mastering reverb (chorus on the Juno is a hardware feature, not stated by Hood). "Rhythm of Vision": the groove is from the Juno 2. "Acrylic" is acid made without a 303, on a Juno 106 (Hood says he never used a 303). Tracklist varies by edition (original 1994 Axis EP of five songs, then 2015 M-Plant order); the SH-101 track is a separate, faster cut he shelved. So per-track the instrument count is 2 to 3, but which synth plays on which track is only stated for Rhythm of Vision (Juno 2) and Acrylic (Juno 106).
+- **Acid Tracks (Wikipedia).** Released 1987 on Trax (TX142), produced by Marshall Jefferson, who suggested slowing it "from the original c. 130 beats per minute to about 120 bpm" (upgrades my [M] 120 to [S], with the caveat that sources describe the original tape at about 130 and the release near 120). The TB-303 is confirmed as the source; Jones recalled Spanky found the 303 second-hand. The page text I read does NOT mention TR-707 or TR-727, so those two keep the first-pass tag (search summaries of the Roland article and Wikipedia snippets), not this page. Mark them "reported, not confirmed on the page I read".
+- **Spastik (Wikipedia).** Settled as far as one page goes: "based on a nine-minute whirlwind of Roland TR-808 percussion". Released 4 October 1993, 9:22, label Plus 8 / NovaMute, from the Recycled Plastik EP (not Sheet One as my first-pass table said; label corrected to Plus 8 / NovaMute). The page does not mention a 303 on Spastik and does not mention a 909, so "808 only for drums" is the best-sourced reading, with the 303 layer unproven for this track. Single track listing also gives "Gak (Remix)" 6:51 on the same single, so Gak exists as its own track; its gear and tempo remain unsourced beyond the first-pass 303 pattern listing.
+
+### Corrected top five
+
+1. **Robert Hood, Minimal Nation, "Rhythm of Vision"** (Juno 2 groove plus 909; gear [S] from Hood himself). Unchanged as number one, now narrowed to a named track.
+2. **Plastikman, Spastik** moves up and replaces Gak: the drums are plainly an 808 [S, Wikipedia], one machine carrying nine minutes, which is the ideal Batch 2 test; difficulty 3 (long build, layering). Gak stays on the list as a 303 case but its sourcing is weak.
+3. **Phuture, Acid Tracks** (303 [S]; 120 bpm after slowing [S]; 707/727 drums still reported only).
+4. **Jeff Mills, The Bells** unchanged (909 as backbone from reviews seen in search; synth unconfirmed).
+5. **Robert Hood, Minimal Nation, "Acrylic"** replaces Phylyps Trak: "acid without a 303" on a Juno 106 is a documented, single-synth case, which Batch 3 can use to test classifying a poly analog patch played acid-style. Phylyps Trak drops to a later effects test because no gear page was reachable.
+
+Basic Channel and Mills remain undocumented; Daft Punk's list is still only second-hand (search summaries).
