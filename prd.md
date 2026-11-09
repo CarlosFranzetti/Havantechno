@@ -87,3 +87,18 @@ Raised by the research and waiting on the owner:
 Earlier:
 
 - The studio's 300 Hz to 1 kHz band is several dB hotter than the reference in every section. This was measured, not listened to. Is the balance wanted as it is?
+
+## 4c. Deconstruction and recreation (direction set 2026-11-08 ET)
+
+- **D9. Element identification.** For each isolated sound in an imported track the app decides: synth or sample; if synth, mono or poly, FM or analog/subtractive; reverb present or not and its decay; whether the effects sound built in to the instrument or outboard (a heuristic, stated as such). It names the nearest DAW recreation and, where none fits, suggests an external plugin.
+- **D10. Auto-load.** The app loads its own recreation for each identified sound onto a track, with a first-pass parameter fit, so the imported track opens as an editable project.
+- **D11. Drum machines.** An obvious 808 or 909 sound loads the DAW's 808 or 909 recreation; an unknown drum sound gets a best guess with the confidence shown; a sampled drum goes to the sampler with its slice.
+- **D12. The sampler.** A Kontakt-class sampler is a first-class instrument: multi-zone programs, velocity layers, round robins, loops, envelopes, filter, LFOs, choke groups, a program format, drag-in and auto-mapping.
+- **D13. Projects.** Load and save; an imported audio file becomes a saved project immediately after analysis, with the original on an audio track and the recreation beside it; A/B with level match is always available.
+- **D14. Minimal targets.** The first targets after Guidance are very minimal tracks (one synth, one drum machine; early electro), so few instruments must exist to recreate a whole track.
+
+## 6c. Decisions taken 2026-11-08 ET
+
+- Work proceeds in batches: sampler, then 808/909, then classification, then import and A/B (docs/plans/2026-11-09-roadmap.md).
+- The app is non-commercial, for the owner and a few friends. Shipped samples are redistributable (public domain, CC0 or a permitting free licence); synthesis needs none. Ported code is GPL/AGPL/MIT with attribution.
+- Research crews run before each build batch, Roundtable style, with transcripts and reports under docs/research/.
