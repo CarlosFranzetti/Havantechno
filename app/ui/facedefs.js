@@ -336,7 +336,9 @@
     line(c, X(lo), Y(lo), X(0), Y(0), p.dim, 1, true);
     line(c, X(T), sq.y0 + sq.h, X(T), sq.y0, p.line, 1);
     if (kind === 'lim') line(c, sq.x0, Y(mk), sq.x0 + sq.w, Y(mk), p.dim, 1, true);
-    var pts = sample(80, function (u) { var x = lo + u * -lo; return [X(x), Y(compOut(x, T, R, K) + mk)]; });
+    var clipOn = kind === 'lim' && !!P(d, host, 'clipOn'), clipDb = kind === 'lim' ? P(d, host, 'clip') : 0;
+    if (clipOn) line(c, sq.x0, Y(clipDb), sq.x0 + sq.w, Y(clipDb), p.fg, 1, true);
+    var pts = sample(80, function (u) { var x = lo + u * -lo, o = compOut(x, T, R, K) + mk; return [X(x), Y(clipOn && o > clipDb ? clipDb : o)]; });
     path(c, pts, p.ink, 2);
     var m = meterOf(d, host), gr = (typeof m.reduction === 'number') ? m.reduction : null;
     if (typeof m.level === 'number' && m.level > 0.001 && gr !== null) {
@@ -413,6 +415,14 @@
     if (bar) { c.strokeStyle = p.line; c.lineWidth = 1; c.strokeRect(g.x0 + 0.5, g.y1 - 3.5, g.w, 5); c.fillStyle = p.ink; c.fillRect(g.x0 + 1, g.y1 - 3, g.w * mix, 4); }
     if (!g.small) txt(c, (Math.round(rate * 100) / 100) + ' Hz   depth ' + (Math.round(depth * 10) / 10) + ' ms   base ' + (Math.round(base * 10) / 10) + ' ms   mix ' + Math.round(mix * 100) + '%' + (inv ? '   inverted' : ''), g.x0 + 2, g.y1 + 10);
   }
+  function heroDecor(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), t = P(d, host, 'time'), T = 0.05, mid = g.y0 + g.h / 2;
+    line(c, g.x0, mid, g.x1, mid, p.line, 1);
+    var x = g.x0 + t / T * g.w;
+    line(c, g.x0 + 2, mid, g.x0 + 2, mid - g.h * 0.42, p.ink, 3); line(c, x, mid, x, mid + g.h * 0.42, p.fg, 3);
+    line(c, g.x0 + 2, mid - g.h * 0.42, x, mid - g.h * 0.42, p.dim, 1, true);
+    if (!g.small) { txt(c, 'L = input', g.x0 + 8, g.y0 + 9); txt(c, 'R = input + ' + (Math.round(t * 10000) / 10) + ' ms', g.x1, g.y1 + 10, 'right'); }
+  }
   function heroChannel(c, w, hh, d, host) {
     var p = pal(), g = plot(w, hh, hh < 64), gain = P(d, host, 'gain'), pan = P(d, host, 'pan'), mute = !!P(d, host, 'mute'), m = meterOf(d, host);
     var lvl = typeof m.level === 'number' ? clamp(m.level, 0, 1) : 0, ldb = lvl > 0.0006 ? 20 * Math.log10(lvl) : -60;
@@ -453,33 +463,108 @@
     hit = { buf: buf, n: n, data: data }; PEAKS.push(hit); if (PEAKS.length > 8) PEAKS.shift();
     return data;
   }
+  // ---- program path: shared state per device (selection, a drag in progress), program cache, region geometry
+  var SEL = {};                                   // device.id -> {sel: [region indices], drag: {index, field, value}|null, ver}
+  function selOf(d) { return SEL[d.id] || (SEL[d.id] = { sel: [0], drag: null, ver: 0 }); }
+  var GVER = 0, WATCHED = [], PCACHE = {};
+  function watch(host) {
+    if (!host || typeof host.on !== 'function' || WATCHED.indexOf(host) >= 0) return;
+    WATCHED.push(host);
+    safe(function () { host.on('program', function () { GVER++; }); host.on('document', function () { GVER++; }); });
+  }
+  function progOf(d, host) {
+    var id = P(d, host, 'program');
+    if (!id || !host || typeof host.program !== 'function') return null;
+    watch(host);
+    var c = PCACHE[id], t = Date.now();
+    if (c && c.gver === GVER && t - c.t < 500) return c.prog;
+    var prog = safe(function () { return host.program(id); }, null);
+    PCACHE[id] = { gver: GVER, t: t, prog: prog };
+    return prog;
+  }
+  function selIndex(d, prog) {
+    var s = selOf(d), i;
+    s.sel = s.sel.filter(function (x) { return x >= 0 && x < prog.regions.length; });
+    if (!s.sel.length && prog.regions.length) s.sel = [0];
+    return s.sel.length ? s.sel[0] : -1;
+  }
+  function regionOf(d, prog, i) {          // the region with a drag in progress applied
+    var r = prog.regions[i], s = selOf(d);
+    if (s.drag && s.drag.index === i) { r = Object.assign({}, r); r[s.drag.field] = s.drag.value; }
+    return r;
+  }
+  function totalFrames(buf, info) {
+    var rate = (info && info.meta && info.meta.rate) || buf.sampleRate || 44100;
+    return Math.max(1, (buf.duration || (buf.length / (buf.sampleRate || 44100))) * rate);
+  }
+  function sampleColors(colors) {
+    return { ink: colors.ink, dim: colors.famDim || colors.dim, wash: colors.wash, fg: colors.fg, line: colors.line, bg: colors.panel || colors.bg, on: colors.on, dashed: false };
+  }
+  function drawWave(c, g, buf, rev, color) {
+    var n = Math.max(32, Math.min(400, Math.round(g.w))), pk = peaksOf(buf, n), amp = g.h * 0.46, mid = g.y0 + g.h / 2, i;
+    c.beginPath();
+    for (i = 0; i < n; i++) { var q = pk[rev ? n - 1 - i : i], x = g.x0 + (i + 0.5) / n * g.w; c.moveTo(x, mid - q[1] * amp - 0.5); c.lineTo(x, mid - q[0] * amp + 0.5); }
+    c.strokeStyle = color; c.lineWidth = Math.max(1, g.w / n); dash(c, false); c.stroke();
+  }
+  function flag(c, x, y, right, color) { line(c, x, y, x, y + 14, color, 2); c.fillStyle = color; c.fillRect(right ? x - 7 : x, y, 7, 8); }
+
   function heroSampler(c, w, hh, d, host) {
+    var prog = progOf(d, host);
+    if (prog && prog.regions.length) return heroProgram(c, w, hh, d, host, prog);
     var p = pal(), g = plot(w, hh, hh < 64), id = P(d, host, 'buffer'), s = P(d, host, 'start') || 0, e = P(d, host, 'end') || 1, rev = P(d, host, 'reverse') >= 0.5, loop = P(d, host, 'loop') >= 0.5;
-    var buf = bufferOf(d, host, id), info = audioInfo(host, id), dur = (buf && buf.duration) || (info && info.duration) || 0, mid = g.y0 + g.h / 2, i, n = Math.max(32, Math.min(400, Math.round(g.w)));
+    var buf = bufferOf(d, host, id), info = audioInfo(host, id), dur = (buf && buf.duration) || (info && info.duration) || 0, mid = g.y0 + g.h / 2;
     line(c, g.x0, mid, g.x1, mid, p.line, 1);
-    if (buf) {
-      var pk = peaksOf(buf, n), amp = g.h * 0.46;
-      c.beginPath();
-      for (i = 0; i < n; i++) { var q = pk[rev ? n - 1 - i : i], x = g.x0 + (i + 0.5) / n * g.w; c.moveTo(x, mid - q[1] * amp - 0.5); c.lineTo(x, mid - q[0] * amp + 0.5); }
-      c.strokeStyle = p.ink; c.lineWidth = Math.max(1, g.w / n); dash(c, false); c.stroke();
-    } else if (!g.small) txt(c, id ? 'sample not loaded' : 'no sample', g.x0 + g.w / 2, mid - 6, 'center');
+    if (buf) drawWave(c, g, buf, rev, p.ink);
+    else if (!g.small) txt(c, id ? 'sample not loaded' : 'no sample', g.x0 + g.w / 2, mid - 6, 'center');
     var xs = g.x0 + s * g.w, xe = g.x0 + e * g.w;
     c.globalAlpha = 0.55; c.fillStyle = p.bg; c.fillRect(g.x0, g.y0, Math.max(0, xs - g.x0), g.h); c.fillRect(xe, g.y0, Math.max(0, g.x1 - xe), g.h); c.globalAlpha = 1;
     if (dur > 0) {
       var att = P(d, host, 'attack') || 0, rel = P(d, host, 'release') || 0, span = (e - s) * dur, fa = clamp(att / Math.max(span, 1e-6), 0, 0.5), fr = clamp(rel / Math.max(span, 1e-6), 0, 0.5);
       path(c, [[xs, g.y1], [xs + fa * (xe - xs), g.y0 + 2], [xe - fr * (xe - xs), g.y0 + 2], [xe, g.y1]], p.fg, 1, true);
     }
-    [xs, xe].forEach(function (hx, k) {
-      line(c, hx, g.y0, hx, g.y1, p.fg, 2);
-      c.fillStyle = p.fg; c.fillRect(k === 0 ? hx : hx - 7, g.y0, 7, 10);
-    });
+    [xs, xe].forEach(function (hx, k) { line(c, hx, g.y0, hx, g.y1, p.fg, 2); c.fillStyle = p.fg; c.fillRect(k === 0 ? hx : hx - 7, g.y0, 7, 10); });
     if (!g.small) {
       txt(c, 'start ' + Math.round(s * 100) + '%   end ' + (P(d, host, 'end') ? Math.round(e * 100) + '%' : 'whole'), g.x0 + 2, g.y1 + 10);
       txt(c, (dur ? (Math.round(dur * 100) / 100) + ' s   ' : '') + (P(d, host, 'pitch') ? 'pitch ' + (Math.round(P(d, host, 'pitch') * 10) / 10) + ' st   ' : '') + (loop ? 'loop' : ''), g.x1, g.y1 + 10, 'right');
     }
   }
+
+  // the handles of the selected region: offset, end, and (for looping regions) loop start and end, in fractions of the file
+  function regionHandles(r, total) {
+    var hs = [{ field: 'offset', frac: clamp((r.offset || 0) / total, 0, 1) }, { field: 'end', frac: r.end ? clamp(r.end / total, 0, 1) : 1 }];
+    if ((r.loop === 'continuous' || r.loop === 'sustain') && r.loopEnd > 0) { hs.push({ field: 'loopStart', frac: clamp((r.loopStart || 0) / total, 0, 1) }); hs.push({ field: 'loopEnd', frac: clamp(r.loopEnd / total, 0, 1) }); }
+    return hs;
+  }
+  function heroProgram(c, w, hh, d, host, prog) {
+    var p = pal(), g = plot(w, hh, hh < 64), i = selIndex(d, prog), r = regionOf(d, prog, i), buf = bufferOf(d, host, r.buffer), info = audioInfo(host, r.buffer), mid = g.y0 + g.h / 2;
+    line(c, g.x0, mid, g.x1, mid, p.line, 1);
+    if (!buf) { if (!g.small) txt(c, r.buffer ? 'sample "' + r.buffer + '" not loaded' : 'no sample', g.x0 + g.w / 2, mid - 6, 'center'); }
+    else {
+      drawWave(c, g, buf, !!r.reverse, p.ink);
+      var tot = totalFrames(buf, info), hs = regionHandles(r, tot), X = function (f) { return g.x0 + f * g.w; };
+      var o = hs[0].frac, en = hs[1].frac;
+      c.globalAlpha = 0.55; c.fillStyle = p.bg; c.fillRect(g.x0, g.y0, Math.max(0, X(o) - g.x0), g.h); c.fillRect(X(en), g.y0, Math.max(0, g.x1 - X(en)), g.h); c.globalAlpha = 1;
+      if (hs.length > 2) {
+        var ls = hs[2].frac, le = hs[3].frac, rate = (info && info.meta && info.meta.rate) || buf.sampleRate || 44100, xf = clamp((r.xfade || 0) * rate / tot, 0, le - ls);
+        c.globalAlpha = 0.12; c.fillStyle = p.ink; c.fillRect(X(ls), g.y0, X(le) - X(ls), g.h); c.globalAlpha = 1;
+        if (xf > 0) { c.beginPath(); c.moveTo(X(le) - xf * g.w, g.y1); c.lineTo(X(le), g.y1); c.lineTo(X(le), g.y0); c.closePath(); c.globalAlpha = 0.35; c.fillStyle = p.fg; c.fill(); c.globalAlpha = 1; }
+        flag(c, X(ls), g.y1 - 14, false, p.ink); flag(c, X(le), g.y1 - 14, true, p.ink);
+      }
+      flag(c, X(o), g.y0, false, p.fg); flag(c, X(en), g.y0, true, p.fg);
+      var lh = safe(function () { return d.ref._lastHit; }, null), now = safe(function () { return host.context().currentTime; }, null);
+      if (lh && lh.region === i && typeof lh.t0 === 'number' && now != null) {
+        var fr = o + (now - lh.t0) * (lh.rate || 1) * (buf.sampleRate || 44100) / tot;
+        if (fr >= o && fr <= en) line(c, X(fr), g.y0, X(fr), g.y1, p.on, 1);
+      }
+      if (!g.small) txt(c, (Math.round((buf.duration || 0) * 100) / 100) + ' s   ' + (r.loop || 'none'), g.x1, g.y1 + 10, 'right');
+    }
+    if (!g.small) txt(c, prog.name + '   region ' + (i + 1) + '/' + prog.regions.length + '   keys ' + r.lokey + '..' + r.hikey, g.x0 + 2, g.y1 + 10);
+  }
+
   function samplerPointer(phase, pt, d, host, api, st) {
-    var g = plot(pt.w, pt.h, pt.h < 64), s = P(d, host, 'start') || 0, e = P(d, host, 'end') || 1;
+    var g = plot(pt.w, pt.h, pt.h < 64), prog = progOf(d, host);
+    if (prog && prog.regions.length) return programPointer(phase, pt, g, d, host, api, st, prog);
+    var s = P(d, host, 'start') || 0, e = P(d, host, 'end') || 1;
     if (phase === 'down') {
       var xs = g.x0 + s * g.w, xe = g.x0 + e * g.w, ds = Math.abs(pt.x - xs), de = Math.abs(pt.x - xe);
       if (Math.min(ds, de) > 12) return null;
@@ -492,6 +577,33 @@
     }
     return st || null;
   }
+  // drag a region handle: preview while dragging, one setRegion (one undo step) on release
+  function programPointer(phase, pt, g, d, host, api, st, prog) {
+    var i = selIndex(d, prog), s = selOf(d);
+    if (phase === 'down') {
+      var r = prog.regions[i], buf = bufferOf(d, host, r.buffer);
+      if (!buf) return null;
+      var tot = totalFrames(buf, audioInfo(host, r.buffer)), hs = regionHandles(r, tot), best = null, bd = 12;
+      hs.forEach(function (hd) { var dd = Math.abs(pt.x - (g.x0 + hd.frac * g.w)); if (dd < bd) { bd = dd; best = hd; } });
+      return best ? { field: best.field, index: i, tot: tot, id: P(d, host, 'program') } : null;
+    }
+    if (!st) return null;
+    var f = clamp((pt.x - g.x0) / g.w, 0, 1), cur = regionOf(d, prog, st.index), val;
+    if (phase === 'move') {
+      var fr = Math.round(f * st.tot);
+      if (st.field === 'end') val = f >= 0.995 ? 0 : Math.max(fr, (cur.offset || 0) + 1);
+      else if (st.field === 'offset') val = Math.min(fr, (cur.end || st.tot) - 1);
+      else if (st.field === 'loopStart') val = Math.min(fr, cur.loopEnd - 1);
+      else val = Math.max(fr, (cur.loopStart || 0) + 1);
+      s.drag = { index: st.index, field: st.field, value: val };
+      s.ver++; api.redraw();
+    } else if (phase === 'up') {
+      var dr = s.drag; s.drag = null; s.ver++;
+      if (dr) { var patch = {}; patch[dr.field] = dr.value; safe(function () { host.editor().setRegion(st.id, dr.index, patch); host.commit(); }); }
+      api.redraw();
+    }
+    return st;
+  }
   function bufferOptions(d, host) {
     var out = [{ value: '', label: '(none)' }], l = audioList(host), i;
     for (i = 0; i < l.length; i++) out.push({ value: l[i].id, label: l[i].name || String(l[i].id) });
@@ -499,6 +611,188 @@
     if (cur && !l.some(function (x) { return x.id === cur; })) out.push({ value: cur, label: cur + ' (missing)' });
     return out;
   }
+  function programOptions(d, host) {
+    var out = [{ value: '', label: '(single sample)' }], l = safe(function () { return host.programs(); }, []) || [], i;
+    for (i = 0; i < l.length; i++) out.push({ value: l[i].id, label: (l[i].name || l[i].id) + (l[i].missing ? ' (' + l[i].missing + ' missing)' : '') });
+    var cur = P(d, host, 'program');
+    if (cur && !l.some(function (x) { return x.id === cur; })) out.push({ value: cur, label: cur + ' (missing)' });
+    return out;
+  }
+  function assignProgram(v, d, host) { if (typeof host.assignProgram === 'function') host.assignProgram(d.track, v || ''); else host.setParam(d.pathPrefix + '.program', v || ''); }
+
+  // ---- zone map: 128 keys x 127 velocities, regions as rectangles (window density, program path)
+  var ZONE_STRIP = 14;
+  function zoneRects(prog, w, gh) {
+    return prog.regions.map(function (r, i) {
+      var off = (r.seqLen > 1 ? 2 * (r.seq - 1) : 0), lo = Math.max(0, r.lokey);
+      return { i: i, x0: lo / 128 * w + off, x1: (r.hikey + 1) / 128 * w + off, y0: (127 - r.hivel) / 127 * gh + off, y1: (128 - r.lovel) / 127 * gh + off };
+    });
+  }
+  function zoneDraw(c, w, hh, d, host, colors) {
+    Faces.palette = sampleColors(colors || {});
+    var p = pal(), prog = progOf(d, host), gh = hh - ZONE_STRIP, k, s = selOf(d);
+    c.fillStyle = p.wash; c.fillRect(0, 0, w, hh);
+    for (k = 0; k < 128; k += 12) { var x = k / 128 * w; line(c, x, 0, x, gh, p.line, 1); if (w > 300) txt(c, 'C' + (k / 12 - 1), x + 2, gh - 3); }
+    line(c, 0, gh + 0.5, w, gh + 0.5, p.line, 1);
+    if (!prog) { txt(c, 'no program: choose one in SOURCE, or load, map or slice', w / 2, gh / 2, 'center'); return; }
+    var lh = safe(function () { return d.ref._lastHit; }, null), now = safe(function () { return host.context().currentTime; }, null);
+    zoneRects(prog, w, gh).forEach(function (q) {
+      var r = regionOf(d, prog, q.i), rect = q;
+      if (s.drag && s.drag.index === q.i) rect = zoneRects({ regions: [r] }, w, gh)[0];
+      var missing = !bufferOf(d, host, r.buffer), sel = s.sel.indexOf(q.i) >= 0, hit = lh && lh.region === q.i && now != null && typeof lh.t0 === 'number' && now - lh.t0 < 0.15;
+      c.globalAlpha = hit ? 0.8 : (missing ? 0.12 : 0.32); c.fillStyle = hit ? p.on : p.ink; c.fillRect(rect.x0, rect.y0, rect.x1 - rect.x0, rect.y1 - rect.y0); c.globalAlpha = 1;
+      if (missing) for (var hx = rect.x0 - (rect.y1 - rect.y0); hx < rect.x1; hx += 6) {
+        var ax = Math.max(rect.x0, hx), ay = rect.y1 - (ax - hx), bx = Math.min(rect.x1, hx + (rect.y1 - rect.y0)), by = rect.y1 - (bx - hx);
+        if (bx > ax) line(c, ax, Math.min(ay, rect.y1), bx, Math.max(by, rect.y0), p.dim, 1);
+      }
+      c.strokeStyle = sel ? p.fg : p.ink; c.lineWidth = sel ? 2 : 1; dash(c, false); c.strokeRect(rect.x0 + 0.5, rect.y0 + 0.5, rect.x1 - rect.x0, rect.y1 - rect.y0);
+      var rx = (r.root + 0.5) / 128 * w; line(c, rx, gh + 2, rx, hh - 2, sel ? p.fg : p.ink, 2);
+    });
+  }
+  function zoneMap(api) {
+    var W = root.Widgets, d = api.device, host = api.host;
+    if (!W || typeof W.curve !== 'function') return null;
+    var cw = Math.max(200, api.width), ch = 150, el = document.createElement('div'), st = { w: cw, h: ch }, drag = null;
+    var cv = W.curve({ width: cw, height: ch, draw: function (c, w, hh, colors) { zoneDraw(c, w, hh, d, host, colors); } });
+    el.className = 'face-section hv-zone'; el.style.flex = '1 1 100%';
+    var title = document.createElement('h4'); title.className = 'face-section-title'; title.textContent = 'zones (key by velocity)';
+    el.appendChild(title); el.appendChild(cv.el);
+    function where(ev) { var r = cv.el.getBoundingClientRect ? cv.el.getBoundingClientRect() : { left: 0, top: 0 }; return { x: (ev.clientX || 0) - r.left, y: (ev.clientY || 0) - r.top }; }
+    function mk(ev, hitIdx) { return where(ev); }
+    cv.el.addEventListener('pointerdown', function (ev) {
+      if (ev.button) return;
+      var prog = progOf(d, host); if (!prog) return;
+      var pt = where(ev), gh = st.h - ZONE_STRIP, rects = zoneRects(prog, st.w, gh), hit = null, i, s = selOf(d);
+      for (i = rects.length - 1; i >= 0; i--) if (pt.x >= rects[i].x0 - 4 && pt.x <= rects[i].x1 + 4 && pt.y >= rects[i].y0 - 4 && pt.y <= rects[i].y1 + 4 && pt.y <= gh) { hit = rects[i]; break; }
+      if (!hit) { if (!ev.shiftKey) { s.sel = []; s.ver++; } return; }
+      var edges = [['lokey', Math.abs(pt.x - hit.x0)], ['hikey', Math.abs(pt.x - hit.x1)], ['hivel', Math.abs(pt.y - hit.y0)], ['lovel', Math.abs(pt.y - hit.y1)]].sort(function (a, b) { return a[1] - b[1]; });
+      if (s.sel.indexOf(hit.i) >= 0 && edges[0][1] <= 4) { drag = { index: hit.i, field: edges[0][0], gh: gh, id: P(d, host, 'program') }; if (cv.el.setPointerCapture && ev.pointerId != null) safe(function () { cv.el.setPointerCapture(ev.pointerId); }); return; }
+      var at = s.sel.indexOf(hit.i);
+      if (ev.shiftKey) { if (at >= 0) s.sel.splice(at, 1); else s.sel.push(hit.i); } else s.sel = [hit.i];
+      s.ver++; cv.redraw();
+    });
+    cv.el.addEventListener('pointermove', function (ev) {
+      if (!drag) return;
+      var pt = where(ev), s = selOf(d), prog = progOf(d, host), r = prog && prog.regions[drag.index], val;
+      if (!r) return;
+      if (drag.field === 'lokey') val = clamp(Math.floor(pt.x / st.w * 128), 0, r.hikey);
+      else if (drag.field === 'hikey') val = clamp(Math.floor(pt.x / st.w * 128), Math.max(0, r.lokey), 127);
+      else if (drag.field === 'hivel') val = clamp(127 - Math.floor(pt.y / drag.gh * 127), r.lovel, 127);
+      else val = clamp(128 - Math.round(pt.y / drag.gh * 127), 1, r.hivel);
+      s.drag = { index: drag.index, field: drag.field, value: val }; s.ver++; cv.redraw();
+    });
+    function end() {
+      if (!drag) return;
+      var s = selOf(d), dr = s.drag, id = drag.id; drag = null; s.drag = null; s.ver++;
+      if (dr) { var patch = {}; patch[dr.field] = dr.value; safe(function () { host.editor().setRegion(id, dr.index, patch); host.commit(); }); }
+      cv.redraw();
+    }
+    cv.el.addEventListener('pointerup', end); cv.el.addEventListener('pointercancel', end);
+    var last = '';
+    return { el: el, update: function () { var s = selOf(d), sg = GVER + ':' + s.ver + ':' + JSON.stringify(s.sel) + ':' + P(d, host, 'program'); var lh = safe(function () { return d.ref._lastHit; }, null); if (sg !== last || lh) { last = sg; cv.redraw(); } },
+             resize: function (w) { st.w = Math.max(200, w | 0); if (cv.resize) cv.resize(st.w, st.h); }, zone: cv, rects: function () { var pr = progOf(d, host); return pr ? zoneRects(pr, st.w, st.h - ZONE_STRIP) : []; } };
+  }
+
+  // ---- region panel: edits the selected region(s) through the document (setRegion), not setParam
+  var REGION_NUM = [['root', 0, 127, 1], ['lokey', 0, 127, 1], ['hikey', 0, 127, 1], ['lovel', 1, 127, 1], ['hivel', 1, 127, 1], ['tune', -100, 100, 1], ['gain', -24, 24, 0.1], ['pan', -1, 1, 0.05], ['xfade', 0, 5, 0.001], ['seq', 1, 16, 1], ['seqLen', 1, 16, 1]];
+  function regionPanel(api) {
+    var d = api.device, host = api.host, doc = document, el = doc.createElement('section'), fields = {}, last = '';
+    el.className = 'face-section hv-region'; el.style.flex = '1 1 100%';
+    var title = doc.createElement('h4'); title.className = 'face-section-title'; title.textContent = 'region'; el.appendChild(title);
+    var row = doc.createElement('div'); row.className = 'face-controls'; el.appendChild(row);
+    function targets() { var prog = progOf(d, host); if (!prog) return []; selIndex(d, prog); return selOf(d).sel.slice(); }
+    function apply(patch) {
+      var prog = progOf(d, host), id = P(d, host, 'program'), t = targets(), ed = safe(function () { return host.editor(); }, null);
+      if (!prog || !ed || !t.length) return;
+      var run = function () { t.forEach(function (i) { ed.setRegion(id, i, patch); }); };
+      if (typeof ed.group === 'function') ed.group(run); else run();
+      safe(function () { host.commit(); });
+      selOf(d).ver++;
+    }
+    function labelled(name, input) { var l = doc.createElement('label'); l.className = 'hv-regfield'; l.style.display = 'flex'; l.style.flexDirection = 'column'; l.style.fontSize = '10px'; var s = doc.createElement('span'); s.textContent = name; l.appendChild(s); l.appendChild(input); row.appendChild(l); }
+    REGION_NUM.forEach(function (f) {
+      var inp = doc.createElement('input'); inp.type = 'number'; inp.min = f[1]; inp.max = f[2]; inp.step = f[3]; inp.style.width = '64px'; inp.setAttribute('aria-label', f[0]);
+      inp.addEventListener('change', function () { var v = parseFloat(inp.value); if (v === v) { var patch = {}; patch[f[0]] = clamp(v, f[1], f[2]); apply(patch); } });
+      fields[f[0]] = inp; labelled(f[0], inp);
+    });
+    ['group', 'offBy'].forEach(function (n) {
+      var inp = doc.createElement('input'); inp.type = 'text'; inp.style.width = '64px'; inp.setAttribute('aria-label', n);
+      inp.addEventListener('change', function () { var patch = {}; patch[n] = String(inp.value); apply(patch); });
+      fields[n] = inp; labelled(n, inp);
+    });
+    var W = root.Widgets, loopSel = null, rev = null;
+    if (W && W.select) { loopSel = W.select({ label: 'loop', options: ['none', 'oneshot', 'continuous', 'sustain'], value: 'none', size: 'face', onInput: function (v) { apply({ loop: v }); } }); row.appendChild(loopSel.el); }
+    if (W && W.toggle) { rev = W.toggle({ label: 'reverse', value: false, size: 'face', onInput: function (v) { apply({ reverse: v ? 1 : 0 }); } }); row.appendChild(rev.el); }
+    var clear = doc.createElement('button'); clear.type = 'button'; clear.textContent = 'overrides: clear'; clear.className = 'btn'; clear.setAttribute('aria-label', 'clear region overrides');
+    clear.addEventListener('click', function () { apply({ env: null, filter: null, fenv: null, vib: null, lfo: null }); });
+    row.appendChild(clear);
+    function update() {
+      var s = selOf(d), prog = progOf(d, host), sg = GVER + ':' + s.ver + ':' + JSON.stringify(s.sel) + ':' + (prog ? prog.regions.length : -1);
+      if (sg === last) return; last = sg;
+      var i = prog ? selIndex(d, prog) : -1, r = i >= 0 ? prog.regions[i] : null;
+      title.textContent = r ? 'region ' + (i + 1) + ' of ' + prog.regions.length + (s.sel.length > 1 ? ' (' + s.sel.length + ' selected: edits apply to all)' : '') : 'region (none selected)';
+      Object.keys(fields).forEach(function (k) { fields[k].value = r && r[k] != null ? r[k] : ''; fields[k].disabled = !r; });
+      if (loopSel && r) loopSel.set(r.loop || 'none'); if (rev && r) rev.set(!!r.reverse);
+      clear.disabled = !r;
+    }
+    update();
+    return { el: el, update: update, fields: fields, apply: apply };
+  }
+
+  // ---- buttons: load, map, slice, export, re-detect; the status line counts import warnings
+  function buttonsPanel(api) {
+    var d = api.device, host = api.host, doc = document, el = doc.createElement('section'), row = doc.createElement('div'), status = doc.createElement('span'), warn = [];
+    el.className = 'face-section hv-prog-buttons'; el.style.flex = '1 1 100%'; row.className = 'face-controls'; el.appendChild(row);
+    status.className = 'hv-prog-status'; status.setAttribute('role', 'status');
+    function report(msg, w) { warn = w || []; status.textContent = msg + (warn.length ? ' (' + warn.length + ' warnings)' : ''); status.title = warn.join('\n'); }
+    function btn(label, fn, enabled) {
+      var b = doc.createElement('button'); b.type = 'button'; b.className = 'btn'; b.textContent = label; b.setAttribute('aria-label', label);
+      if (!enabled) b.disabled = true;
+      b.addEventListener('click', function () { try { fn(); } catch (e) { report(label + ' failed: ' + (e && e.message ? e.message : e)); } });
+      row.appendChild(b); return b;
+    }
+    function pick(accept, dir, cb) {
+      var inp = doc.createElement('input'); inp.type = 'file'; inp.multiple = true; if (accept) inp.accept = accept; if (dir) inp.setAttribute('webkitdirectory', '');
+      inp.addEventListener('change', function () { cb(inp.files ? Array.prototype.slice.call(inp.files) : []); });
+      if (inp.click) inp.click();
+    }
+    function finish(p, what) {
+      Promise.resolve(p).then(function (r) { var id = r && r.id != null ? r.id : r; if (id) assignProgram(id, d, host); report(what + ': ' + (id || 'nothing'), r && r.warnings); }, function (e) { report(what + ' failed: ' + (e && e.message ? e.message : e)); });
+    }
+    function has(fn) { return typeof host[fn] === 'function'; }
+    btn('Load SFZ…', function () {
+      pick('.sfz,audio/*,.wav,.aif,.aiff,.flac', false, function (files) {
+        var sfz = files.filter(function (f) { return /\.sfz$/i.test(f.name); })[0], map = {};
+        files.forEach(function (f) { map[f.webkitRelativePath || f.name] = f; map[f.name] = f; });
+        if (sfz) finish(host.importProgram(sfz, { files: map }), 'loaded ' + sfz.name);
+      });
+    }, has('importProgram'));
+    btn('Map folder…', function () { pick('audio/*', true, function (files) { if (files.length) finish(host.mapFiles(files, { mode: 'auto' }), 'mapped ' + files.length + ' files'); }); }, has('mapFiles'));
+    btn('Slice…', function () {
+      var prog = progOf(d, host), r = prog && prog.regions[selIndex(d, prog)], bid = (r && r.buffer) || P(d, host, 'buffer');
+      if (!bid) { report('slice: no sample selected'); return; }
+      finish(host.sliceToProgram(bid, {}), 'sliced ' + bid);
+    }, has('sliceToProgram'));
+    btn('Export SFZ…', function () {
+      host.exportProgram(d.track, { shell: root.HavantechnoShell }).then(function (r) {
+        report('exported ' + ((r && r.id) || d.track));
+        if (r && r.text && !r.path && root.Blob && root.URL && root.URL.createObjectURL && doc.body) {
+          var a = doc.createElement('a'); a.href = root.URL.createObjectURL(new root.Blob([r.text], { type: 'text/plain' })); a.download = String(r.id || d.track) + '.sfz'; doc.body.appendChild(a); if (a.click) a.click(); if (a.remove) a.remove();
+        }
+      }, function (e) { report('export failed: ' + (e && e.message ? e.message : e)); });
+    }, has('exportProgram'));
+    btn('Re-detect pitch', function () {
+      var prog = progOf(d, host), r = prog && prog.regions[selIndex(d, prog)], bid = (r && r.buffer) || P(d, host, 'buffer');
+      if (bid) Promise.resolve(host.detectPitch(bid)).then(function () { report('pitch re-detected for ' + bid); });
+    }, has('detectPitch'));
+    row.appendChild(status);
+    return { el: el, update: function () {}, report: report };
+  }
+  var PROGRAM_PANELS = [
+    { density: ['window'], build: function (a) { return zoneMap(a); } },
+    { density: ['window'], build: function (a) { return regionPanel(a); } },
+    { density: ['window'], build: function (a) { return buttonsPanel(a); } }
+  ];
 
   // ------------------------------------------------------------------ definitions
   function W(s, f, w) { return { strip: s, face: f, window: w }; }
@@ -517,7 +811,7 @@
     reverb: '<path d="M2 3v10M2 5Q6 5 14 13"/>', chorus: '<path d="M1 8c2-6 4-6 5 0s3 6 5 0 3-3 4 0"/>',
     filter: '<path d="M1 6h8Q12 6 15 14"/>', eq3: '<path d="M1 10Q4 4 8 9T15 6"/><circle cx="3" cy="8" r="1"/><circle cx="8" cy="9" r="1"/><circle cx="13" cy="7" r="1"/>',
     saturator: '<path d="M2 13C7 13 5 3 14 3"/>', widener: '<path d="M3 3Q-1 8 3 13M13 3Q17 8 13 13M8 4v8"/>',
-    channel: '<path d="M5 2v12M11 2v12M3 6h4M9 10h4"/>', sampler: '<path d="M2 8h1M4 5v6M6 3v10M8 6v4M10 2v12M12 5v6M14 7v2"/>'
+    channel: '<path d="M5 2v12M11 2v12M3 6h4M9 10h4"/>', decorrelate: '<path d="M2 12V4M5 12V7M10 12V4M13 12V7"/>', sampler: '<path d="M2 8h1M4 5v6M6 3v10M8 6v4M10 2v12M12 5v6M14 7v2"/>'
   };
 
   Faces.define('kick', { glyph: G.kick, hero: heroKick, width: W(176, 440, 560),
@@ -565,18 +859,28 @@
   Faces.define('compressor', { glyph: G.compressor, hero: heroComp, live: true, width: W(176, 420, 520), heroH: { strip: 44, face: 100, window: 200 },
     sections: [sec('threshold', ['threshold', 'ratio', 'knee']), sec('timing', ['attack', 'release']), sec('out', ['makeup'])], strip: ['threshold', 'ratio', 'makeup'] });
   Faces.define('limiter', { glyph: G.limiter, hero: heroLimiter, live: true, width: W(176, 360, 480), heroH: { strip: 44, face: 100, window: 200 },
-    sections: [sec('level', ['threshold', 'ceiling']), sec('timing', ['release'])], strip: ['threshold', 'ceiling', 'release'] });
+    sections: [sec('level', ['threshold', 'ceiling']), sec('timing', ['release']), sec('clip', ['clipOn', 'clip'])], strip: ['threshold', 'ceiling', 'release'] });
   Faces.define('sidechain', { glyph: G.sidechain, hero: heroDuck, live: true, width: W(176, 360, 480),
     sections: [sec('duck', ['depth']), sec('envelope', ['attack', 'hold', 'release', 'curve'])], strip: ['depth', 'release'] });
   Faces.define('widener', { glyph: G.widener, hero: heroWidener, live: true, width: W(176, 260, 360),
     sections: [sec('width', ['width', 'monoBelow'])], strip: ['width'] });
   Faces.define('chorus', { glyph: G.chorus, hero: heroChorus, width: W(176, 340, 460),
     sections: [sec('modulation', ['rate', 'depth']), sec('voices', ['base', 'invert']), sec('mix', ['mix'])], strip: ['rate', 'depth', 'mix'] });
-  Faces.define('sampler', { glyph: G.sampler, hero: heroSampler, heroPointer: samplerPointer, sigExtra: function (d, host) { var id = P(d, host, 'buffer'); return !!bufferOf(d, host, id) + ':' + (audioInfo(host, id) ? 1 : 0); },
-    width: W(176, 460, 620), heroH: { strip: 44, face: 90, window: 200 },
+  Faces.define('sampler', { glyph: G.sampler, hero: heroSampler, heroPointer: samplerPointer, panels: PROGRAM_PANELS,
+    live: function (d, host) { return !!(d.ref && typeof d.ref === 'object' && P(d, host, 'program')); },
+    sigExtra: function (d, host) { var id = P(d, host, 'buffer'), s = selOf(d); watch(host); return !!bufferOf(d, host, id) + ':' + (audioInfo(host, id) ? 1 : 0) + ':' + GVER + ':' + s.ver + ':' + JSON.stringify(s.sel); },
+    width: W(176, 460, 700), heroH: { strip: 44, face: 90, window: 200 },
     options: { buffer: bufferOptions, choke: ['', 'A', 'B', 'C', 'D'] },
-    sections: [sec('sample', ['buffer', 'start', 'end', 'pitch']), sec('envelope', ['attack', 'release', { p: 'loop', widget: 'toggle' }, { p: 'reverse', widget: 'toggle' }]), sec('out', ['level', 'choke'])],
-    strip: ['start', 'end', 'pitch', 'level'] });
+    sections: [
+      sec('source', [{ p: 'program', options: programOptions, write: assignProgram }, 'buffer', 'key', 'shift', 'pitch', 'fine', 'start', 'end', { p: 'reverse', widget: 'toggle' }]),
+      sec('amp', ['delay', 'attack', 'hold', 'decay', 'sustain', 'release', 'veltrack']),
+      sec('filter', ['filter', 'cutoff', 'reso', 'fEnv', 'fAttack', 'fDecay', 'fSustain', 'fRelease', 'fKey', 'fVel']),
+      sec('lfo', ['vibRate', 'vibDepth', 'vibDelay', 'lfoWave', 'lfoRate', 'lfoCutoff', 'lfoAmp']),
+      sec('voice', [{ p: 'gate', widget: 'toggle' }, 'poly', 'choke', { p: 'loop', widget: 'toggle' }, 'level'])],
+    quick: ['pitch', 'attack', 'release', 'level', 'cutoff', 'key'],
+    strip: ['pitch', 'attack', 'release', 'level'] });
+  Faces.define('decorrelate', { glyph: G.decorrelate, hero: heroDecor, width: W(176, 300, 400), heroH: { strip: 40, face: 70, window: 140 },
+    sections: [sec('delay', ['time'])], strip: ['time'] });
   Faces.define('channel', { glyph: G.channel, hero: heroChannel, live: true, width: W(176, 280, 400), heroH: { strip: 44, face: 70, window: 110 },
     labels: { gain: 'level' }, sections: [sec('level', ['gain']), sec('pan', ['pan']), sec('mute', ['mute']), { title: 'sends', match: '^send\\.' }], strip: ['gain', 'pan', 'mute'] });
 })();

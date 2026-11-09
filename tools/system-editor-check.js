@@ -68,7 +68,8 @@ sb.OfflineAudioContext = function () {
 };
 
 var used = {};
-['engine/core.js', 'engine/synths.js', 'engine/processors.js', 'engine/songdoc.js', 'engine/sequencer.js', 'engine/song.js'].forEach(load);
+
+['engine/core.js', 'engine/drums.js', 'engine/programs.js', 'engine/synths.js', 'engine/processors.js', 'engine/songdoc.js', 'engine/sequencer.js', 'engine/song.js'].forEach(load);
 
 // UI parts: real if present and loadable, fake otherwise
 function tryLoad(rel, global_) {

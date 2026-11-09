@@ -129,6 +129,7 @@
     '.se-thr{padding:0 8px;color:var(--dim,#8a8f99);font-size:10px;opacity:.7}',
     '.se-body.se-drop{outline:2px dashed var(--fam-ink,var(--on,#e6e8ec));outline-offset:-2px;background:var(--panel-raised,#1d2027)}',
     '.se-menu{position:fixed;z-index:20;min-width:200px;display:flex;flex-direction:column;padding:4px;background:var(--panel-raised,#1d2027);border:1px solid var(--line,#262a32);border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.4)}',
+    '.se-menu{max-height:70vh;overflow-y:auto}',
     '.se-menuitem{height:28px;padding:0 10px;border:0;background:transparent;color:var(--fg,#e6e8ec);font:inherit;text-align:left;cursor:pointer;border-radius:3px}',
     '.se-menuitem:hover,.se-menuitem:focus{background:var(--line,#262a32)}',
     '.se-menuitem[disabled]{opacity:.4;cursor:default}',
@@ -698,7 +699,7 @@
       return o;
     }
     // audio items [{file, rel}]: a folder map {relativePath: File} when any path has a folder, else a plain file list
-    function addKit(audio, rootName) {
+    function addMappedKit(audio, rootName) {
       if (!isFn(host.addSampler)) { setStatus('This host cannot add sampler tracks.'); return Promise.resolve(null); }
       var nested = audio.some(function (a) { return String(a.rel).indexOf('/') >= 0; }), src, k;
       if (nested) { src = {}; audio.forEach(function (a) { src[a.rel] = a.file; }); } else src = audio.map(function (a) { return a.file; });
@@ -728,7 +729,7 @@
       if (!audio.length) { setStatus('No audio files in that drop.'); return; }
       if (audio.length < items.length) setStatus('Skipped ' + (items.length - audio.length) + ' file(s) that are not audio.');
       if (audio.length === 1 && !rootName) { addFiles([audio[0].file]); return; }       // one file: a plain sampler, as before
-      enqueue(function () { return addKit(audio, rootName); });
+      enqueue(function () { return addMappedKit(audio, rootName); });
     }
     function readAllEntries(reader) {
       return new Promise(function (resolve) {
@@ -779,6 +780,39 @@
         handleItems(items, rootName);
       }, function (err) { setStatus('Could not pick files: ' + ((err && err.message) || err)); });
     }
+    // ---- drum machines (Drums, engine/drums.js): a kit = one track per core voice, one undo step; or a single voice
+    var KITS = {
+      '808': ['bd', 'sd', 'cp', 'ch', 'oh', 'cb', 'lt', 'mt', 'ht'],
+      '909': ['bd', 'sd', 'cp', 'ch', 'oh', 'lt', 'mt', 'ht', 'rs', 'cr', 'rd']
+    };
+    var VOICE_NAMES = { bd: 'Bass drum', sd: 'Snare', cp: 'Clap', ch: 'Closed hat', oh: 'Open hat', cy: 'Cymbal', cb: 'Cowbell', lt: 'Low tom', mt: 'Mid tom', ht: 'High tom',
+                        lc: 'Low conga', mc: 'Mid conga', hc: 'High conga', rs: 'Rim shot', cl: 'Claves', ma: 'Maracas', cr: 'Crash', rd: 'Ride' };
+    function voiceLabel(t) { var m = /^([a-z]{2})(808|909)$/.exec(t); return t + ' · ' + (m && VOICE_NAMES[m[1]] ? VOICE_NAMES[m[1]] + ' ' + m[2] : t); }
+    function drumTypes() { var D = root.Drums; return D && isFn(D.types) ? D.types() : []; }
+    function addDrumTracks(types, label) {
+      var ed = host.editor();
+      if (!ed || !isFn(ed.addTrack)) { setStatus('This host cannot add tracks.'); return []; }
+      var have = drumTypes(), added = [];
+      types = types.filter(function (t) { return have.indexOf(t) >= 0; });
+      if (!types.length) { setStatus('No drum voices available.'); return []; }
+      var run = function (e) {
+        types.forEach(function (t) {
+          var name = t, n = 2;
+          while (e.track(name) || name === 'send' || name === 'master') name = t + '_' + (n++);
+          if (e.addTrack({ name: name, type: t, inst: t, family: 'drums', gain: 0.8, variants: { A: EMPTY_PATTERN } })) added.push(name);
+        });
+      };
+      if (isFn(ed.group)) ed.group(run); else run(ed);
+      if (!added.length) return added;
+      host.commit();
+      setStatus('Added ' + label + ' (' + added.length + ' track' + (added.length === 1 ? '' : 's') + ').');
+      if (!disposed) select(added[0]);
+      return added;
+    }
+    function addKit(which) { return addDrumTracks(KITS[which].map(function (v) { return v + which; }), 'TR-' + which + ' kit'); }
+    function voiceMenuItems() {
+      return drumTypes().map(function (t) { return { label: voiceLabel(t), run: function () { addDrumTracks([t], t); } }; });
+    }
     function pickSampler() {
       var P = root.Project;
       if (!P || !isFn(P.pickAudio)) { setStatus('No file picker available.'); return Promise.resolve(); }
@@ -812,7 +846,12 @@
       items.forEach(function (it) {
         var b = make('button', 'se-menuitem', it.label); attr(b, 'role', 'menuitem'); attr(b, 'type', 'button');
         if (it.disabled) { attr(b, 'disabled', ''); b.disabled = true; }
-        on(b, 'click', function (e) { if (e && e.stopPropagation) e.stopPropagation(); if (it.disabled) return; closeMenu(); it.run(); });
+        on(b, 'click', function (e) {
+          if (e && e.stopPropagation) e.stopPropagation();
+          if (it.disabled) return;
+          if (it.keepOpen) { var bt = S.menuBtn; openMenu(voiceMenuItems(), x, y, bt); return; }    // the "Drum voice..." submenu
+          closeMenu(); it.run();
+        });
         m.appendChild(b);
       });
       rootEl.appendChild(m);
@@ -832,6 +871,9 @@
       return [
         { label: 'Sampler track from file\u2026', run: pickSampler },
         { label: 'Sampler track from folder\u2026', run: function () { pickProgramSource({ directory: true }); } },
+        { label: 'TR-808 kit', disabled: !drumTypes().length, run: function () { addKit('808'); } },
+        { label: 'TR-909 kit', disabled: !drumTypes().length, run: function () { addKit('909'); } },
+        { label: 'Drum voice\u2026', disabled: !drumTypes().length, keepOpen: true },
         { label: 'Import SFZ\u2026', run: function () { pickProgramSource({ accept: '.sfz,audio/*,' + ['wav', 'mp3', 'ogg', 'flac', 'aif', 'aiff'].map(function (e) { return '.' + e; }).join(',') }); } },
         { label: sel && isSampler(sel) ? 'Remove track \u201c' + sel + '\u201d' : 'Remove track (select a sampler row)', disabled: !(sel && isSampler(sel)), run: function () { removeSampler(sel); } }
       ];

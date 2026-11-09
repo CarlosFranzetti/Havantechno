@@ -81,12 +81,12 @@ var created = [];
 });
 
 var TYPES = ['kick', 'sub', 'bass', 'stab', 'clap', 'hat_closed', 'hat_open', 'shaker', 'perc', 'lead', 'pad', 'riser', 'impact',
-  'filter', 'saturator', 'delay', 'reverb', 'eq3', 'compressor', 'limiter', 'sidechain', 'widener', 'chorus', 'channel', 'sampler'];
+  'filter', 'saturator', 'delay', 'reverb', 'eq3', 'compressor', 'limiter', 'sidechain', 'widener', 'chorus', 'channel', 'sampler', 'decorrelate'];
 var DENS = ['chip', 'strip', 'face', 'window'];
-eq(TYPES.length, 25, 'type list is 14 instruments + 10 processors + channel');
+eq(TYPES.length, 26, 'type list is 14 instruments + 11 processor types + channel');
 TYPES.forEach(function (t) { check(Faces.has(t), 'Faces.has(' + t + ')'); });
 check(!Faces.has('nonesuch'), 'Faces.has is false for an unknown type');
-eq(Faces.types().length, 25, 'exactly 25 definitions (14 instruments, 10 processor types, channel)');
+eq(Faces.types().length, 26, 'exactly 26 definitions (14 instruments, 11 processor types, channel)');
 
 // ---------------------------------------------------------------- host, with a spy on the writes
 var host = global.Host.create();
@@ -128,7 +128,7 @@ TYPES.forEach(function (t) {
       check(heroOps(f.el) === 0, id + ' draws no hero');
       f.dispose(); return;
     }
-    check(all(f.el, function (x) { return x.tagName === 'canvas'; }).length === 1, id + ' has one hero canvas');
+    eq(all(f.el, function (x) { return x.tagName === 'canvas'; }).length, (t === 'sampler' && dens === 'window') ? 2 : 1, id + ' hero canvas count (the sampler window adds the zone map)');
     check(heroOps(f.el) > 8, id + ' hero painted (' + heroOps(f.el) + ' canvas ops)');
     heroCount++;
     eq(all(f.el, function (x) { return /hv-head/.test(x.className); }).length, dens === 'window' ? 0 : 1, id + (dens === 'window' ? ' has no head (the window owns the title bar)' : ' has one .hv-head'));
@@ -144,10 +144,10 @@ TYPES.forEach(function (t) {
       eq(f.error(), null, id + ' hero draws after resize');
     }
     eq(f.el.getAttribute('data-density'), dens, id + ' data-density');
-    var want = dens === 'strip' ? layout.strip.length : renderable(d.spec).length;
+    var want = dens === 'strip' ? layout.strip.length : (dens === 'face' && layout.quick) ? layout.quick.length : renderable(d.spec).length + ((t === 'sampler' && dens === 'window') ? 2 : 0);   // the region panel adds loop and reverse
     if (dens === 'strip') want = layout.strip.filter(function (p) { return d.spec[p]; }).length;
     eq(created.length, want, id + ' control count');
-    if (dens !== 'strip') {
+    if (dens !== 'strip' && t !== 'sampler') {
       var labels = created.map(function (c) { return c.opts.label; });
       eq(labels.filter(function (l, i) { return labels.indexOf(l) !== i; }).length, 0, id + ' no control twice');
     }
@@ -350,6 +350,7 @@ devices.forEach(function (d) {
   eq(f.error(), null, 'sampler hero draws a waveform');
   check(heroOps(f.el) > 400, 'sampler hero painted the peaks (' + heroOps(f.el) + ' ops)');
   var flags = created.filter(function (c) { return c.opts.label === 'loop' || c.opts.label === 'reverse'; });
+  flags = [flags.filter(function (c) { return c.opts.label === 'loop'; }).pop(), flags.filter(function (c) { return c.opts.label === 'reverse'; }).pop()];
   check(flags.length === 2 && flags.every(function (c) { return c.kind === 'toggle'; }), 'loop and reverse are toggles');
   var sel = created.filter(function (c) { return c.kind === 'select'; }).map(function (c) { return c.opts.label + ':' + c.opts.options.length; });
   check(sel.indexOf('buffer:3') >= 0 && sel.indexOf('choke:5') >= 0, 'buffer select lists none + the 2 loaded sources, choke has its groups (' + sel.join(' ') + ')');
