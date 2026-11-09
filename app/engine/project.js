@@ -11,6 +11,7 @@
  * the shell hooks are called only when present: saveFile, openFile, appDataPath, writeAppData, readAppData.
  * Audio files (sampler) are referenced in doc.audio, never embedded: Project.open({shell, host}) loads the song into the
  * Host and waits while it reloads them (HavantechnoShell.readFile for paths, fetch for URLs); unreadable ones are missing.
+ * Sampler programs (doc.programs) reload with their region samples; Project.missing(host) lists what is still missing.
  */
 (function () {
   'use strict';
@@ -156,6 +157,18 @@
     try { return webPick('audio/*,' + AUDIO_EXT.map(function (e) { return '.' + e; }).join(','), true); } catch (e) { return Promise.reject(e); }
   }
 
+  // what a loaded project could not find (batch 1): audio entries without a buffer, with who uses them, and the programs
+  // with silent regions. Programs reload with the project through their region samples, which are doc.audio entries.
+  function missing(host) {
+    var out = { audio: [], programs: [] };
+    if (!host) return out;
+    try {
+      (host.audio ? host.audio() : []).forEach(function (a) { if (a.missing) out.audio.push({ id: a.id, name: a.name, src: a.src, usedBy: a.usedBy }); });
+      (host.programs ? host.programs() : []).forEach(function (p) { if (p.missing) out.programs.push({ id: p.id, name: p.name, missing: p.missing, regions: p.regions }); });
+    } catch (e) {}
+    return out;
+  }
+
   // ------------------------------------------------------------ autosave
   // Synchronous to localStorage (web and Electron alike, so restore() can be synchronous); in Electron also mirrored
   // to the app-data folder when the shell offers writeAppData(fileName, text).
@@ -194,7 +207,7 @@
     try { return asPromise(sh.appDataPath()).then(function (p) { return p || null; }, function () { return null; }); } catch (e) { return Promise.resolve(null); }
   }
 
-  root.Project = { serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, autosave: autosave, restore: restore,
+  root.Project = { serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, missing: missing, autosave: autosave, restore: restore,
                    restoreAsync: restoreAsync, clearAutosave: clearAutosave, appDataPath: appDataPath, fileName: fileName,
                    EXT: EXT, AUTOSAVE_KEY: AUTOSAVE_KEY, FORMAT: FORMAT };
 })();

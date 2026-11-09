@@ -17,7 +17,7 @@
 
   var root = (typeof window !== 'undefined') ? window : (typeof globalThis !== 'undefined' ? globalThis : this);
   var K = root.Kit;
-  var setV = K.setV, lin = K.lin, expo = K.expo, val = K.val, disc = K.disc, mtof = K.mtof, clamp = K.clamp;
+  var setV = K.setV, lin = K.lin, expo = K.expo, val = K.val, disc = K.disc, mtof = K.mtof, clamp = K.clamp, target = K.target;
 
   // ------------------------------------------------------------ voice: node bag with auto cleanup
   function voice(ctx, inst) {
@@ -648,12 +648,150 @@
     lin(g, 0.0001, Math.max(end, rs + 0.001));
   }
 
+  // ------------------------------------------------------------ sampler programs (B1: two paths, one instrument)
+  // The program path plays regions of a sampler program (app/engine/programs.js). The single-buffer path above is unchanged.
+  // Envelope stages (B1 section 14, sfzformat.com): attack is linear; decay and release are linear in dB. The decay rate is
+  // DB_FLOOR dB per `decay` seconds and stops at the sustain level; the release falls DB_FLOOR dB in `release` seconds.
+  // DB_FLOOR (-90 dB) is an assumption, kept as one named constant.
+  var DB_FLOOR = 90;
+  function dbToAmp(db) { return Math.pow(10, db / 20); }
+  // level at dt after the note start (the same formulas the scheduled automation follows)
+  function adsrLevel(e, dt, base, peak) {
+    var d = e.delay || 0, a = Math.max(e.attack || 0, 0.0005), h = e.hold || 0, dc = Math.max(e.decay || 0.001, 0.001);
+    var sus = e.sustain == null ? 1 : e.sustain;
+    if (dt < d) return base;
+    if (dt < d + a) return base + (peak - base) * (dt - d) / a;
+    if (dt < d + a + h) return peak;
+    var x = dt - (d + a + h), susDb = sus > 0 ? Math.max(-DB_FLOOR, 20 * Math.log(sus) / Math.LN10) : -DB_FLOOR;
+    return Math.max(base, peak * dbToAmp(Math.max(susDb, -DB_FLOOR * x / dc)));
+  }
+  // the decay ends at the sustain level: the time it takes the line to reach that level
+  function decayEnd(e) {
+    var sus = e.sustain == null ? 1 : e.sustain, dc = Math.max(e.decay || 0.001, 0.001);
+    if (sus >= 1) return 0;
+    var susDb = sus > 0 ? Math.max(-DB_FLOOR, 20 * Math.log(sus) / Math.LN10) : -DB_FLOOR;
+    return dc * (-susDb / DB_FLOOR);
+  }
+  // a voice model m: {env, base, peak, t0, relAt, rel, lvlRel, p (the AudioParam), srcs, tEnd}
+  function voiceLevel(m, t) {
+    if (m.relAt == null || t < m.relAt) return adsrLevel(m.env, t - m.t0, m.base, m.peak);
+    var r = Math.max(m.rel, 0.001);
+    return Math.max(m.base, m.lvlRel * dbToAmp(-DB_FLOOR * (t - m.relAt) / r));
+  }
+  // attack, hold, decay, and the release at relAt, on the amp (exponential ramps are linear in dB)
+  function schedADSR(p, m, relAt) {
+    var e = m.env, t0 = m.t0, base = m.base, peak = m.peak, d = e.delay || 0, a = Math.max(e.attack || 0, 0.0005), h = e.hold || 0;
+    setV(p, base, t0);
+    if (d > 0) setV(p, base, t0 + d);
+    lin(p, peak, t0 + d + a);
+    var s = t0 + d + a + h;
+    if (h > 0) setV(p, peak, t0 + d + a + h);
+    var tEnd = decayEnd(e);
+    if (tEnd > 0) {
+      var sus = e.sustain == null ? 1 : e.sustain, susLvl = Math.max(base, peak * sus);
+      try { p.exponentialRampToValueAtTime(Math.max(susLvl, base), s + tEnd); } catch (ex) { lin(p, susLvl, s + tEnd); }
+    }
+    if (relAt != null) {
+      relAt = Math.max(relAt, s + tEnd);
+      m.relAt = relAt; m.lvlRel = adsrLevel(e, relAt - t0, base, peak);
+      setV(p, m.lvlRel, relAt);
+      try { p.exponentialRampToValueAtTime(base, relAt + Math.max(m.rel, 0.001)); } catch (ex) { lin(p, base, relAt + Math.max(m.rel, 0.001)); }
+    }
+  }
+  // the filter envelope in cents (linear: a cents offset has no dB reading): attack, decay to sustain, release
+  function schedLinEnv(p, m, relAt, env, peakCt) {
+    var d = env.delay || 0, a = Math.max(env.attack || 0, 0.0005), dc = Math.max(env.decay || 0.001, 0.001);
+    var sus = env.sustain == null ? 0 : env.sustain, t0 = m.t0;
+    setV(p, 0, t0); if (d > 0) setV(p, 0, t0 + d);
+    lin(p, peakCt, t0 + d + a);
+    lin(p, peakCt * sus, t0 + d + a + dc);
+    if (relAt != null) { relAt = Math.max(relAt, t0 + d + a + dc); setV(p, peakCt * sus, relAt); lin(p, 0, relAt + Math.max(env.release || 0.001, 0.001)); }
+  }
+  // a fast fade (ms) that ends the voice from its level at t (the choke and steal path)
+  function fadeVoice(m, t, ms) {
+    var lvl = voiceLevel(m, t), f = Math.max(ms, 0.5) / 1000;
+    try { m.p.cancelScheduledValues(t); } catch (e) {}
+    setV(m.p, lvl, t); lin(m.p, 0.0001, t + f);
+    m.relAt = t; m.lvlRel = lvl; m.rel = 0.001; m.tEnd = t + f;
+    for (var i = 0; i < m.srcs.length; i++) { try { m.srcs[i].stop(t + f + 0.001); } catch (e) {} }
+  }
+  // the 'normal' off mode: the voice's own release from its level at t
+  function releaseVoice(m, t) {
+    var lvl = voiceLevel(m, t), r = Math.max(m.rel, 0.001);
+    try { m.p.cancelScheduledValues(t); } catch (e) {}
+    setV(m.p, lvl, t); try { m.p.exponentialRampToValueAtTime(m.base, t + r); } catch (e) { lin(m.p, m.base, t + r); }
+    m.relAt = t; m.lvlRel = lvl; m.tEnd = t + r + 0.03;
+    for (var i = 0; i < m.srcs.length; i++) { try { m.srcs[i].stop(m.tEnd); } catch (e) {} }
+  }
+  // reversed and loop-baked copies of an AudioBuffer, cached per buffer (never saved)
+  var DERIVED = (typeof WeakMap === 'function') ? new WeakMap() : null;
+  function derived(buf, key, make) {
+    if (!DERIVED || !buf) return make();
+    var m = DERIVED.get(buf);
+    if (!m) { m = {}; DERIVED.set(buf, m); }
+    if (!m[key]) m[key] = make();
+    return m[key];
+  }
+  function reversedBuffer(ctx, buf) {
+    return derived(buf, 'rev', function () {
+      var ch = buf.numberOfChannels, out = ctx.createBuffer(ch, buf.length, buf.sampleRate), c, i;
+      for (c = 0; c < ch; c++) {
+        var s = buf.getChannelData(c), d = out.getChannelData(c), n = s.length;
+        for (i = 0; i < n; i++) d[i] = s[n - 1 - i];
+      }
+      return out;
+    });
+  }
+  // the loop seam blended: the xf frames before le are mixed with the xf frames before ls (equal power by default)
+  function bakeLoop(ctx, buf, ls, le, xf, curve) {
+    ls = Math.floor(ls); le = Math.floor(le);
+    xf = Math.floor(Math.min(xf, ls, le - ls));
+    if (!(xf > 0)) return buf;
+    return derived(buf, 'loop:' + ls + ':' + le + ':' + xf + ':' + curve, function () {
+      var ch = buf.numberOfChannels, out = ctx.createBuffer(ch, buf.length, buf.sampleRate), c, i;
+      for (c = 0; c < ch; c++) {
+        var s = buf.getChannelData(c), d = out.getChannelData(c);
+        d.set(s);
+        for (i = 0; i < xf; i++) {
+          var a = (i + 0.5) / xf, pre = s[ls - xf + i], inn = s[le - xf + i];
+          var wi = curve === 'linear' ? 1 - a : Math.cos(a * Math.PI / 2), wp = curve === 'linear' ? a : Math.sin(a * Math.PI / 2);
+          d[le - xf + i] = inn * wi + pre * wp;
+        }
+      }
+      return out;
+    });
+  }
+  function mulberry(seed) {
+    var s = seed | 0;
+    return function () {
+      s = (s + 0x6D2B79F5) | 0;
+      var t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function rf(r, k, d) { return (r && r[k] !== undefined && r[k] !== null) ? r[k] : d; }
+
   BUILD.sampler = {
     spec: { buffer: { value: '' }, start: { min: 0, max: 1, value: 0 }, end: { min: 0, max: 1, value: 0 },
             pitch: { min: -24, max: 24, value: 0, unit: 'st' },
-            attack: { min: 0.0005, max: 1, value: 0.002, unit: 's' }, release: { min: 0.001, max: 2, value: 0.02, unit: 's' },
+            attack: { min: 0.0005, max: 10, value: 0.002, unit: 's' }, release: { min: 0.001, max: 20, value: 0.02, unit: 's' },
             loop: { min: 0, max: 1, value: 0 }, choke: { value: '' }, reverse: { min: 0, max: 1, value: 0 },
-            level: { min: 0, max: 1.5, value: 1 } },
+            level: { min: 0, max: 1.5, value: 1 },
+            // program path (B1 section 5.7)
+            program: { value: '' }, key: { min: 0, max: 127, value: 60 }, shift: { min: -48, max: 48, value: 0, unit: 'st' },
+            fine: { min: -100, max: 100, value: 0, unit: 'ct' }, gate: { min: 0, max: 1, value: 0 },
+            delay: { min: 0, max: 10, value: 0, unit: 's' }, hold: { min: 0, max: 10, value: 0, unit: 's' },
+            decay: { min: 0.001, max: 20, value: 1, unit: 's' }, sustain: { min: 0, max: 1, value: 1 },
+            veltrack: { min: -1, max: 1, value: 1 }, filter: { value: 'off' }, cutoff: { min: 20, max: 20000, value: 20000, unit: 'Hz' },
+            reso: { min: 0, max: 24, value: 0, unit: 'dB' }, fEnv: { min: -9600, max: 9600, value: 0, unit: 'ct' },
+            fAttack: { min: 0.0005, max: 10, value: 0.002, unit: 's' }, fDecay: { min: 0.001, max: 20, value: 0.5, unit: 's' },
+            fSustain: { min: 0, max: 1, value: 0 }, fRelease: { min: 0.001, max: 20, value: 0.1, unit: 's' },
+            fKey: { min: 0, max: 1200, value: 0, unit: 'ct' }, fVel: { min: -9600, max: 9600, value: 0, unit: 'ct' },
+            vibRate: { min: 0.05, max: 20, value: 5, unit: 'Hz' }, vibDepth: { min: 0, max: 1200, value: 0, unit: 'ct' },
+            vibDelay: { min: 0, max: 10, value: 0, unit: 's' }, lfoWave: { value: 'triangle' },
+            lfoRate: { min: 0.05, max: 40, value: 2, unit: 'Hz' }, lfoCutoff: { min: 0, max: 9600, value: 0, unit: 'ct' },
+            lfoAmp: { min: 0, max: 1, value: 0 }, poly: { min: 1, max: 64, value: 32 } },
     build: function (inst) {
       var ctx = inst.ctx, P = inst.params;
       inst.trigger = function (t, ev) {
