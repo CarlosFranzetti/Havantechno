@@ -501,6 +501,16 @@
     host.isBypassed = function (id) { var d = host.device(id); return !!(d && d.ref && d.ref._bypassed); };
     host.mute = function (track, b) { var r = seq.mute(track, b); if (r !== undefined) emit('param', { path: track + '.mute', value: r, source: 'ui' }); return r; };
     host.solo = function (track, b) { var r = seq.solo(track, b); if (r !== undefined) emit('param', { path: track + '.solo', value: r, source: 'ui' }); return r; };
+    // play one note on a track's live instrument now (a panel keyboard): no document change, no undo entry.
+    // o: {midi, vel, dur}. False when audio has not started or the track is unknown.
+    host.audition = function (track, o) {
+      var tr = seq && seq.tracks ? seq.tracks[track] : null;
+      if (!live || !ctx || !tr || !tr.inst || typeof tr.inst.trigger !== 'function') return false;
+      o = o || {};
+      var ev = { midi: typeof o.midi === 'number' ? o.midi : 48, vel: typeof o.vel === 'number' ? o.vel : 0.85, dur: typeof o.dur === 'number' && o.dur > 0 ? o.dur : 0.25 };
+      try { tr.inst.trigger(ctx.currentTime, ev); } catch (e) { return false; }
+      return true;
+    };
 
 
     // ---------------------------------------------------------- audio files (sampler)
