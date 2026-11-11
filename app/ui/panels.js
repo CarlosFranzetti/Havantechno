@@ -198,7 +198,7 @@
         }
         c.sc = scaleOf(c.entry);
         var prior = !!(c.entry && c.entry.basis === 'prior');
-        if (prior && !c.ring) { c.ring = sv('circle', { 'class': 'pn-prior', r: c.r + 3, 'data-basis': 'prior' }, g); if (g.firstChild) g.insertBefore(c.ring, c.art); }
+        if (prior && !c.ring) { c.ring = sv('circle', o.hit ? { 'class': 'pn-prior', r: 4.5, cx: 0, cy: -o.hit.h / 2 - 4, 'data-basis': 'prior' } : { 'class': 'pn-prior', r: c.r + 3, 'data-basis': 'prior' }, g); if (g.firstChild) g.insertBefore(c.ring, c.art); }
         if (c.ring) c.ring.setAttribute('display', prior ? 'inline' : 'none');
         g.setAttribute('aria-disabled', c.disabled ? 'true' : 'false');
         g.setAttribute('tabindex', c.disabled ? '-1' : '0');

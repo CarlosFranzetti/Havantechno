@@ -87,3 +87,13 @@ The coordinator's own Chromium render (scratchpad classicsdemo.js): all three re
 Open, from P5's list: unison has no detune; bend is stored and does nothing; the filter is not oversampled; the chorus has no delay-line noise or filtering; no comparison with a real Juno; a full 200-bar render with juno tracks not timed. P4 asked to switch HVT-106 from its stub to Classics.spec('juno'), open it in a real device window and wire the keyboards to Host.audition.
 
 Render Room republished (version 8): an HVT-106 chord demo, and the 303 and Model D demos re-rendered at the new levels with no extra attenuation.
+
+## 2026-11-11 13:54 EST (18:54 UTC) — P4 task 3 verified: HVT-106 on the engine's spec, panel keyboards, menu stacking
+
+Run here, exit codes read directly: panels-check OK: 116; classics 110; selfcheck 395; faces 2495; system-editor 97; widgets 157; step-view 72; synths 169; browser-check PASS (26). The coordinator looked at the new docs/screenshots/panel-106.png, now a real device window on a juno track: section strips, sliders, lamp buttons, bend dimmed, a keyboard strip under the wordmark, the status line reading "pulse true".
+
+P4: HVT-106 reads Classics.spec('juno') (the stub survives only in panels-check for a context without Classics); a shared keyboard in panels.js calls Host.audition (44 keys on HVT-D, C2 to C6 on HVT-106, Shift-click a major triad); app.js forwards audition to child windows; a prior ring drawn as a huge circle on faders fixed. P4's Chromium run (values reaching the engine through host.getParam, audition returning true) was not repeated by the coordinator.
+
+P4 reported that an open device window could cover the "+ track" menu. Cause: the menu sat at z-index 20 and each window focus raises a window's z-index by one from 10. Coordinator's edit in system-editor.js: the menu's z-index is 100000. Checked in the app page: with a device window placed under the button, all ten menu items are the top element at their own position; system-editor-check 97.
+
+Not verified: hearing an auditioned note (headless); the keyboards in an Electron child window; keyboard (Tab) access to the audition keys, which are pointer only.
