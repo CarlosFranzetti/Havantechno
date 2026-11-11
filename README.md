@@ -24,6 +24,25 @@ research in `docs/research/` (see **Roundtable** below).
 
 ![A TR-808 kit added from the track menu, with the bass drum's window open; dotted rings mark controls whose values are still priors](docs/screenshots/app-808-kit.png)
 
+### Instruments with hardware-style panels (November 2026)
+
+The app now has its own recreations of five classic instruments, each opening in a floating window drawn after the
+hardware (Havantechno's mark and model names only): the **HVT-808** and **HVT-909** drum machines (27 synthesized
+voices fitted to the service manuals' tables), the **HVT-303** bass line synth, the **HVT-D** three-oscillator mono
+synth and the **HVT-106** six-voice poly synth with chorus. The three synths run as AudioWorklet instruments. Add
+them from "+ track" in the System Editor. Nobody has yet compared any of them with a real machine by ear; what was
+measured and what is still a guess is in `docs/research/2026-11-11-patch-crew/` and `2026-11-09-box-crew/`.
+
+![The HVT-808 machine panel: voice columns, step keys for the selected voice, tempo](docs/screenshots/panel-808.png)
+
+![The HVT-909 machine panel](docs/screenshots/panel-909.png)
+
+![The HVT-303: knob row, sixteen steps with note, accent and slide, a one-octave note row](docs/screenshots/panel-303.png)
+
+![The HVT-D: controllers, oscillator bank, mixer, modifiers, output, keyboard](docs/screenshots/panel-d.png)
+
+![The HVT-106 slider panel](docs/screenshots/panel-106.png)
+
 The archived studio, for comparison:
 
 ![The studio playing a section](docs/screenshots/studio-playing.png)
