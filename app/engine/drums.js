@@ -31,6 +31,9 @@
   var K = root.Kit;
   var setV = K.setV, lin = K.lin, val = K.val, disc = K.disc, clamp = K.clamp, target = K.target, dbToGain = K.dbToGain;
 
+  // Envelope stretch factors from A9's scoring (the measure is peak -> 1/10 of peak on the rendered sum of bands/stages):
+  // the multi-band voices decay to 1/10 sooner than their slowest band's own constant, so the bands are lengthened to land on the table.
+  var STRETCH = { hat: 1.48, cy: 1.36, cb: 2.2, cp: 1.7 };
   var LN10 = 2.302585;                         // ln(10): seconds-to-1/10 (the manual's decay definition) -> exponential time constant
   function tcOf(t10) { return Math.max(t10, 0.0005) / LN10; }
 
@@ -372,7 +375,7 @@
     var ctx = inst.ctx, p = inst.params, a = o.nine ? ampOf9(ev) : ampOf(ev, inst), v = voice(ctx, inst);
     var sp = p[o.spacingKey], nb = Math.max(1, Math.round(p.bursts)), btc = p.burstDecay;
     if (o.gate) nb = Math.min(nb, Math.floor(o.gate / sp + 1e-9) + 1);       // the pulse generator only runs while the gate is on
-    var tcT = tcOf(p.decay), tLast = t + (nb - 1) * sp, end = tLast + Math.max(btc * 9, p.decay * 4) + 0.05;
+    var tcT = tcOf(p.decay * (o.nine ? 1 : STRETCH.cp)), tLast = t + (nb - 1) * sp, end = tLast + Math.max(btc * 9, p.decay * 5.5) + 0.05;
     var n = v.noise(t, end);
     if (!n) return;
     var bp = v.filter('bandpass', p.tone, p.q), gB = v.gain(0), gT = v.gain(0), out = v.gain(1);
@@ -423,13 +426,13 @@
       build: function (inst) {
         var ctx = inst.ctx;
         inst.trigger = function (t, ev) {
-          var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), end = t + p.decay * 4 + 0.1;
+          var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), end = t + p.decay * STRETCH.hat * 4 + 0.1;
           var sum = metalSum(v, t, end, p.tune, p.spread);
           var bp1 = v.filter('bandpass', METAL.bp[0], 1), bp2 = v.filter('bandpass', METAL.bp[1], 1);
           var gA = v.gain(0), gB = v.gain(0), hp = v.filter('highpass', p.hp, 1.5), mix = v.gain(1);
           // two bands with separate decays (the cymbal paper's idea; 0.6 for the upper band is a prior)
-          expEnv(gA.gain, t, a * 1.6, 0, tcOf(p.decay));
-          expEnv(gB.gain, t, a * 1.6, 0, tcOf(p.decay * 0.6));
+          expEnv(gA.gain, t, a * 1.6, 0, tcOf(p.decay * STRETCH.hat));
+          expEnv(gB.gain, t, a * 1.6, 0, tcOf(p.decay * 0.6 * STRETCH.hat));
           con(sum, bp1); con(sum, bp2); con(bp1, gA); con(bp2, gB); con(gA, mix); con(gB, mix);
           con(mix, hp);
           con(hp, outOf(v, inst, 'hat808', t));
@@ -451,13 +454,13 @@
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
-        var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), end = t + p.decay * 4 + 0.1;
+        var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), end = t + p.decay * STRETCH.cy * 4 + 0.1;
         var sum = metalSum(v, t, end, p.tune, p.spread), mix = v.gain(1);
         var bands = [[v.filter('bandpass', METAL.bp[0], 1), 1, 1], [v.filter('bandpass', METAL.bp[1], 1), 0.57, 1],
                      [v.filter('highpass', METAL.hp, 1.5), 0.21, 0.15 + 0.85 * p.tone]];
         for (var i = 0; i < bands.length; i++) {
           var g = v.gain(0);
-          expEnv(g.gain, t, a * 0.95 * bands[i][2], 0, tcOf(p.decay * bands[i][1]));
+          expEnv(g.gain, t, a * 0.95 * bands[i][2], 0, tcOf(p.decay * bands[i][1] * STRETCH.cy));
           con(sum, bands[i][0]); con(bands[i][0], g); con(g, mix);
         }
         con(mix, outOf(v, inst, null, t));
@@ -476,11 +479,11 @@
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
-        var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), end = t + Math.max(p.decay, p.fast) * 4 + 0.1;
+        var p = inst.params, a = ampOf(ev, inst), v = voice(ctx, inst), end = t + Math.max(p.decay * STRETCH.cb, p.fast) * 4 + 0.1;
         var sum = metalSum(v, t, end, p.tune, 0, bankOf(ctx).cowbell);
         var bp = v.filter('bandpass', p.tone, 1), gF = v.gain(0), gL = v.gain(0), mix = v.gain(1);
         expEnv(gF.gain, t, a * 2.0 * 0.75, 0, tcOf(p.fast));
-        expEnv(gL.gain, t, a * 2.0 * 0.25, 0, tcOf(p.decay));
+        expEnv(gL.gain, t, a * 2.0 * 0.25, 0, tcOf(p.decay * STRETCH.cb));
         con(sum, bp); con(bp, gF); con(bp, gL); con(gF, mix); con(gL, mix);
         con(mix, outOf(v, inst, null, t));
       };

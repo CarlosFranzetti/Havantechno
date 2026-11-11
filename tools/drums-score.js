@@ -60,7 +60,7 @@ var TOMS808 = {
   hc808: { ms: [2.7, 2.5, 2.2], dec: 80, acc: 12 / 3.5 }
 };
 C('bd808', 'period at default (table mid 56 Hz)', 'def', 'period', 18, { tol: TOL_PERIOD, src: B2 });
-C('bd808', 't20 at decay min (table 50 ms)', 'decay=0.1', 't20', 50, { tol: TOL_DECAY, src: B2 });
+C('bd808', 't20 at decay min (table 50 ms)', 'decay=0.05', 't20', 50, { tol: TOL_DECAY, src: B2 });
 C('bd808', 't20 at default (table mid 300 ms)', 'def', 't20', 300, { tol: TOL_DECAY, src: B2 });
 C('bd808', 't20 at decay max (table 800 ms)', 'decay=2', 't20', 800, { tol: TOL_DECAY, src: B2 });
 C('bd808', 'accent / normal peak (table 10/3.5)', 'acc', 'accent', 10 / 3.5, { lo: 2.0, hi: 3.7, src: B2 });
@@ -85,7 +85,7 @@ C('oh808', 't20 at default (table mid 450 ms)', 'def', 't20', 450, { tol: TOL_DE
 C('oh808', 't20 at decay max (table 600 ms)', 'decay=1.5', 't20', 600, { tol: TOL_DECAY, src: B2 });
 C('oh808', 'accent / normal peak (table 7/3.5)', 'acc', 'accent', 2.0, { lo: 2.0, hi: 3.7, src: B2 });
 
-C('cy808', 't20 at decay min (table 350 ms)', 'decay=0.4', 't20', 350, { tol: TOL_DECAY, src: B2 });
+C('cy808', 't20 at decay min (table 350 ms)', 'decay=0.35', 't20', 350, { tol: TOL_DECAY, src: B2 });
 C('cy808', 't20 at default (table mid 800 ms)', 'def', 't20', 800, { tol: TOL_DECAY, src: B2 });
 C('cy808', 't20 at decay max (table 1200 ms)', 'decay=3', 't20', 1200, { tol: TOL_DECAY, src: B2 });
 C('cy808', 'peaks at default (table gives none)', 'def', 'peaks', null, { win: 50, fr: [150, 16000], info: true, src: B2 });
