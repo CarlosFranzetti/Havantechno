@@ -102,3 +102,8 @@ Earlier:
 - Work proceeds in batches: sampler, then 808/909, then classification, then import and A/B (docs/plans/2026-11-09-roadmap.md).
 - The app is non-commercial, for the owner and a few friends. Shipped samples are redistributable (public domain, CC0 or a permitting free licence); synthesis needs none. Ported code is GPL/AGPL/MIT with attribution.
 - Research crews run before each build batch, Roundtable style, with transcripts and reports under docs/research/.
+
+## 4d. Classic instruments and hardware-style windows (direction set 2026-11-11 ET)
+
+- **D15. Classic synths.** The DAW carries its own recreations of a TB-303 (`tb303`), a Minimoog Model D class mono (`modeld`) and a Juno-106 class poly (`juno`), built from circuit analyses, manuals and open-source emulations with every value tagged by its basis. They are both instruments to play and the targets the element classifier loads (D9, D10).
+- **D16. Hardware-style windows.** A device's floating window shows a panel modelled after the hardware, the way Arturia's and Roland Cloud's plugins do: the TR-808 and TR-909 as whole machines with their step keys, the 303, the Model D, the Juno. Layout, colour and control shapes follow the originals; no maker's logo or model badge appears; each carries Havantechno's own mark and a plain model name (HVT-808, HVT-909, HVT-303, HVT-D, HVT-106).

@@ -421,6 +421,7 @@
           }
         }
         if (cell.locks) e.locks = cell.locks;
+        if (cell.slide) e.slide = true;               // 303-style slide into the next note (mono synths read it; others ignore it)
         var rep = cell.rep > 1 ? (cell.rep | 0) : 1;
         if (rep === 1) trigger(tr, tc, e);
         else for (var r = 0; r < rep; r++) {

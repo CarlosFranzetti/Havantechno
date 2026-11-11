@@ -1,0 +1,7 @@
+# Patch Crew: coordinator's log
+
+## 2026-11-11 09:17 EST (14:17 UTC) — the owner resumes; the Patch Crew opens
+
+Owner (after the pause of 9 Nov): "Let's continue and start with adding a 303 and a Moog and afterwards a poly synth. I want the plugins to have a floating window with designs modelled after the synths and drum boxes, like Arturia and Roland Cloud." The paused tree was checked first: selfcheck 392, synths 169, drums 341, faces 2495, system-editor 97, all exit 0.
+
+Decisions taken before dispatch: (1) type names `tb303`, `modeld`, `juno`; the poly is a Juno-106/60 class because the Crate Crew's best-documented target (Minimal Nation) uses a Juno and an open-source JavaScript emulation exists; (2) panels follow the hardware's layout and colour but carry no maker's logo or badge, only Havantechno's mark and plain model names (PRD D16); (3) ladder filters need sample-level feedback, so the engine gains AudioWorklet infrastructure with a plain-node fallback for the Node checks, designed once by P5 for all three synths; (4) parameter names are frozen in BRIEF.md so the panel builder and the engine builder work in parallel; (5) the coordinator added `slide` to step cells: `cell.slide` reaches instruments as `ev.slide` (sequencer.js; selfcheck 392 after the change; SongDoc keeps the field). Concurrency is held to four agents after three session-limit stops: P1, P2, P4, P5 now; P3 and the paused agents after.

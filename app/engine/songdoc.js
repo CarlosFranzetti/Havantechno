@@ -6,7 +6,7 @@
  *   var ed = SongDoc.createEditor(doc); ed.setStepInSection('mainB', 'bass', 2, {vel: 0.6, locks: {cutoff: 900}}); ed.undo();
  *
  * A variant is {bars, cells}: cells has bars*16 entries, each null (rest) or a sparse step record
- *   {vel, acc, len, nudge, note, prob, cond, rep, locks}
+ *   {vel, acc, len, nudge, note, prob, cond, rep, locks, slide}
  * vel 0..1 (default 0.85), acc accent flag, len gate in steps (default: the track gate; melodies: the note length),
  * nudge in steps (-0.5..0.5), note midi (default: the track note / the chord), prob 0..1 (default 1),
  * cond 'a:b' or '!a:b' (play on bar a of every b bars of the section), rep retriggers in the step (default 1),
