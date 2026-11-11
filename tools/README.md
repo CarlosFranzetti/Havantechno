@@ -67,6 +67,44 @@ the section, or absolute), `--tail s` (appended to the window, default 0), `--js
   mainA 1.05 to 1.08 s. The 16-bar window is the scoring length; the full song is feasible now but is
   not needed for the per-section checks.
 
+## render.js: labels, `--labels-only`, `--sampler-from` (D3, 2026-11-11)
+
+Spec: `docs/research/2026-11-09-lab-crew/transcripts/log-L2.md` section 10. Every other option and the WAV are
+unchanged; the one change for callers that use no new flag is the extra `labels` key in each sidecar.
+
+- **`labels`** (every sidecar): an object keyed by track id, one entry per track that has at least one trigger in
+  the rendered bars, plus `_master` (the master chain's unit types). Entry fields: `element`, `type` (the
+  instrument as `Synths.create` got it), `family` (`synth`, `drums`, `classic`, `sampler`), `machine` (`tr808`,
+  `tr909`, `other`), `source` (`synth`, or `sample` for a sampler track and for the TR-909 hats and cymbals, which
+  `tools/analysis-truth.js` also labels as samples), `params` (the instrument's params at the first rendered bar,
+  after the arrangement's `set` values and ramps up to there), `polyphony` (most notes sounding at once, each
+  note lasting `dur` plus the `release` param if there is one; a chord counts its notes), `notes` (sorted unique
+  MIDI numbers), `reverb` and `delay` (`{send, ...the send processor's params, kind: 'shared (send or bus)'}`,
+  reverb `rt60` being its `size` param in seconds and `predelayMs` its `predelay`; `{present: false}` when the
+  track's send is 0), `soloed`, and `events` (trigger count). The events are recorded from a dry `Sequencer`
+  built from the same document the render used, scheduling the same bars, so they are the engine's own and not a
+  re-derivation. Not covered: per-section changes to send levels, parameter locks beyond the first bar, and a
+  track bypassed or muted by the host (a muted track still lists as sounding). With `--solo`, every track that
+  has triggers is listed, `soloed` marks the ones soloed.
+- **`--labels-only`**: writes only the sidecar (`wav: null`, `labelsOnly: true`, `gridStartSample` and
+  `latencySamples` null because no latency probe runs; `lengthSamples` is what a render would give). 0.8 s wall
+  for mainA, 0.01 s of it in the labels.
+- **`--sampler-from <track>[:rr3|:pitched]`** (app page): the song is rendered with that track's instrument
+  replaced by a sampler playing a capture of the instrument, on the same cells, channel strip, sends and
+  sidechain. The capture is made with one instance of the instrument in one offline context at the hit's own
+  velocity, from the first hit at or after the first rendered bar; the sampler's `level` is set to undo its own
+  velocity scaling at that velocity, and its attack to the minimum 0.5 ms. Plain: first hit, the track's `kind`
+  becomes `drum` so no note transposes it. `:rr3`: the first three hits go to a program as round robins (hit
+  index modulo 3 picks the region); the label `roundRobin.meanAbsDiffRatio` says how different the three
+  captures really are (a deterministic voice gives about 0). `:pitched`: one note, played back with `pitch`
+  set so the captured note replays as heard, and transposed to each event's MIDI; the note must be within 24
+  semitones of 48. The sidecar names `samplerFrom`, the file gets `-smp-<track>[-rr3|-pitched]`, and the track's
+  labels become `type: 'sampler'`, `family: 'sampler'`, `source: 'sample'` plus `sampleOf`, `sampleMode`,
+  `sampleHits`, `sampleSeconds`, `sampleBuffers`, `samplePitch`, `roundRobin`, `sampleNote`. L2's
+  `:<bars>` form (capture the first N bars) is not built. The replay is not sample-exact against the synth:
+  the plain kick's own first and second hit differ (residual -7 dB in a solo render), so one capture cannot match
+  both; measure a sample-truth score against the labels, not a null test against the synth render.
+
 ## score.py: input, windows and the reference grid
 
 - Everything is decoded to 44.1 kHz stereo float32 with ffmpeg.

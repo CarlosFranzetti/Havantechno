@@ -24,15 +24,24 @@ On exact stems (16 bars of the V3 render, the twelve solos summed) HT-Demucs sco
 
 Usage:
   python3 tools/separate.py <audio> [--out DIR] [--stems drums,bass,other] [--model auto|mdx|htdemucs] [--models DIR]
+  python3 tools/separate.py --check [--model auto|mdx|htdemucs] [--models DIR]
+--check (D3, 2026-11-11, for the desktop app's preflight) separates nothing: it prints one JSON object on stdout with the
+Python version, the packages the chosen model needs (REQUIRES below), which of them are missing, whether ffmpeg is found and
+which MDX-Net ONNX files are already cached, and exits 0. It runs even when numpy or scipy are missing.
 Writes <out>/<name>-<stem>.wav (float32, 44.1 kHz stereo) and <out>/<name>-stems.json (model, settings, timings).
 Default out: tools/out/stems/ (git-ignored with the rest of tools/out). Exit 0 on success.
 numpy, scipy, torch (STFT) and onnxruntime; ffmpeg only for non-WAV input.
 """
-import argparse, hashlib, json, os, shutil, subprocess, sys, time, urllib.request
+import argparse, hashlib, importlib.util, json, os, shutil, subprocess, sys, time, urllib.request
 
-import numpy as np
-import scipy.io.wavfile as wavfile
-from scipy.signal import resample_poly
+try:
+    import numpy as np
+    import scipy.io.wavfile as wavfile
+    from scipy.signal import resample_poly
+    _IMPORT_ERROR = None
+except ImportError as _e:       # re-raised in main() unless --check asked what is missing
+    np = wavfile = resample_poly = None
+    _IMPORT_ERROR = _e
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SR = 44100
@@ -45,6 +54,32 @@ MODELS = {   # file, UVR model_data hash, n_fft, compensate, full-file MD5 of th
 ATTRIBUTION = ('Separation: KUIELab-MDX-Net (Kim, Choi, Chung, Lee, Jung), weights CC BY 4.0, Zenodo 10.5281/zenodo.5717356; '
                'files mirrored by Ultimate Vocal Remover (UVR).')
 DIM_F, DIM_T, HOP = 2048, 512, 1024
+# pip package = module name, per model path (this file's imports and `python -m demucs`). numpy and scipy are imported above
+# for every model; the MDX-Net path adds torch (STFT) and onnxruntime; the HT-Demucs path adds demucs, which needs torch.
+REQUIRES = {'common': ['numpy', 'scipy'], 'mdx': ['torch', 'onnxruntime'], 'htdemucs': ['demucs', 'torch']}
+
+
+def have(mod):
+    try:
+        return importlib.util.find_spec(mod) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def check(model, mdir):
+    """What the chosen model needs and what is missing. auto prefers HT-Demucs, so it reports that path's packages."""
+    want = list(REQUIRES['common'])
+    if model == 'mdx':
+        want += REQUIRES['mdx']
+    else:
+        want += REQUIRES['htdemucs']
+    present = {m: have(m) for m in sorted(set(want) | set(REQUIRES['mdx']) | set(REQUIRES['htdemucs']))}
+    missing = [m for m in want if not present[m]]
+    usable_fallback = model == 'auto' and present['numpy'] and present['scipy'] and present['torch'] and present['onnxruntime']
+    ff = os.environ.get('FFMPEG') or shutil.which('ffmpeg') or ('/usr/bin/ffmpeg' if os.path.exists('/usr/bin/ffmpeg') else None)
+    return {'python': '%d.%d.%d' % sys.version_info[:3], 'model': model, 'requires': REQUIRES, 'present': present,
+            'missing': missing, 'mdxFallbackUsable': bool(usable_fallback), 'ffmpeg': ff,
+            'modelsDir': mdir, 'mdxCached': {st: os.path.exists(os.path.join(mdir, MODELS[st][0])) for st in MODELS}}
 
 
 def die(msg, code=2):
@@ -154,7 +189,8 @@ def htdemucs(src, out_dir, name, fallback=False):
 
 def main():
     ap = argparse.ArgumentParser(description='Separate an audio file into stems (MDX-Net ONNX or HT-Demucs).')
-    ap.add_argument('audio')
+    ap.add_argument('audio', nargs='?')
+    ap.add_argument('--check', action='store_true', help='print what the model needs and what is missing, as JSON; separate nothing')
     ap.add_argument('--out', default=os.path.join(HERE, 'out', 'stems'))
     ap.add_argument('--stems', default='drums,bass,other', help='MDX-Net stems to compute (default all three)')
     ap.add_argument('--model', choices=['auto', 'mdx', 'htdemucs'], default='auto',
@@ -162,6 +198,13 @@ def main():
     ap.add_argument('--models', default=os.environ.get('HAVANTECHNO_MODELS', os.path.join(os.path.expanduser('~'), '.cache', 'havantechno', 'models')),
                     help='where the ONNX files are cached (never the repository)')
     a = ap.parse_args()
+    if a.check:
+        print(json.dumps(check(a.model, a.models)))
+        return
+    if not a.audio:
+        ap.error('the following arguments are required: audio')
+    if _IMPORT_ERROR is not None:
+        raise _IMPORT_ERROR
     if not os.path.exists(a.audio):
         die('no such file: ' + a.audio)
     os.makedirs(a.out, exist_ok=True)

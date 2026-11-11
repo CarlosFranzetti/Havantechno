@@ -8,6 +8,17 @@ ipcRenderer.on('shell:deviceClosed', function (e, id) {
   for (var i = 0; i < closedHandlers.length; i++) { try { closedHandlers[i](id); } catch (err) {} }
 });
 
+var separateHandlers = [];
+ipcRenderer.on('shell:separateProgress', function (e, ev) {
+  for (var i = 0; i < separateHandlers.length; i++) { try { separateHandlers[i](ev); } catch (err) {} }
+});
+// main rejects with "[code] message"; Electron wraps it as "Error invoking remote method '...': Error: [code] message"
+function separateError(err) {
+  var m = /\[([a-z-]+)\]\s*([\s\S]*)$/.exec(String(err && err.message || err)), e = new Error(m ? m[2] : String(err && err.message || err));
+  if (m) e.code = m[1];   // set for code in the preload; contextBridge delivers the page an Error with message only (checked under Electron 45), so the message must stand alone
+  return e;
+}
+
 contextBridge.exposeInMainWorld('HavantechnoShell', {
   isElectron: true,
   platform: process.platform,
@@ -32,6 +43,19 @@ contextBridge.exposeInMainWorld('HavantechnoShell', {
   readText: function (p, opts) { return ipcRenderer.invoke('shell:readText', p, opts || {}); },
   // openFiles({directory, multiple, filters, binary}) -> Promise<[{name, path, relativePath, bytes?}] | null>
   openFiles: function (opts) { return ipcRenderer.invoke('shell:openFiles', opts || {}); },
+  // separate(path, {model: 'auto'|'mdx'|'htdemucs'}) -> Promise<{stems:[{name, path}], model, log, folder, cached?}>.
+  // Rejects with an Error whose message is readable on its own (the page sees the message only; the code, kept here for tests, is python-missing, packages-missing, weights-missing,
+  // weights-bad, ffmpeg-missing, bad-path, busy, cancelled or failed). One run at a time.
+  separate: function (p, opts) {
+    return ipcRenderer.invoke('shell:separate', p, opts && typeof opts === 'object' ? { model: opts.model } : {}).catch(function (err) { throw separateError(err); });
+  },
+  cancelSeparate: function () { return ipcRenderer.invoke('shell:cancelSeparate'); },
+  // onSeparateProgress(fn) -> unsubscribe. fn({stage: 'prepare'|'download'|'separate'|'done', note, done?, total?, line?})
+  onSeparateProgress: function (fn) {
+    if (typeof fn !== 'function') return function () {};
+    separateHandlers.push(fn);
+    return function () { var i = separateHandlers.indexOf(fn); if (i >= 0) separateHandlers.splice(i, 1); };
+  },
   appDataPath: function () { return ipcRenderer.invoke('shell:appDataPath'); },
   readAppData: function (name) { return ipcRenderer.invoke('shell:readAppData', name); },
   writeAppData: function (name, text) { return ipcRenderer.invoke('shell:writeAppData', name, text); },

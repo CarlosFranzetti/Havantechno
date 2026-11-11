@@ -17,13 +17,18 @@
 //               (Song.documentV3() in the app only; the Ear Crew's GUIDANCE_V3). Non-baseline renders get a
 //               -v2 / -v3 file suffix.
 //   --tail      seconds of ringing tail rendered after the last bar (default 2.5, the archived default).
+//   --labels-only  write the sidecar (with its labels) and no WAV: no render, no latency probe. Cheap, for checking.
+//   --sampler-from <track>[:rr3|:pitched]  (app page only) capture that track's first hit (rr3: its first three hits,
+//               played back as round robins; pitched: one note, transposed to each event's MIDI), then render the
+//               song with the track replaced by a sampler track playing the capture on the same events. Files get a
+//               -smp-<track>[-rr3|-pitched] suffix and the track's labels say source 'sample' and sampleOf.
 //   --seed      seed for Math.random in the page (default 1). The archived engine draws its noise and
 //               jitter from Math.random (core.js, synths.js), so each job re-seeds it: the same bars with
 //               the same seed render to identical bytes.
 //
 // Output: tools/out/<name>.wav (16-bit PCM, via Sequencer.wav or Host.wav) and tools/out/<name>.json
 // (sidecar: bar range, sample rate, bpm, swing and the sample position of bar `from`, which score.py
-// uses to line the render up with the reference).
+// uses to line the render up with the reference, plus `labels`: per-track truth, tools/README.md).
 'use strict';
 
 var fs = require('fs');
@@ -53,7 +58,8 @@ var ISOLATION = {
 function fail(msg) { process.stderr.write('render.js: ' + msg + '\n'); process.exit(2); }
 
 function parseArgs(argv) {
-  var o = { page: 'studio', song: 'baseline', solo: null, sections: null, bars: null, sr: 44100, tail: 2.5, seed: 1, out: DEFAULT_OUT };
+  var o = { page: 'studio', song: 'baseline', solo: null, sections: null, bars: null, sr: 44100, tail: 2.5, seed: 1, out: DEFAULT_OUT,
+            labelsOnly: false, samplerFrom: null };
   for (var i = 0; i < argv.length; i++) {
     var a = argv[i];
     var next = function () { if (i + 1 >= argv.length) fail(a + ' needs a value'); return argv[++i]; };
@@ -75,12 +81,23 @@ function parseArgs(argv) {
     else if (a === '--song') o.song = next();
     else if (a === '--solo') o.solo = next().split(',').map(function (s) { return s.trim(); }).filter(Boolean);
     else if (a === '--out') o.out = path.resolve(next());
-    else if (a === '-h' || a === '--help') { process.stdout.write(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 17).join('\n') + '\n'); process.exit(0); }
+    else if (a === '--labels-only') o.labelsOnly = true;
+    else if (a === '--sampler-from') {
+      var sv = next(), sp = sv.split(':');
+      if (!sp[0] || sp.length > 2 || (sp[1] !== undefined && ['rr3', 'pitched'].indexOf(sp[1]) < 0)) fail('--sampler-from needs <track>[:rr3|:pitched], got ' + sv);
+      o.samplerFrom = { track: sp[0], mode: sp[1] || 'first' };
+    }
+    else if (a === '-h' || a === '--help') {
+      var hl = fs.readFileSync(__filename, 'utf8').split('\n').slice(1), hn = 0;
+      while (hn < hl.length && hl[hn].indexOf('//') === 0) hn++;
+      process.stdout.write(hl.slice(0, hn).join('\n') + '\n'); process.exit(0);
+    }
     else fail('unknown argument ' + a);
   }
   if (!(o.sr > 0)) fail('bad --sr');
   if (['baseline', 'v2', 'v3'].indexOf(o.song) < 0) fail('--song must be baseline, v2 or v3');
   if (o.solo && o.page !== 'app') fail('--solo needs --page app (Host.solo)');
+  if (o.samplerFrom && o.page !== 'app') fail('--sampler-from needs --page app (the Host owns the sampler buffers)');
   return o;
 }
 
@@ -127,6 +144,8 @@ function pageLayout(song) {
       window.__host = window.Host.create();
     }
     if (typeof window.__host.render !== 'function') throw new Error('Host.render is missing');
+    window.__baseHost = window.__host;                                  // --sampler-from swaps window.__host per job
+    window.__baseDoc = JSON.parse(JSON.stringify(window.__host.document()));
     sections = window.__host.sections().map(function (s) { return { name: s.name, start: s.start, bars: s.bars }; });
     totalBars = window.__host.totalBars();
     bpm = window.__host.bpm();
@@ -196,6 +215,197 @@ function pageChunk(arg) {
   for (var i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, Math.min(i + 0x8000, u.length)));
   return btoa(s);
 }
+
+// Installs window.__rt = {labels(job), swap(job)} in one call (page.evaluate serialises a single function, so the
+// helpers live inside it). labels: the per-track truth of log-L2.md section 10 item 1. swap: --sampler-from.
+function installTools() {
+  var STEPS = 16;
+  function clone(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
+  function dryBuild(doc, song) {
+    var dry = window.Sequencer.create(null, {});
+    if (doc) window.Song.build(dry, doc);
+    else window.Song.build(dry, song === 'v2' ? window.Song.GUIDANCE_V2 : undefined);
+    return dry;
+  }
+  // Every trigger of every track over bars [from, to), recorded from a dry Sequencer (no audio context): the events
+  // the render schedules. t is seconds from the start of bar `from`. params0 is each instrument's params at `from`.
+  function record(dry, from, to, keep) {
+    var events = {}, params0 = {};
+    dry.order.forEach(function (n) {
+      var tr = dry.tracks[n];
+      events[n] = [];
+      tr.inst.trigger = function (t, ev) {
+        var e = { t: t, step: ev.step, vel: ev.vel, dur: ev.dur, hit: ev.hit };
+        if (typeof ev.midi === 'number') e.midi = ev.midi;
+        if (ev.notes) e.notes = ev.notes.slice();
+        if (ev.accent) e.accent = true;
+        if (ev.slide) e.slide = true;
+        if (events[n].length < (keep || 0)) e.params = clone(tr.inst.params);   // with this hit's locks applied
+        events[n].push(e);
+      };
+    });
+    if (from > 0) dry.chase(from * STEPS, 0);
+    dry.order.forEach(function (n) { params0[n] = clone(dry.tracks[n].inst.params); });
+    var sends0 = {};
+    dry.order.forEach(function (n) { sends0[n] = { reverb: dry.sendLevel(n, 'reverb'), delay: dry.sendLevel(n, 'delay') }; });
+    dry.scheduleAll(from, to, 0);
+    return { events: events, params0: params0, sends0: sends0 };
+  }
+  function polyphony(evs, rel) {
+    var pts = [], cur = 0, max = 0, i;
+    evs.forEach(function (e) {
+      var k = e.notes && e.notes.length ? e.notes.length : 1, d = Math.max((e.dur || 0) + rel, 1e-6);
+      pts.push([e.t, k]); pts.push([e.t + d, -k]);
+    });
+    pts.sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });   // an end before a start at the same instant
+    for (i = 0; i < pts.length; i++) { cur += pts[i][1]; if (cur > max) max = cur; }
+    return max;
+  }
+  function sendLabel(dry, name, level, keys) {
+    var p = dry.sends[name];
+    if (!p || !(level > 0)) return { present: false };
+    var P = p.params || {}, o = { send: level }, i;
+    for (i = 0; i < keys.length; i++) o[keys[i][0]] = keys[i][2] ? keys[i][2](P[keys[i][1]]) : P[keys[i][1]];
+    o.kind = 'shared (send or bus)';
+    return o;
+  }
+  function labels(job) {
+    var doc = window.__host ? window.__host.document() : null;
+    var dry = dryBuild(doc, job.song), rec = record(dry, job.from, job.to, 0), out = {}, solo = job.solo || [];
+    var D = window.Drums, C = window.Classics;
+    dry.order.forEach(function (n) {
+      var tr = dry.tracks[n], evs = rec.events[n];
+      if (!evs.length) return;
+      var type = tr.inst.type && tr.inst.type !== 'unknown' ? tr.inst.type : (typeof tr.def.inst === 'string' ? tr.def.inst : n);
+      var fam = type === 'sampler' ? 'sampler' : (D && D.has && D.has(type)) ? 'drums' : (C && C.has && C.has(type)) ? 'classic' : 'synth';
+      var machine = fam === 'drums' ? (/808$/.test(type) ? 'tr808' : /909$/.test(type) ? 'tr909' : 'other') : 'other';
+      // the TR-909 hats and cymbals are 6-bit samples (tools/analysis-truth.js says so); every other voice is synthesised
+      var sampled = type === 'sampler' || (machine === 'tr909' && /^(ch|oh|cr|rd)909$/.test(type));
+      var P = rec.params0[n] || {}, notes = {}, i, e;
+      for (i = 0; i < evs.length; i++) {
+        e = evs[i];
+        if (typeof e.midi === 'number') notes[e.midi] = 1;
+        if (e.notes) e.notes.forEach(function (m) { notes[m] = 1; });
+      }
+      var sl = rec.sends0[n];
+      out[n] = {
+        element: n, type: type, family: fam, machine: machine, source: sampled ? 'sample' : 'synth',
+        params: P,
+        polyphony: polyphony(evs, typeof P.release === 'number' ? P.release : 0),
+        notes: Object.keys(notes).map(Number).sort(function (a, b) { return a - b; }),
+        reverb: sendLabel(dry, 'reverb', sl.reverb, [['rt60', 'size'], ['decay', 'decay'], ['predelayMs', 'predelay', function (v) { return typeof v === 'number' ? Math.round(v * 10000) / 10 : v; }]]),
+        delay: sendLabel(dry, 'delay', sl.delay, [['division', 'division'], ['time', 'time'], ['feedback', 'feedback'], ['pingpong', 'pingpong']]),
+        soloed: solo.indexOf(n) >= 0,
+        events: evs.length
+      };
+    });
+    out._master = dry.master && dry.master.procs ? dry.master.procs.map(function (p) { return p.type; }) : [];
+    if (job.swap) {
+      var sw = out[job.swap.track];
+      if (sw) { sw.source = 'sample'; for (var k in job.swap.labels) if (Object.prototype.hasOwnProperty.call(job.swap.labels, k)) sw[k] = job.swap.labels[k]; }
+    }
+    return out;
+  }
+
+  // ---- --sampler-from ----------------------------------------------------------------------------
+  function wavF32(chans, sr) {                       // 32-bit float WAV (format 3): lossless into decodeAudioData
+    var n = chans[0].length, nc = chans.length, ab = new ArrayBuffer(44 + n * nc * 4), dv = new DataView(ab), p = 0, c, i;
+    function str(t) { for (var k = 0; k < t.length; k++) dv.setUint8(p++, t.charCodeAt(k)); }
+    function u32(v) { dv.setUint32(p, v, true); p += 4; }
+    function u16(v) { dv.setUint16(p, v, true); p += 2; }
+    str('RIFF'); u32(36 + n * nc * 4); str('WAVE'); str('fmt '); u32(16); u16(3); u16(nc); u32(sr); u32(sr * nc * 4); u16(nc * 4); u16(32);
+    str('data'); u32(n * nc * 4);
+    for (i = 0; i < n; i++) for (c = 0; c < nc; c++) { dv.setFloat32(p, chans[c][i], true); p += 4; }
+    return ab;
+  }
+  // Renders the hits with ONE instance of the instrument in one context (so a per-hit noise counter advances as it does
+  // in the song), spaced w seconds apart; returns one stereo float buffer per hit, leading pre-roll and trailing silence cut.
+  async function captureHits(type, params, hits, sr) {
+    var PRE = 0.02, ws = hits.map(function (h) { return Math.min(6, Math.max(2, (h.dur || 0) + 1.5)); });
+    var total = ws.reduce(function (a, b) { return a + b; }, 0);
+    var octx = new OfflineAudioContext(2, Math.ceil(total * sr), sr);
+    if (window.Worklets && typeof window.Worklets.load === 'function') await window.Worklets.load(octx);
+    var inst = window.Synths.create(octx, type, params), off = [], o = 0;
+    inst.out.connect(octx.destination);
+    hits.forEach(function (h, i) {
+      off.push(o);
+      var ev = { vel: h.vel, dur: h.dur, hit: h.hit, step: h.step };   // the hit's own velocity: the capture is the song's first hit
+      if (typeof h.midi === 'number') ev.midi = h.midi;
+      if (h.notes) ev.notes = h.notes.slice();
+      if (h.accent) ev.accent = true;
+      if (h.slide) ev.slide = true;
+      inst.trigger(PRE + o, ev);
+      o += ws[i];
+    });
+    var buf = await octx.startRendering(), res = [];
+    hits.forEach(function (h, i) {
+      var a = Math.round((off[i] + PRE) * sr), b = Math.min(buf.length, Math.round((off[i] + ws[i]) * sr)), L = buf.getChannelData(0).subarray(a, b), R = buf.getChannelData(1).subarray(a, b), last = 0, j;
+      for (j = L.length - 1; j >= 0; j--) if (Math.abs(L[j]) > 1e-4 || Math.abs(R[j]) > 1e-4) { last = j; break; }
+      var len = Math.min(L.length, Math.max(Math.round(0.05 * sr), last + 1 + Math.round(0.01 * sr)));
+      res.push([new Float32Array(L.subarray(0, len)), new Float32Array(R.subarray(0, len))]);
+    });
+    return res;
+  }
+  async function swap(job) {
+    var base = window.__baseDoc, doc = clone(base), name = job.track, mode = job.mode, def = null, i;
+    for (i = 0; i < doc.tracks.length; i++) if (doc.tracks[i].name === name) def = doc.tracks[i];
+    if (!def) throw new Error('--sampler-from: no track "' + name + '". Tracks: ' + doc.tracks.map(function (t) { return t.name; }).join(', '));
+    if (def.type === 'sampler' || def.inst === 'sampler') throw new Error('--sampler-from: "' + name + '" is already a sampler track');
+    var dry = dryBuild(base, job.song), rec = record(dry, job.from, dry.totalBars, 3), evs = rec.events[name];
+    var need = mode === 'rr3' ? 3 : 1;
+    if (evs.length < need) throw new Error('--sampler-from: track "' + name + '" has ' + evs.length + ' hit(s) from bar ' + job.from + ' on; ' + (mode === 'rr3' ? ':rr3 needs 3' : 'needs 1'));
+    var type = dry.tracks[name].inst.type, hits = evs.slice(0, need), midi0 = null;
+    if (mode === 'pitched') {
+      var h0 = hits[0];
+      midi0 = typeof h0.midi === 'number' ? h0.midi : (h0.notes && h0.notes.length === 1 ? h0.notes[0] : null);
+      if (midi0 == null) throw new Error('--sampler-from: ":pitched" needs a track whose events carry one MIDI note; "' + name + '" does not');
+      if (Math.abs(48 - midi0) > 24) throw new Error('--sampler-from: the captured note ' + midi0 + ' is more than 24 semitones from 48; the sampler pitch range cannot transpose it back');
+    }
+    if (typeof Math.random.reset === 'function') Math.random.reset(job.seed);
+    var bufs = await captureHits(type, hits[0].params || rec.params0[name], hits, job.sr);
+    // the track keeps its channel strip, sends, sidechain and cells; only the instrument becomes a sampler
+    var ids = bufs.map(function (b, k) { return ('smp_' + name + '_' + (k + 1)).replace(/[^A-Za-z0-9_.-]/g, '_'); });
+    var t2 = def;
+    t2.inst = 'sampler'; t2.type = 'sampler';
+    ['note', 'notes', 'chords', 'melody'].forEach(function (k) { if (mode !== 'pitched') delete t2[k]; });
+    if (mode !== 'pitched') t2.kind = 'drum';          // no MIDI on the events: the capture plays at its own pitch
+    if (mode === 'rr3') {
+      var pid = 'smp_' + name + '_rr3';
+      if (!window.Programs || typeof window.Programs.normalize !== 'function') throw new Error('--sampler-from :rr3 needs Programs (app/engine/programs.js)');
+      doc.programs = doc.programs || {};
+      doc.programs[pid] = window.Programs.normalize({ name: pid, kind: 'drums', global: {}, regions: ids.map(function (id, k) {
+        // gain (dB) undoes the sampler's velocity scaling at the captured hit's own velocity, so that hit replays as heard
+        return { buffer: id, lokey: 0, hikey: 127, root: 60, seq: k + 1, seqLen: 3, loop: 'none', gain: -20 * Math.log(hits[k].vel) / Math.LN10 };
+      }) });
+      t2.params = { buffer: '', program: pid };
+    } else {
+      t2.params = { buffer: ids[0], level: Math.min(1.5, 1 / hits[0].vel), attack: 0.0005 };   // level undoes the velocity scaling at the captured velocity
+      if (mode === 'pitched') t2.params.pitch = 48 - midi0;
+    }
+    var host = window.Host.create({ doc: doc });
+    for (i = 0; i < ids.length; i++) {
+      var got = await host.loadAudio(wavF32(bufs[i], job.sr), { id: ids[i], name: ids[i] + '.wav', analyze: false });
+      if (got !== ids[i]) throw new Error('--sampler-from: the host stored the capture as ' + got + ', expected ' + ids[i]);
+    }
+    window.__host = host;
+    // how different the three round-robin captures really are (mean absolute difference of the common length / mean level)
+    var rrDiff = null;
+    if (mode === 'rr3') {
+      var n = Math.min(bufs[0][0].length, bufs[1][0].length, bufs[2][0].length), d = 0, m = 0, q;
+      for (q = 0; q < n; q++) { d += Math.abs(bufs[0][0][q] - bufs[1][0][q]) + Math.abs(bufs[1][0][q] - bufs[2][0][q]); m += Math.abs(bufs[0][0][q]) + Math.abs(bufs[1][0][q]); }
+      rrDiff = m > 0 ? Math.round(d / m * 1e4) / 1e4 : 0;
+    }
+    return { track: name, labels: {
+      sampleOf: type, sampleMode: mode, sampleHits: hits.map(function (h) { return { step: h.step, bar: Math.floor(h.step / STEPS), stepInBar: h.step % STEPS, midi: h.midi == null ? null : h.midi, vel: h.vel }; }),
+      sampleSeconds: bufs.map(function (b) { return Math.round(b[0].length / job.sr * 1000) / 1000; }),
+      sampleBuffers: ids, samplePitch: mode === 'pitched' ? { capturedMidi: midi0, transposeFrom: 48 - midi0 } : null,
+      roundRobin: mode === 'rr3' ? { length: 3, order: 'hit index modulo 3', meanAbsDiffRatio: rrDiff } : null,
+      sampleNote: 'captured at the hit\'s own velocity; the sampler then scales other velocities linearly (the synth\'s own velocity curve is not copied). Parameter locks, if any, are not applied to the capture.'
+    } };
+  }
+  window.__rt = { labels: labels, swap: swap };
+  return true;
+}
 // ----------------------------------------------------------------------------------------------
 
 function selectJobs(layout, opts) {
@@ -257,9 +467,11 @@ async function main() {
     await page.waitForFunction(function () { return !!(window.Sequencer || window.Host); }, null, { timeout: 30000 });
     var layout = await page.evaluate(pageLayout, opts.song);
     var SCHEDULED_GRID = Math.round(SCHEDULE_T0 * opts.sr);
-    var lat = await page.evaluate(pageLatency);
+    await page.evaluate(installTools);
+    var lat = opts.labelsOnly ? null : await page.evaluate(pageLatency);
     var latency = lat && lat.first >= 0 ? lat.first - SCHEDULED_GRID : 0;
-    if (!lat || lat.first < 0) console.log('latency: not measured (no sub or kick track); assuming 0 samples');
+    if (opts.labelsOnly) console.log('latency: not measured (--labels-only)');
+    else if (!lat || lat.first < 0) console.log('latency: not measured (no sub or kick track); assuming 0 samples');
     else console.log('latency: ' + latency + ' samples (' + (latency / opts.sr * 1000).toFixed(2) + ' ms), measured on a solo ' + lat.track + ' render');
     console.log('page: ' + pageUrl + ' (' + layout.kind + ', loaded in ' + ((performance.now() - tLoad) / 1000).toFixed(2) + ' s)');
     console.log('song: ' + layout.totalBars + ' bars at ' + layout.bpm + ' bpm, swing ' + layout.swing +
@@ -275,13 +487,31 @@ async function main() {
       if (opts.song !== 'baseline') job.name += '-' + opts.song;
       job.solo = opts.solo;
       if (opts.solo) job.name += '-solo-' + opts.solo.join('-');
-      var r = await page.evaluate(pageRender, job);
-      var nBytes = r.bytes, parts = [], CH = 4 * 1024 * 1024;
-      for (var o = 0; o < nBytes; o += CH) {
-        parts.push(Buffer.from(await page.evaluate(pageChunk, [o, Math.min(CH, nBytes - o)]), 'base64'));
+      var swapInfo = null;
+      if (opts.samplerFrom) {
+        job.name += '-smp-' + opts.samplerFrom.track + (opts.samplerFrom.mode === 'first' ? '' : '-' + opts.samplerFrom.mode);
+        swapInfo = await page.evaluate(function (a) { return window.__rt.swap(a); },
+          { track: opts.samplerFrom.track, mode: opts.samplerFrom.mode, from: job.from, to: job.to, sr: opts.sr, seed: opts.seed, song: opts.song });
+      } else {
+        await page.evaluate(function () { if (window.__baseHost) window.__host = window.__baseHost; });
       }
-      var wavPath = path.join(opts.out, job.name + '.wav');
-      fs.writeFileSync(wavPath, Buffer.concat(parts));
+      var r = null, wavPath = null, tRender = performance.now();
+      if (opts.labelsOnly) {
+        var barSec0 = 4 * 60 / layout.bpm;
+        r = { sampleRate: opts.sr, channels: 2, length: Math.ceil(opts.sr * ((job.to - job.from) * barSec0 + opts.tail + 0.1)), ms: 0 };
+      } else {
+        r = await page.evaluate(pageRender, job);
+        var nBytes = r.bytes, parts = [], CH = 4 * 1024 * 1024;
+        for (var o = 0; o < nBytes; o += CH) {
+          parts.push(Buffer.from(await page.evaluate(pageChunk, [o, Math.min(CH, nBytes - o)]), 'base64'));
+        }
+        wavPath = path.join(opts.out, job.name + '.wav');
+        fs.writeFileSync(wavPath, Buffer.concat(parts));
+      }
+      var tLabels = performance.now();
+      var labels = await page.evaluate(function (a) { return window.__rt.labels(a); },
+        { song: opts.song, from: job.from, to: job.to, solo: opts.solo || [], swap: swapInfo });
+      var labelsMs = performance.now() - tLabels;
       var barSec = 4 * 60 / layout.bpm;
       var side = {
         name: job.name, page: opts.page, kind: layout.kind, section: job.section, song: opts.song,
@@ -290,14 +520,22 @@ async function main() {
         bpm: layout.bpm, swing: layout.swing, tailSeconds: opts.tail,
         // gridStartSample is where bar `from` (step 0) sits in the WAV: the scheduled start (0.05 s, sample 2205)
         // plus the chain latency. scheduledGridSample and latencySamples are kept for transparency.
-        gridStartSample: gridStart,
+        gridStartSample: opts.labelsOnly ? null : gridStart,
         scheduledGridSample: SCHEDULED_GRID,
-        latencySamples: latency,
+        latencySamples: opts.labelsOnly ? null : latency,
         latencyMeasuredOn: lat ? lat.track : null,
         barSeconds: barSec,
-        wav: path.relative(REPO, wavPath)
+        wav: wavPath ? path.relative(REPO, wavPath) : null,
+        labels: labels
       };
+      if (opts.labelsOnly) side.labelsOnly = true;
+      if (opts.samplerFrom) side.samplerFrom = opts.samplerFrom.track + (opts.samplerFrom.mode === 'first' ? '' : ':' + opts.samplerFrom.mode);
       fs.writeFileSync(path.join(opts.out, job.name + '.json'), JSON.stringify(side, null, 2) + '\n');
+      if (opts.labelsOnly) {
+        console.log('labels ' + job.name + ': bars ' + job.from + '..' + (job.to - 1) + ', ' + (Object.keys(labels).length - 1) + ' tracks in ' +
+          (labelsMs / 1000).toFixed(2) + ' s (no render) -> ' + path.relative(REPO, path.join(opts.out, job.name + '.json')));
+        continue;
+      }
       console.log('rendered ' + job.name + ': bars ' + job.from + '..' + (job.to - 1) + ' (' + (job.to - job.from) +
         ' bars, ' + (r.length / r.sampleRate).toFixed(2) + ' s incl. tail) in ' + (r.ms / 1000).toFixed(2) + ' s -> ' +
         path.relative(REPO, wavPath));

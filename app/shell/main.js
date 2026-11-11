@@ -4,6 +4,8 @@
  *   Set HAVANTECHNO_URL=http://localhost:8000/app/index.html to load the dev server instead.
  * - One main BrowserWindow. Device windows are real child windows (parent set), opened with
  *   window.open from the main window so that window.opener.HavantechnoBridge works (see app/ui/app.js).
+ * - separate(path, {model}) / cancelSeparate: runs tools/separate.py with the system Python (shell/separation.js), progress on
+ *   'shell:separateProgress'; stems go to <userData>/separation/<name>-<hash>/.
  * - IPC: openFile, saveFile, appDataPath, readAppData, writeAppData, openDeviceWindow,
  *   closeDeviceWindow, setDeviceWindowsVisible. Bounds of the main window and of each device window
  *   are remembered in <userData>/window-state.json. */
@@ -11,6 +13,7 @@
 var electron = require('electron');
 var path = require('path');
 var fs = require('fs');
+var Separation = require('./separation');
 
 var app = electron.app, BrowserWindow = electron.BrowserWindow, ipcMain = electron.ipcMain;
 var dialog = electron.dialog, protocol = electron.protocol, screen = electron.screen, Menu = electron.Menu;
@@ -211,6 +214,17 @@ function appDataFile(name) {
   return path.join(app.getPath('userData'), n);
 }
 
+var separator = null;
+function getSeparator() {
+  if (!separator) {
+    // tools/separate.py sits beside app/ in the repository; a packaged build would ship it as resources/tools/separate.py
+    var dev = path.resolve(APP_DIR, '..', 'tools', 'separate.py');
+    var packed = process.resourcesPath ? path.join(process.resourcesPath, 'tools', 'separate.py') : '';
+    separator = Separation.createRunner({ userData: app.getPath('userData'), script: fs.existsSync(dev) ? dev : packed });
+  }
+  return separator;
+}
+
 function registerIpc() {
   // openFile({filters, binary}) -> {name, path, text} | {name, path, bytes} | null
   ipcMain.handle('shell:openFile', async function (e, opts) {
@@ -317,6 +331,17 @@ function registerIpc() {
     }
     return list;
   });
+  // separate(path, {model}) -> {stems:[{name, path}], model, log, folder, cached?}; rejects with "[code] message" (see
+  // separation.js). Main window only; one run at a time; progress events go to the caller as 'shell:separateProgress'.
+  ipcMain.handle('shell:separate', function (e, p, opts) {
+    if (!fromMain(e)) return Promise.reject(new Error('[bad-path] Separation can only be started from the main window.'));
+    var sender = e.sender;
+    var model = opts && typeof opts === 'object' ? opts.model : undefined;
+    return getSeparator().separate(p, { model: model }, function (ev) {
+      if (!sender.isDestroyed()) sender.send('shell:separateProgress', ev);
+    });
+  });
+  ipcMain.handle('shell:cancelSeparate', function (e) { return fromMain(e) ? getSeparator().cancel() : false; });
   ipcMain.handle('shell:appDataPath', function () { return app.getPath('userData'); });
   // Small named files in the app-data folder (autosave, preferences).
   ipcMain.handle('shell:readAppData', async function (e, name) {
@@ -415,5 +440,6 @@ if (!gotLock) {
     createMainWindow();
     app.on('activate', function () { if (!BrowserWindow.getAllWindows().length) createMainWindow(); });
   });
+  app.on('before-quit', function () { if (separator) separator.dispose(); });
   app.on('window-all-closed', function () { if (process.platform !== 'darwin') app.quit(); });
 }
