@@ -71,9 +71,13 @@
   // ------------------------------------------------------------ small helpers
   function velOf(ev) { return clamp(ev && typeof ev.vel === 'number' ? ev.vel : 0.8, 0, 1.5); }
   // 808: the accent hit is the full-scale hit; an unaccented hit is 1/ratio of it (ratios from the check table, ACC808)
+  // OUT808: per-voice output scale so the accent peaks sit in the manual's proportions (check table accent Vpp 10..12 for
+  // BD/SD/toms/congas/CB, 8 claves, 7 CY/OH, 6 CH, 5 maracas, scaled so the loudest accent is about 0.9 of full scale)
+  var OUT808 = { bd808: 0.75, sd808: 0.74, cp808: 2.4, cb808: 3.4, ch808: 2.6, oh808: 1.4, cy808: 0.86, lt808: 0.87, mt808: 0.82, ht808: 0.89,
+                 lc808: 0.89, mc808: 0.74, hc808: 0.89, rs808: 0.75, cl808: 0.6, ma808: 0.57 };
   function ampOf(ev, inst) {
-    var r = (inst && ACC808[inst.type]) || 1;
-    return velOf(ev) * (ev && ev.accent ? 1 : 1 / r);
+    var r = (inst && ACC808[inst.type]) || 1, g = (inst && OUT808[inst.type]) || 1;
+    return velOf(ev) * g * (ev && ev.accent ? 1 : 1 / r);
   }
   // 909: ev.step 0 / 1 / 2 = weak / normal / accent as absolute dB gains (-18 / -9 / 0). Without ev.step the accent
   // flag is 6 dB (manual, scope p. 9) over an unaccented hit at half scale.
