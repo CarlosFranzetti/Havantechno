@@ -103,7 +103,9 @@ var FROZEN = {
   modeld: ['tune', 'glide', 'glideOn', 'modMix', 'modAmount', 'oscMod', 'filterMod', 'osc1Range', 'osc1Wave', 'osc2Range', 'osc2Wave', 'osc2Detune',
            'osc3Range', 'osc3Wave', 'osc3Detune', 'osc3Keys', 'mixOsc1', 'mixOsc2', 'mixOsc3', 'mixNoise', 'noiseType', 'mixFeedback',
            'cutoff', 'emphasis', 'contour', 'keyTrack1', 'keyTrack2', 'fAttack', 'fDecay', 'fSustain', 'attack', 'decay', 'sustain',
-           'decaySwitch', 'level']
+           'decaySwitch', 'level'],
+  juno: ['tune', 'bend', 'portamento', 'voiceMode', 'lfoRate', 'lfoDelay', 'lfoAuto', 'dcoLfo', 'pwm', 'pwmMode', 'pulse', 'saw', 'sub', 'noise', 'range',
+         'hpf', 'cutoff', 'resonance', 'envAmt', 'vcfLfo', 'vcfKey', 'vcaMode', 'attack', 'decay', 'sustain', 'release', 'chorus', 'chorusNoise', 'level']
 };
 var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
 
@@ -112,21 +114,23 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
   console.log('1. module, types and specs');
   var sb = load(sandbox(false)), C = sb.Classics;
   ok(C && typeof C.create === 'function' && typeof C.has === 'function' && typeof C.types === 'function' && typeof C.spec === 'function', 'global Classics with create, has, types, spec');
-  ok(JSON.stringify(C.types()) === '["tb303","modeld"]' && C.has('tb303') && C.has('modeld') && !C.has('juno') && C.spec('nope') === null, 'types tb303, modeld; has(); spec(unknown) null');
-  ['tb303', 'modeld'].forEach(function (t) {
+  ok(JSON.stringify(C.types()) === '["tb303","modeld","juno"]' && C.has('tb303') && C.has('modeld') && C.has('juno') && !C.has('jx8p') && C.spec('nope') === null, 'types tb303, modeld, juno; has(); spec(unknown) null');
+  ['tb303', 'modeld', 'juno'].forEach(function (t) {
     var s = C.spec(t), names = Object.keys(s);
     ok(JSON.stringify(names.slice().sort()) === JSON.stringify(FROZEN[t].slice().sort()), t + ' parameter names are exactly the frozen list (' + names.length + ')');
     var good = true;
     names.forEach(function (k) {
       var e = s[k];
-      if (typeof e.value === 'string') { if (!(e.options && e.options.indexOf(e.value) >= 0)) { good = false; console.log('   bad enum ' + t + '.' + k); } }
+      if (typeof e.value === 'string' || e.options) { if (!(e.options && e.options.indexOf(e.value) >= 0)) { good = false; console.log('   bad enum ' + t + '.' + k); } }
+      else if (typeof e.value === 'boolean') { if (!(e.min === 0 && e.max === 1 && typeof e.unit === 'string')) { good = false; console.log('   bad switch ' + t + '.' + k); } }
       else if (!(typeof e.min === 'number' && typeof e.max === 'number' && e.min < e.max && e.value >= e.min && e.value <= e.max && typeof e.unit === 'string')) { good = false; console.log('   bad row ' + t + '.' + k); }
       if (!BASES[e.basis] || !e.label) { good = false; console.log('   no basis/label ' + t + '.' + k); }
     });
     ok(good, t + ' rows {min, max, value, unit} in range (enumerations with options), every row has a basis and a label');
     var desc = PROCS[C.processor(t)].parameterDescriptors.map(function (d) { return d.name; });
-    ok(names.every(function (k) { return k === 'level' || desc.indexOf(k) >= 0; }), t + ' every knob but level is a processor AudioParam');
-    ok(['pitch', 'gate', 'trig', 'slide', 'vel'].every(function (k) { return desc.indexOf(k) >= 0; }), t + ' processor has the event params pitch, gate, trig, slide, vel');
+    ok(names.every(function (k) { return k === 'level' || C.values(t, k, s[k].value).every(function (pq) { return desc.indexOf(pq[0]) >= 0; }); }), t + ' every knob but level writes processor AudioParams (or is handled by the planner)');
+    if (t === 'juno') ok([0, 1, 2, 3, 4, 5].every(function (v) { return ['pitch', 'gate', 'trig', 'glide'].every(function (k) { return desc.indexOf(k + v) >= 0; }); }), 'juno processor has pitch, gate, trig, glide for six voices');
+    else ok(['pitch', 'gate', 'trig', 'slide', 'vel'].every(function (k) { return desc.indexOf(k) >= 0; }), t + ' processor has the event params pitch, gate, trig, slide, vel');
   });
   ok(C.spec('tb303').cutoff.min === 314 && C.spec('tb303').cutoff.max === 2394 && C.spec('tb303').decay.unit === 'ms' && C.spec('tb303').slideTime.value === 60, '303 ranges from P1 (cutoff 314-2394 Hz, decay ms, slide 60 ms)');
   var V = function (n, v) { return C.values('modeld', n, v); };
@@ -138,11 +142,15 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
   ok(gl.length === 2 && gl[0][0] === 'glide' && near(gl[0][1], 29, 1e-6) && gl[1][0] === 'glideDown' && near(gl[1][1], 13, 1e-6), 'glide mark 5 = 29 oct/s up, 13 down');
   var la = V('attack', 6)[0][1], R = 9.3 / 5.28;
   ok(near(la * Math.log((R - 0.1) / (R - 0.9)), 0.457, 1e-6) && near(V('decay', 8.5)[0][1] * Math.log(1.8), 4.02, 1e-6) && near(V('sustain', 5)[0][1], Math.pow(0.5, 1.5), 1e-9), 'contour time laws: loudness attack 457 ms (10-90 %) at 6, decay 4.02 s (90-50 %) at 8.5, sustain (v/10)^1.5');
+  var VJ = function (n, v) { return C.values('juno', n, v); };
+  ok(near(VJ('cutoff', 0.5)[0][1], 7.8 * Math.pow(2, 100 / 12), 1e-6) && near(VJ('lfoRate', 0.5)[0][1], 3.39, 1e-9) && near(VJ('lfoRate', 0.625)[0][1], (3.39 + 11.49) / 2, 1e-9), 'juno cutoff (7.8 x 2^(200 s / 12)) and LFO rate table (linear between points)');
+  ok(near(VJ('attack', 0.5)[0][1], 0.24, 1e-9) && near(VJ('decay', 1)[0][1], 19.783, 1e-9) && near(VJ('release', 0.25)[0][1], 0.096, 1e-9) && VJ('lfoDelay', 0.5).length === 2 && near(VJ('lfoDelay', 0.5)[1][1], 0.188, 1e-9), 'juno envelope and LFO delay tables (Juno-60 measurements)');
+  ok(VJ('range', 16)[0][1] === 0.5 && VJ('range', 4)[0][1] === 2 && VJ('voiceMode', 'unison')[0][1] === 1 && VJ('pwmMode', 'env')[0][1] === 2 && VJ('pulse', true)[0][1] === 1 && near(VJ('envAmt', -0.5)[0][1], -6, 1e-9) && VJ('bend', 2).length === 0, 'juno selectors, switches, bipolar envAmt; bend and portamento stay on the main thread');
   ok(C.numeric('modeld', 'osc1Range', '8') === 3 && C.numeric('modeld', 'osc3Wave', 'revsaw') === 1 && C.numeric('modeld', 'osc1Wave', 'bogus') === 2 && C.numeric('tb303', 'wave', 'square') === 1, 'enumerations map to the processor indexes; unknown strings fall back to the default');
 
   // ------------------------------------------------------------------ 2. no AudioContext
   console.log('2. without an AudioContext');
-  ['tb303', 'modeld'].forEach(function (t) {
+  ['tb303', 'modeld', 'juno'].forEach(function (t) {
     var i = C.create(null, t), threw = false;
     try { i.trigger(0, { midi: 40, dur: 0.1, slide: true, accent: true }); i.set('level', 0.5); i.set('cutoff', 500); i.panic(); i.dispose(); } catch (e) { threw = true; }
     ok(!threw && i.params.level === 0.5 && i.out === null && i.engine === 'none', t + ' works without a context (silent, same API)');
@@ -210,6 +218,17 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
     ok(n1 - n0 === 3 && n2 === n1 && n3 - n2 === 3, 'Model D: three oscillators per voice; an overlapping note is legato (no new voice), a gap retriggers');
     md.panic();
     ok(md._live.length === 0, 'Model D panic clears _live');
+    var jc = new RecCtx(), ju = C.create(jc, 'juno');
+    ok(ju.engine === 'fallback' && ju.params.saw === true && ju.params.range === 8 && ju.params.chorus === 1, 'juno builds the fallback; switches are booleans, range and chorus numbers');
+    ok(ju.set('pulse', 1) && ju.params.pulse === true && ju.set('range', 16) && ju.params.range === 16 && ju.set('envAmt', -2) && ju.params.envAmt === -1, 'juno: booleans, selectors, envAmt clamps to -1..1');
+    ju.trigger(1, { notes: [60, 64, 67], dur: 1 });
+    var jo = count(jc, 'osc');
+    ju.trigger(1.1, { notes: [62, 65, 69, 72], dur: 1 });
+    ok(jo === 3 && count(jc, 'osc') === 7 && ju._plan.vo.filter(function (v) { return v.on >= 0; }).length === 6, 'a chord takes a voice per note; seven held notes use all six voice slots');
+    var stolen = ju._plan.vo.filter(function (v) { return v.stolen; }).length;
+    ok(stolen === 1 && ju._plan.vo[0].on === 1.1, 'the seventh note steals the oldest held voice (slot 0)');
+    ju.panic();
+    ok(ju._live.length === 0, 'juno panic clears _live');
     ok(bad.length === 0, 'no non-finite automation in the fallback (' + bad.slice(0, 3).join('; ') + ')');
   })();
 
@@ -260,6 +279,35 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
   t.dispose();
   ok(node.messages.indexOf('stop') >= 0 && node.connections.length === 0, 'dispose stops the processor and disconnects the node');
 
+  // Juno: six voices, allocation, stealing, slide, portamento, unison
+  var jn = CW.create(ctx, 'juno', { chorus: 2, pwmMode: 'manual' }), jnode = ctx.worklets[ctx.worklets.length - 1], JW = {};
+  jnode.parameters.forEach(function (p, k) { JW[k] = p; });
+  ok(jn.engine === 'worklet' && jnode.name === 'hvt-juno' && jnode.opts.outputChannelCount[0] === 2 && JW.chorus.value === 2 && JW.pwmMode.value === 1, 'juno runs on one stereo node; selectors as values');
+  jn.trigger(1, { notes: [60, 64, 67], dur: 0.5, step: 0 });
+  ok([0, 1, 2].every(function (v) { return JW['gate' + v].at(1.2) === 1 && JW['trig' + v].at(1) === 1; }) && JW.pitch0.at(1) === 60 && JW.pitch2.at(1) === 67 && JW.gate3.at(1.2) === 0, 'a chord gates one voice per note');
+  ok(JW.gate0.at(1.49) === 1 && JW.gate0.at(1.51) === 0, 'each voice holds for dur');
+  jn.trigger(1.2, { notes: [70, 72, 74], dur: 0.5, step: 2 });
+  jn.trigger(1.3, { midi: 76, dur: 0.5, step: 3 });
+  ok(JW.pitch3.at(1.2) === 70 && JW.pitch5.at(1.2) === 74 && JW.pitch0.at(1.3) === 76 && JW.trig0.at(1.3) === 2 && JW.gate0.at(1.45) === 1 && JW.gate0.at(1.81) === 0, 'the seventh note steals the oldest held voice; its old gate-off is cancelled');
+  jn.trigger(3, { midi: 48, dur: 0.1, step: 16 });
+  ok(JW.glide1.at(3) === 0 || JW.glide0.at(3) === 0, 'without portamento a note jumps (glide 0)');
+  jn.trigger(3.125, { midi: 50, dur: 0.1, step: 17, slide: true });
+  var sv = jn._plan.prev.slots[0];
+  jn.trigger(3.25, { midi: 55, dur: 0.1, step: 18 });
+  ok(JW['pitch' + sv].at(3.25) === 55 && JW['glide' + sv].at(3.25) >= 0.06, 'after a slide flag the next note reuses that voice and glides');
+  jn.set('portamento', 0.5);
+  jn.trigger(4, { midi: 60, dur: 0.1, step: 24 });
+  var pv5 = jn._plan.prev.slots[0];
+  ok(near(JW['glide' + pv5].at(4), 0.375, 1e-9), 'portamento 0.5 glides every note with tau 0.5^3 x 3 = 0.375 s');
+  jn.set('voiceMode', 'unison');
+  ok(JW.unison.calls.some(function (c) { return c[0] === 'set' && c[1] === 1; }), 'voiceMode unison writes the unison flag');
+  jn.trigger(5, { midi: 40, dur: 0.2, step: 32 });
+  ok([0, 1, 2, 3, 4, 5].every(function (v) { return JW['pitch' + v].at(5) === 40 && JW['gate' + v].at(5.1) === 1; }), 'unison puts all six voices on the note');
+  jn.params.cutoff = 0.2; jn.trigger(6, { midi: 40, dur: 0.2, step: 40 }); jn.params.cutoff = jn._base.cutoff; jn.trigger(6.25, { midi: 40, dur: 0.2, step: 42 });
+  ok(near(JW.cutoff.at(6), 7.8 * Math.pow(2, 0.2 * 200 / 12), 1e-6) && near(JW.cutoff.at(6.25), 7.8 * Math.pow(2, 0.6 * 200 / 12), 1e-6), 'a juno lock writes the mapped value at its note and restores it');
+  ctx.currentTime = 6.3; jn.panic(); ctx.currentTime = 0;
+  ok(jn._live.length === 0 && [0, 1, 2, 3, 4, 5].every(function (v) { return JW['gate' + v].at(6.31) === 0; }), 'juno panic closes every gate and clears _live');
+
   // Model D: single triggering, last-note priority, pitch return, slide
   var m = CW.create(ctx, 'modeld', { osc3Wave: 'revsaw', noiseType: 'pink' }), mn = ctx.worklets[ctx.worklets.length - 1], M = {};
   mn.parameters.forEach(function (p, k) { M[k] = p; });
@@ -282,10 +330,10 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
   console.log('6. processors (stubbed AudioWorkletGlobalScope)');
   function run(name, seconds, events, consts) {
     var Pc = loadProcs(44100)[name], desc = Pc.parameterDescriptors, proc = new Pc({ processorOptions: { seed: 22051 } });
-    var N = Math.ceil(seconds * 44100), out = new Float32Array(N), cur = {}, evs = {};
+    var N = Math.ceil(seconds * 44100), out = new Float32Array(N), outR = new Float32Array(N), cur = {}, evs = {};
     desc.forEach(function (dd) { cur[dd.name] = (consts && dd.name in consts) ? consts[dd.name] : dd.defaultValue; evs[dd.name] = ((events || {})[dd.name] || []).slice(); });
     for (var b = 0; b < N; b += 128) {
-      var P = {}, o = new Float32Array(128);
+      var P = {}, o = new Float32Array(128), o2 = new Float32Array(128);
       desc.forEach(function (dd) {
         var e = evs[dd.name];
         if (!e.length || e[0][0] * 44100 >= b + 128 || dd.automationRate === 'k-rate') { while (dd.automationRate === 'k-rate' && e.length && e[0][0] * 44100 < b + 128) cur[dd.name] = e.shift()[1]; P[dd.name] = new Float32Array([cur[dd.name]]); return; }
@@ -293,10 +341,10 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
         for (var q = 0; q < 128; q++) { while (e.length && e[0][0] * 44100 <= b + q) cur[dd.name] = e.shift()[1]; a[q] = cur[dd.name]; }
         P[dd.name] = a;
       });
-      var alive = proc.process([], [[o]], P);
-      out.set(o.subarray(0, Math.min(128, N - b)), b);
+      var alive = proc.process([], [[o, o2]], P);
+      out.set(o.subarray(0, Math.min(128, N - b)), b); outR.set(o2.subarray(0, Math.min(128, N - b)), b);
     }
-    out.alive = alive; out.proc = proc;
+    out.alive = alive; out.proc = proc; out.R = outR;
     return out;
   }
   function peakOf(x, a, b) { var mm = 0; for (var q = a; q < b; q++) mm = Math.max(mm, Math.abs(x[q])); return mm; }
@@ -331,6 +379,18 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
   var mdl = run('hvt-modeld', 4.5, mb, dm);
   ok(peakOf(hot, 0, hot.length) <= 0.9 && peakOf(def3, 0, def3.length) <= 0.9 && peakOf(hot, 0, hot.length) > 0.5, 'tb303 output: resonance 0.8 / envMod 0.7 / accent 0.7 with six accents peaks ' + peakOf(hot, 0, hot.length).toFixed(3) + ', defaults with accents ' + peakOf(def3, 0, def3.length).toFixed(3) + ' (<= 0.9)');
   ok(peakOf(mdl, 0, mdl.length) <= 0.9 && peakOf(mdl, 0, mdl.length) > 0.5, 'modeld output: the default patch\'s eighth-note bass line peaks ' + peakOf(mdl, 0, mdl.length).toFixed(3) + ' (<= 0.9)');
+
+  // juno processor
+  var je = { trig0: [[0.05, 1]], gate0: [[0.05, 1], [0.6, 0]], pitch0: [[0, 57]], trig1: [[0.05, 1]], gate1: [[0.05, 1], [0.6, 0]], pitch1: [[0, 61]] };
+  var j0 = run('hvt-juno', 1, je, { chorus: 0 }), j1 = run('hvt-juno', 1, je, { chorus: 1 }), j1b = run('hvt-juno', 1, je, { chorus: 1 });
+  var monoSame = true, stereoDiff = 0, same3 = true;
+  for (q = 0; q < j0.length; q++) { if (j0[q] !== j0.R[q]) monoSame = false; stereoDiff = Math.max(stereoDiff, Math.abs(j1[q] - j1.R[q])); if (j1[q] !== j1b[q] || j1.R[q] !== j1b.R[q]) same3 = false; }
+  ok(peakOf(j0, 2205, 26000) > 0.05 && j0.every(isFinite) && monoSame, 'juno with the chorus off: two voices sound, left equals right');
+  ok(stereoDiff > 0.01 && same3, 'chorus I makes left and right differ (' + stereoDiff.toFixed(3) + '); two runs are identical');
+  ok(peakOf(j0, 33000, 44100) < peakOf(j0, 2205, 26000) * 0.2, 'juno voices release after the gate');
+  var jh = run('hvt-juno', 1, je, { chorus: 1, chorusNoise: 1 }), jh2 = run('hvt-juno', 1, je, { chorus: 1, chorusNoise: 1 }), sameH = true;
+  for (q = 0; q < jh.length; q++) if (jh[q] !== jh2[q]) { sameH = false; break; }
+  ok(sameH && peakOf(jh, 40000, 44100) > 0, 'chorusNoise adds hiss (deterministic, seeded)');
 
   // ------------------------------------------------------------------ 7. hooks
   console.log('7. hooks');

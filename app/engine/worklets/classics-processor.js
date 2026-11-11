@@ -469,3 +469,190 @@ class ModelDProcessor extends AudioWorkletProcessor {
   }
 }
 registerProcessor('hvt-modeld', ModelDProcessor);
+
+// ================================================================== Juno (six voices, one processor)
+// After P3 (transcripts/P3-juno.md sections 1 to 11): Juno-60 measured tables (pendragon-andyh/Juno60, MIT) and Junox
+// constants (pendragon-andyh/junox, GPL-3.0-or-later; numbers only, cited by file and line in log-P5.md); no Junox code
+// is ported. Per voice: free-running PolyBLEP DCO (saw, pulse with PWM, sub one octave down, shared 5 kHz noise), the
+// Junox mix compression, a 4-pole zero-delay (TPT) ladder with one tanh at the loop input, an ADSR with the Juno-60
+// shapes, a gate envelope for VCA gate mode. Shared: the triangle LFO with delay and fade (auto or per-note trigger),
+// the four-position HPF, the stereo two-line chorus (triangle LFO, lines in antiphase), optional chorus hiss.
+// Voice allocation is on the main thread (classics.js); each voice has its own pitchN, gateN, trigN and glideN params.
+// The processor's knob params are physical values; classics.js maps the 0..1 sliders.
+var JU = {
+  voices: 6,
+  mixSaw: 0.2, mixPulse: 0.2, mixKnee: 0.26, mixAbove: 0.3,   // Junox junox.js 239-252 (source)
+  mixNorm: 5,                                  // 1 / 0.2: a lone saw enters the filter at amplitude 1 (P5)
+  noiseLp: 5000,                               // Hz, noise low-pass (Juno60 Noise README; Junox voice.js 126)
+  subLp: 4200,                                 // Hz, the sub's passive RC (KR-106, via P3; source)
+  gateA: 0.003, gateR: 0.006,                  // s, VCA gate mode (Juno60 Gate README; paper)
+  attackTarget: 1 / 0.632,                     // attack is (1 - e^-x) / 0.632 (Juno60 Envelope README; paper)
+  shortRelease: 0.01, shortBelow: 0.02,        // release 10 ms when sustain <= 0.02 (Junox juno60Envelope.js 214; source)
+  hpfShelf: 65, hpfShelfGain: 2, hpf2: 225, hpf3: 720,   // HPF positions (P3 section 2; paper, sources disagree)
+  chorusRate: [0, 0.513, 0.863],               // Hz, triangle (Juno60 Chorus README; paper)
+  chorusMin: 0.00166, chorusMax: 0.00535,      // s, delay swing (Juno60 Chorus README; paper)
+  chorusDry: 0.44, chorusWet: 0.56,            // Junox chorus.js (source)
+  chorusPre: 7237, chorusPost: 10644,          // Hz, one-pole low-passes around the lines (Junox chorus.js 133-135; source)
+  hiss: 0.004,                                 // chorus hiss level at chorusNoise 1 (P5, prior)
+  unisonGain: 0.6,                             // per voice with six voices on one note (P5, prior: the hardware is louder in unison)
+  phase: [0, 0.81, 0.29, 0.64, 0.89, 0.86],    // fixed start phases of the free-running DCOs (Youth106: arbitrary offsets); chosen so unison sums near sqrt(6) per harmonic (P5)
+  seedNoise: 1e-6,                             // thermal seed so the ladder can self-oscillate (KR-106 idea)
+  outGain: 0.32                                // calibration (P5, measured)
+};
+
+class JunoProcessor extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    var out = [], i, d = function (name, def, min, max, rate) { out.push({ name: name, defaultValue: def, minValue: min, maxValue: max, automationRate: rate || 'k-rate' }); };
+    for (i = 0; i < JU.voices; i++) {
+      d('pitch' + i, 60, 0, 127, 'a-rate'); d('gate' + i, 0, 0, 1, 'a-rate'); d('trig' + i, 0, 0, 1e9, 'a-rate'); d('glide' + i, 0, 0, 10, 'a-rate');
+    }
+    d('tune', 0, -100, 100); d('unison', 0, 0, 1);
+    d('lfoRate', 1.9, 0.01, 50); d('lfoDelay', 0, 0, 10); d('lfoFade', 0, 0, 10); d('lfoAuto', 1, 0, 1);
+    d('dcoLfo', 0, 0, 1200); d('pwm', 0.5, 0, 1); d('pwmMode', 0, 0, 2); d('pulse', 0, 0, 1); d('saw', 1, 0, 1);
+    d('sub', 0, 0, 1); d('noise', 0, 0, 1); d('range', 1, 0.25, 4); d('hpf', 1, 0, 3);
+    d('cutoff', 800, 1, 1e6, 'a-rate'); d('resonance', 0.6, 0, 5, 'a-rate'); d('envAmt', 4.8, -14, 14, 'a-rate');
+    d('vcfLfo', 0, 0, 6); d('vcfKey', 0.5, 0, 1); d('vcaMode', 0, 0, 1);
+    d('attack', 0.01, 0.0005, 30); d('decay', 0.98, 0.001, 30); d('sustain', 0.7, 0, 1); d('release', 0.3, 0.001, 30);
+    d('chorus', 1, 0, 2); d('chorusNoise', 0, 0, 1);
+    return out;
+  }
+  constructor(options) {
+    super();
+    var seed = (options && options.processorOptions && options.processorOptions.seed) || 106, i, fs = sampleRate;
+    this.alive = true;
+    this.port.onmessage = (e) => { if (e.data === 'stop') this.alive = false; };
+    this.rng = new Lcg(seed);
+    this.v = [];
+    for (i = 0; i < JU.voices; i++) {
+      this.v.push({ lastTrig: 0, on: false, note: 60, glide: 0, ph: JU.phase[i], sph: (JU.phase[i] * 1.618 + 0.11) % 1, subLp: 0,
+                    env: 0, st: 0, genv: 0, gst: 0, s1: 0, s2: 0, s3: 0, s4: 0, active: false, quiet: 0 });
+    }
+    this.lfoPh = 0.25; this.lfoEnv = 1; this.lfoT = 1e9;
+    this.nLp = 0; this.nC = 1 - Math.exp(-TWO_PI * JU.noiseLp / fs); this.subC = 1 - Math.exp(-TWO_PI * JU.subLp / fs);
+    this.hp = { x1: 0, y1: 0, lp: 0 };
+    this.hpC = [0, 0, Math.exp(-TWO_PI * JU.hpf2 / fs), Math.exp(-TWO_PI * JU.hpf3 / fs)];
+    this.shelfC = 1 - Math.exp(-TWO_PI * JU.hpfShelf / fs);
+    var n = Math.ceil(0.012 * fs) + 4;
+    this.dl = new Float64Array(n); this.dn = n; this.dw = 0; this.chPh = 0.25; this.preLp = 0; this.postL = 0; this.postR = 0;
+    this.preC = 1 - Math.exp(-TWO_PI * JU.chorusPre / fs); this.postC = 1 - Math.exp(-TWO_PI * JU.chorusPost / fs);
+    this.cC = [new Coef(1), new Coef(3.5), new Coef(3.5), new Coef(1), new Coef(1)];
+    this.ga = new Coef(1); this.gr = new Coef(1);
+  }
+  process(inputs, outputs, P) {
+    var o = outputs[0];
+    if (!o || !o[0]) return this.alive;
+    var L = o[0], R = o[1] || null, n = L.length, fs = sampleRate, i, j, V = this.v, NV = JU.voices;
+    var k0 = function (a) { return a[0]; };
+    var tune = k0(P.tune) / 100, uni = k0(P.unison) >= 0.5, lfoRate = k0(P.lfoRate), lDel = k0(P.lfoDelay), lFade = k0(P.lfoFade), lAuto = k0(P.lfoAuto) >= 0.5;
+    var vib = k0(P.dcoLfo) / 100, pwmS = k0(P.pwm), pwmMode = Math.round(k0(P.pwmMode)), pulseOn = k0(P.pulse) >= 0.5, sawOn = k0(P.saw) >= 0.5;
+    var subS = k0(P.sub), noiS = k0(P.noise), range = k0(P.range), hpfPos = Math.round(k0(P.hpf));
+    var vLfo = k0(P.vcfLfo), vKey = k0(P.vcfKey), gateMode = k0(P.vcaMode) >= 0.5;
+    var aT = k0(P.attack), dT = k0(P.decay), sus = k0(P.sustain), rT = k0(P.release), chorus = Math.round(k0(P.chorus)), hissS = k0(P.chorusNoise);
+    if (sus <= JU.shortBelow) rT = Math.min(rT, JU.shortRelease);
+    // mix gains with the Junox compression rule
+    var gS = sawOn ? JU.mixSaw : 0, gP = pulseOn ? JU.mixPulse : 0, gB = subS * 0.195, gN = noiS * 0.21, sum = gS + gP + gB + gN, comp = 1;
+    if (sum > JU.mixKnee) comp = JU.mixKnee / (JU.mixKnee + (sum - JU.mixKnee) * JU.mixAbove);
+    comp *= JU.mixNorm;
+    var cA = this.cC[0].of(Math.max(aT, 0.0005)), cD = this.cC[1].of(Math.max(dT, 0.001)), cR = this.cC[2].of(Math.max(rT, 0.001));
+    var gA = this.ga.of(JU.gateA / 3), gR = this.gr.of(JU.gateR / 3);
+    var vGain = (uni ? JU.unisonGain : 1) * JU.outGain, maxF = 0.4 * fs, lfoInc = lfoRate / fs;
+    var chInc = JU.chorusRate[chorus] / fs || 0, dn = this.dn, dl = this.dl, aT_ = [], aG = [], aP = [], aL = [];
+    for (j = 0; j < NV; j++) { aT_.push(P['trig' + j]); aG.push(P['gate' + j]); aP.push(P['pitch' + j]); aL.push(P['glide' + j]); }
+    var pC = P.cutoff, pR = P.resonance, pE = P.envAmt;
+    for (i = 0; i < n; i++) {
+      // note events per voice
+      var anyOn = false;
+      for (j = 0; j < NV; j++) if (V[j].on) { anyOn = true; break; }
+      for (j = 0; j < NV; j++) {
+        var v = V[j], tr = pv(aT_[j], i), g = pv(aG[j], i) >= 0.5;
+        if (tr !== v.lastTrig) {
+          v.lastTrig = tr;
+          var target0 = pv(aP[j], i);
+          v.glide = pv(aL[j], i);
+          if (!(v.glide > 0) || !v.active) v.note = target0;
+          v.st = 1; v.gst = 1; v.on = true; v.active = true; v.quiet = 0;
+          if (!lAuto || !anyOn) this.lfoT = 0;            // LFO delay restarts: every note (manual) or the first after silence (auto)
+          anyOn = true;
+        } else if (!g && v.on) { v.on = false; v.st = 3; v.gst = 3; }
+      }
+      // LFO: triangle with delay then a linear fade-in
+      this.lfoPh += lfoInc; if (this.lfoPh >= 1) this.lfoPh -= 1;
+      var tri0 = this.lfoPh < 0.5 ? 4 * this.lfoPh - 1 : 3 - 4 * this.lfoPh;
+      this.lfoT += 1 / fs;
+      var le = this.lfoT < lDel ? 0 : (lFade > 0 ? Math.min(1, (this.lfoT - lDel) / lFade) : 1), lfo = tri0 * le;
+      // shared noise, low-passed
+      this.nLp += this.nC * (this.rng.next() - this.nLp);
+      var noise = this.nLp * 1.7, mix = 0;
+      for (j = 0; j < NV; j++) {
+        var w = V[j];
+        if (!w.active) continue;
+        var tgt = pv(aP[j], i);
+        if (w.glide > 0) { if (w.glide !== w.gT) { w.gT = w.glide; w.gC = Math.exp(-1 / (w.glide * fs)); } w.note = tgt + w.gC * (w.note - tgt); } else w.note = tgt;
+        // ADSR (Juno-60 shapes): attack RC toward 1/0.632 cut at 1, decay and release RCs with tau = time / 3.5
+        if (w.st === 1) { w.env += (JU.attackTarget - w.env) * (1 - cA); if (w.env >= 1) { w.env = 1; w.st = 2; } }
+        else if (w.st === 2) w.env = sus + (w.env - sus) * cD;
+        else if (w.st === 3) w.env *= cR;
+        var vca;
+        if (gateMode) {
+          if (w.gst === 1) { w.genv += (1.0001 - w.genv) * (1 - gA); if (w.genv >= 1) { w.genv = 1; w.gst = 2; } }
+          else if (w.gst === 3) w.genv *= gR;
+          vca = w.genv;
+        } else vca = w.env;
+        if (w.st === 3 && w.env < 1e-5 && (!gateMode || w.genv < 1e-5)) { w.active = false; w.env = 0; w.genv = 0; continue; }
+        // DCO
+        var f = mtof(w.note + tune + vib * lfo) * range, dt = f / fs;
+        var pw = pwmMode === 1 ? pwmS : (pwmMode === 2 ? pwmS * w.env : pwmS * (lfo + 1) * 0.5);
+        var duty = 0.5 - 0.45 * clamp(pw, 0, 1), ph = w.ph, x = 0;
+        if (gS > 0) x += gS * saw(ph, dt);
+        if (gP > 0) x += gP * pulse(ph, dt, duty);
+        if (gB > 0) { var sq = pulse(w.sph, dt * 0.5, 0.5); w.subLp += this.subC * (sq - w.subLp); x += gB * w.subLp; }
+        x += gN * noise;
+        x = x * comp + JU.seedNoise * noise;
+        w.ph = ph + dt; if (w.ph >= 1) w.ph -= 1;
+        w.sph += dt * 0.5; if (w.sph >= 1) w.sph -= 1;
+        // VCF: cutoff law in octaves (Junox voice.js 180-192), TPT ladder
+        var res = pv(pR, i);
+        var oct = pv(pE, i) * w.env + vLfo * lfo + vKey * 5 * (w.note - 60) / 60 + 0.5 * res / 4.08;
+        var fc = clamp(pv(pC, i) * Math.pow(2, oct), 20, maxF);
+        var gg = Math.tan(Math.PI * fc / fs), G = gg / (1 + gg), iG = 1 - G;
+        var S1 = w.s1 * iG, S2 = w.s2 * iG, S3 = w.s3 * iG, S4 = w.s4 * iG;
+        var sig = G * G * G * S1 + G * G * S2 + G * S3 + S4;
+        var u = th((x - res * sig) / (1 + res * G * G * G * G));
+        var v1 = (u - w.s1) * G, y1 = v1 + w.s1; w.s1 = y1 + v1;
+        var v2 = (y1 - w.s2) * G, y2 = v2 + w.s2; w.s2 = y2 + v2;
+        var v3 = (y2 - w.s3) * G, y3 = v3 + w.s3; w.s3 = y3 + v3;
+        var v4 = (y3 - w.s4) * G, y4 = v4 + w.s4; w.s4 = y4 + v4;
+        mix += y4 * vca;
+      }
+      mix *= vGain;
+      // HPF: 0 low shelf +6 dB under 65 Hz, 1 flat, 2 and 3 first-order high-pass
+      var hp = this.hp, yh;
+      if (hpfPos >= 2) { var a = this.hpC[hpfPos]; yh = 0.5 * (1 + a) * (mix - hp.x1) + a * hp.y1; hp.x1 = mix; hp.y1 = yh; }
+      else if (hpfPos === 0) { hp.lp += this.shelfC * (mix - hp.lp); yh = mix + (JU.hpfShelfGain - 1) * hp.lp; }
+      else yh = mix;
+      // chorus: one triangle LFO, two lines in antiphase, dry 0.44 + wet 0.56
+      if (chorus > 0) {
+        this.preLp += this.preC * (yh - this.preLp);
+        dl[this.dw] = this.preLp;
+        this.chPh += chInc; if (this.chPh >= 1) this.chPh -= 1;
+        var ct = this.chPh < 0.5 ? 4 * this.chPh - 1 : 3 - 4 * this.chPh;
+        var mid = 0.5 * (JU.chorusMin + JU.chorusMax), span = 0.5 * (JU.chorusMax - JU.chorusMin);
+        var dL = (mid + span * ct) * fs, dR = (mid - span * ct) * fs;
+        var wl = this.tap(dL), wr = this.tap(dR);
+        this.dw = this.dw + 1 === dn ? 0 : this.dw + 1;
+        this.postL += this.postC * (wl - this.postL); this.postR += this.postC * (wr - this.postR);
+        var hl = 0, hr = 0;
+        if (hissS > 0) { var hz = this.rng.next() * JU.hiss * hissS; hl = hz * (1 + ct) * 0.5; hr = hz * (1 - ct) * 0.5; }   // louder on the slow-clocked (long) line
+        L[i] = JU.chorusDry * yh + JU.chorusWet * this.postL + hl;
+        if (R) R[i] = JU.chorusDry * yh + JU.chorusWet * this.postR + hr;
+      } else { L[i] = yh; if (R) R[i] = yh; }
+    }
+    return this.alive;
+  }
+  tap(d) {                                       // linear interpolation d samples behind the write index
+    var r = this.dw - d, dn = this.dn; while (r < 0) r += dn;
+    var i0 = Math.floor(r), fr = r - i0, i1 = i0 + 1 === dn ? 0 : i0 + 1;
+    return this.dl[i0] * (1 - fr) + this.dl[i1] * fr;
+  }
+}
+registerProcessor('hvt-juno', JunoProcessor);

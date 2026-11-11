@@ -132,14 +132,77 @@
     decay: function (v) { return [['decay', loglerp(LAW.lD, v) / Math.log(1.8)]]; },
     fSustain: function (v) { return [['fSustain', Math.pow(clamp(v, 0, 10) / 10, 1.5)]]; },
     sustain: function (v) { return [['sustain', Math.pow(clamp(v, 0, 10) / 10, 1.5)]]; }
-  }, tb303: {} };
+  }, tb303: {}, juno: {} };
+
+  // Juno: P3 section 9 (Juno-60 measurements from pendragon-andyh/Juno60, MIT; Junox constants, GPL-3.0-or-later,
+  // numbers only). Sliders are 0..1 as in P3's table; booleans and the numeric selectors carry `options`.
+  function B(value, basis, label) { return { value: value, min: 0, max: 1, unit: '', basis: basis, label: label }; }
+  SPEC.juno = {
+    tune: P(-100, 100, 0, 'ct', 'prior', 'master tune (P3)'),
+    bend: P(0, 12, 2, 'st', 'source', 'bender range; stored, the engine has no bend input yet (KR-106 / Youth106 via P3)'),
+    portamento: P(0, 1, 0, '', 'source', 'glide time constant s^3 x 3 s, per voice (KR-106 via P3)'),
+    voiceMode: E('poly', ['poly', 'unison'], 'paper', 'poly: six voices, oldest released then oldest held is stolen; unison: all six on one note (Youth106 via P3)'),
+    lfoRate: P(0, 1, 0.35, '', 'paper', 'triangle 0.3 / 0.85 / 3.39 / 11.49 / 22.22 Hz at 0 / .25 / .5 / .75 / 1, linear between (Juno60 measurement via Junox junox.js 284)'),
+    lfoDelay: P(0, 1, 0, '', 'paper', 'delay 0 / 0.064 / 0.85 / 1.2 / 2.79 s, then a fade of 0 / 0.053 / 0.188 / 0.348 / 1.0 s (Juno60 LFO/Delay README)'),
+    lfoAuto: B(true, 'source', 'auto: the delay restarts on the first note after all are released; off: on every note (Junox, Youth106)'),
+    dcoLfo: P(0, 1, 0, '', 'paper', 'vibrato depth s x 400 ct (106 service notes via Youth106; Junox has 300: conflict)'),
+    pwm: P(0, 1, 0.5, '', 'source', 'duty 0.5 - 0.45 w (Junox dco.js 45)'),
+    pwmMode: E('lfo', ['lfo', 'manual', 'env'], 'source', 'w = s (manual), s (lfo + 1) / 2 (lfo), s x envelope (env, the Juno-60\'s) (Junox voice.js 168-170)'),
+    pulse: B(false, 'manual', 'pulse switch'),
+    saw: B(true, 'manual', 'saw switch'),
+    sub: P(0, 1, 0, '', 'source', 'sub square one octave down, level s x 0.195 against the saw 0.2, 4.2 kHz RC (Junox, KR-106)'),
+    noise: P(0, 1, 0, '', 'source', 'noise s x 0.21, low-passed at 5 kHz; the mix compresses above 0.26 (Junox junox.js 239-252)'),
+    range: { min: 4, max: 16, value: 8, options: [16, 8, 4], unit: 'ft', basis: 'manual', label: '16, 8, 4 feet: x 0.5, 1, 2' },
+    hpf: P(0, 3, 1, '', 'paper', '0: low shelf +6 dB under 65 Hz, 1: flat, 2: 225 Hz, 3: 720 Hz, first order (P3; sources disagree)'),
+    cutoff: P(0, 1, 0.6, '', 'source', '7.8 Hz x 2^(200 s / 12) (Junox voice.js 180-192)'),
+    resonance: P(0, 1, 0.15, '', 'source', 'ladder k = 4 s (self-oscillates at 1), cutoff raised 0.5 s oct (Junox)'),
+    envAmt: P(-1, 1, 0.4, '', 'source', 'bipolar, 12 oct at full (Junox; service notes 14 via Youth106)'),
+    vcfLfo: P(0, 1, 0, '', 'paper', 'LFO to cutoff, 3.5 oct at full (service notes via Youth106; Junox 3)'),
+    vcfKey: P(0, 1, 0.5, '', 'source', 'key follow 5 s (note - 60) / 60 oct (Junox voice.js 209)'),
+    vcaMode: E('env', ['env', 'gate'], 'paper', 'gate: attack 3 ms, release 6 ms, sustain 1 (Juno60 Gate README)'),
+    attack: P(0, 1, 0.1, '', 'paper', '0.001 / 0.03 / 0.24 / 0.65 / 3.25 s at 0 / .25 / .5 / .75 / 1; RC (1 - e^-x) / 0.632 (Juno60 Envelope README)'),
+    decay: P(0, 1, 0.5, '', 'paper', '0.002 / 0.096 / 0.984 / 4.449 / 19.783 s; RC e^(-3.5 x) (Juno60 Envelope README)'),
+    sustain: P(0, 1, 0.7, '', 'manual', 'sustain level'),
+    release: P(0, 1, 0.35, '', 'paper', 'as decay; 10 ms when sustain <= 0.02 (Junox juno60Envelope.js 214)'),
+    chorus: { min: 0, max: 2, value: 1, options: [0, 1, 2], unit: '', basis: 'paper', label: 'off, I (0.513 Hz), II (0.863 Hz): triangle, lines 1.66 to 5.35 ms in antiphase, dry 0.44 wet 0.56 (Juno60 Chorus README, Junox chorus.js)' },
+    chorusNoise: P(0, 1, 0, '', 'paper', 'BBD hiss swapping slowly left and right (Youth106; level prior)'),
+    level: P(0, 1.5, 1, '', 'prior', 'output gain')
+  };
+  LAW.juno = {
+    rate: [[0, 0.3], [0.25, 0.85], [0.5, 3.39], [0.75, 11.49], [1, 22.22]],
+    delay: [[0, 0], [0.25, 0.0639], [0.5, 0.85], [0.75, 1.2], [1, 2.786]], fade: [[0, 0], [0.25, 0.053], [0.5, 0.188], [0.75, 0.348], [1, 1]],
+    attack: [[0, 0.001], [0.25, 0.03], [0.5, 0.24], [0.75, 0.65], [1, 3.25]], decay: [[0, 0.002], [0.25, 0.096], [0.5, 0.984], [0.75, 4.449], [1, 19.783]],
+    range: { 16: 0.5, 8: 1, 4: 2 }, vib: 400, env: 12, lfo: 3.5, k: 4.08
+  };
+  var J = LAW.juno;
+  MAP.juno = {
+    bend: function () { return []; }, portamento: function () { return []; },
+    voiceMode: function (v) { return [['unison', v === 'unison' ? 1 : 0]]; },
+    lfoRate: function (v) { return [['lfoRate', lerp(J.rate, v)]]; },
+    lfoDelay: function (v) { return [['lfoDelay', lerp(J.delay, v)], ['lfoFade', lerp(J.fade, v)]]; },
+    lfoAuto: function (v) { return [['lfoAuto', v ? 1 : 0]]; },
+    dcoLfo: function (v) { return [['dcoLfo', J.vib * v]]; },
+    pulse: function (v) { return [['pulse', v ? 1 : 0]]; },
+    saw: function (v) { return [['saw', v ? 1 : 0]]; },
+    range: function (v) { return [['range', J.range[v] || (v > 12 ? 0.5 : (v < 6 ? 2 : 1))]]; },
+    hpf: function (v) { return [['hpf', Math.round(clamp(v, 0, 3))]]; },
+    cutoff: function (v) { return [['cutoff', 7.8 * Math.pow(2, v * 200 / 12)]]; },
+    resonance: function (v) { return [['resonance', J.k * v]]; },
+    envAmt: function (v) { return [['envAmt', J.env * v]]; },
+    vcfLfo: function (v) { return [['vcfLfo', J.lfo * v]]; },
+    attack: function (v) { return [['attack', loglerp(J.attack, v)]]; },
+    decay: function (v) { return [['decay', loglerp(J.decay, v)]]; },
+    release: function (v) { return [['release', loglerp(J.decay, v)]]; },
+    chorus: function (v) { return [['chorus', Math.round(clamp(v, 0, 2))]]; }
+  };
   var ENUMS = {
     tb303: { wave: ['saw', 'square'] },
     modeld: { osc1Range: RANGES, osc2Range: RANGES, osc3Range: RANGES, osc1Wave: WAVES, osc2Wave: WAVES, osc3Wave: WAVES3,
-              noiseType: ['white', 'pink'] }
+              noiseType: ['white', 'pink'] },
+    juno: { voiceMode: ['poly', 'unison'], pwmMode: ['lfo', 'manual', 'env'], vcaMode: ['env', 'gate'] }
   };
-  var PROC = { tb303: 'hvt-tb303', modeld: 'hvt-modeld' };
-  var TYPES = ['tb303', 'modeld'];
+  var PROC = { tb303: 'hvt-tb303', modeld: 'hvt-modeld', juno: 'hvt-juno' };
+  var TYPES = ['tb303', 'modeld', 'juno'];
 
   // a parameter value as the processor reads it (enumerations by index; an unknown string falls back to the default)
   function numeric(type, name, v) {
@@ -149,7 +212,7 @@
     return i >= 0 ? i : en.indexOf(SPEC[type][name].value);
   }
   // the processor writes for a spec value: [[param, value], ...] (panel marks mapped by MAP)
-  function wvals(type, name, v) { var f = MAP[type] && MAP[type][name]; return f ? f(Number(v)) : [[name, numeric(type, name, v)]]; }
+  function wvals(type, name, v) { var f = MAP[type] && MAP[type][name]; return f ? f(typeof v === 'string' || typeof v === 'boolean' ? v : Number(v)) : [[name, numeric(type, name, v)]]; }
   function phys(type, name, v) { return wvals(type, name, v)[0][1]; }
 
   // ------------------------------------------------------------------ instrument base (as drums.js, no drive stage)
@@ -250,7 +313,7 @@
       wvals(type, name, v).forEach(function (pv) {
         var p = W[pv[0]];
         if (!p) return;
-        if (ENUMS[type][name] || (o && typeof o.at === 'number')) setV(p, pv[1], at);
+        if (ENUMS[type][name] || (inst.spec[name] && inst.spec[name].options) || typeof v === 'boolean' || (o && typeof o.at === 'number')) setV(p, pv[1], at);
         else target(p, pv[1], at, 0.01);
       });
     };
@@ -429,6 +492,89 @@
       pl.fv = nv;
     };
     inst.onPanic = function () { pl.prev = null; pl.held = []; pl.fv = null; };
+  };
+
+  // ------------------------------------------------------------------ Juno (six voices)
+  // Voice allocation (P3 section 6): poly takes the free voice released longest ago, else steals the oldest held one;
+  // a note after one flagged ev.slide reuses that note's voice and glides (at least 60 ms, prior); portamento glides
+  // every voice from its own last pitch (tau s^3 x 3 s). Unison puts all six voices on each note. ev.notes (chord tracks)
+  // allocates one voice per note. Velocity is ignored, as on the instrument.
+  function planJ(pl, t, ev, P) {
+    var notes = ev && ev.notes && ev.notes.length ? ev.notes : [noteOf(ev, 60)], dur = Math.max(0.005, (ev && ev.dur) || 0.25);
+    var porta = Math.pow(clamp(P.portamento, 0, 1), 3) * 3, used = [], i, k, slot;
+    if (!pl.vo) { pl.vo = []; for (i = 0; i < 6; i++) pl.vo.push({ on: -1, off: -1, n: 0, fv: null }); }
+    var prev = pl.prev, slid = !!(prev && prev.slide && t <= prev.off + 0.25 && t >= prev.t);
+    if (P.voiceMode === 'unison') {
+      for (i = 0; i < 6; i++) used.push({ slot: i, midi: notes[notes.length - 1], glide: slid ? Math.max(porta, 0.06) : porta });
+    } else {
+      for (k = 0; k < notes.length && k < 6; k++) {
+        slot = -1;
+        if (slid && k === 0 && prev.slots && prev.slots.length) slot = prev.slots[0];
+        if (slot < 0) {
+          var best = -1, bestOff = Infinity;
+          for (i = 0; i < 6; i++) if (pl.vo[i].off <= t + 1e-9 && used.every(function (u) { return u.slot !== i; }) && pl.vo[i].off < bestOff) { best = i; bestOff = pl.vo[i].off; }
+          if (best < 0) { var oldest = Infinity; for (i = 0; i < 6; i++) if (used.every(function (u) { return u.slot !== i; }) && pl.vo[i].on < oldest) { best = i; oldest = pl.vo[i].on; } }
+          slot = best;
+        }
+        used.push({ slot: slot, midi: notes[k], glide: (slid && k === 0) ? Math.max(porta, 0.06) : porta });
+      }
+    }
+    for (i = 0; i < used.length; i++) { var vo = pl.vo[used[i].slot]; vo.stolen = vo.off > t + 1e-9; vo.on = t; vo.off = t + dur; vo.n++; used[i].trig = vo.n; used[i].stolen = vo.stolen; }
+    pl.prev = { t: t, off: t + dur, slide: !!(ev && ev.slide), slots: used.map(function (u) { return u.slot; }) };
+    return { used: used, off: t + dur };
+  }
+  BUILD.juno = function (inst) {
+    var ctx = inst.ctx, pl = planner(), i;
+    var node = root.Worklets ? root.Worklets.node(ctx, PROC.juno, { outputChannelCount: [2], processorOptions: { seed: 106 } }) : null;
+    inst._plan = pl;
+    if (node) {
+      var W = buildWorklet(inst, node);
+      inst.trigger = function (t, ev) {
+        var e = planJ(pl, t, ev, inst.params);
+        applyLocks(inst, pl, W, t);
+        for (var k = 0; k < e.used.length; k++) {
+          var u = e.used[k], j = u.slot;
+          cancel(W['gate' + j], t);
+          setV(W['pitch' + j], u.midi, t); setV(W['glide' + j], u.glide, t); setV(W['trig' + j], u.trig, t);
+          setV(W['gate' + j], 1, t); setV(W['gate' + j], 0, e.off);
+        }
+        var P = inst.params;
+        liveNote(inst, t, e.off + (P.vcaMode === 'gate' ? 0.05 : loglerp(J.decay, P.release) * 2.5) + 0.05);
+      };
+      inst.onPanic = function (now) { for (var j = 0; j < 6; j++) { cancel(W['gate' + j], now); setV(W['gate' + j], 0, now); } pl.prev = null; pl.vo = null; };
+      return;
+    }
+    // FALLBACK (no worklet): one native voice per note in its slot (a stolen slot's voice is cut), saw or 45 % pulse,
+    // two biquads, ADSR as ramps, mono, no chorus
+    inst.trigger = function (t, ev) {
+      var P = inst.params, e = planJ(pl, t, ev, P);
+      var aT = loglerp(J.attack, P.attack), dT = loglerp(J.decay, P.decay) / 3.5, rT = loglerp(J.decay, P.release) / 3.5;
+      if (P.vcaMode === 'gate') { aT = 0.003; dT = 1; rT = 0.002; }
+      var sus = P.vcaMode === 'gate' ? 1 : P.sustain, range = J.range[P.range] || 1, uni = P.voiceMode === 'unison';
+      for (var k = 0; k < e.used.length; k++) {
+        var u = e.used[k], slotV = pl.vo[u.slot];
+        if (slotV.fv && !slotV.fv.done) { try { K.cancel(slotV.fv.g.gain, t); target(slotV.fv.g.gain, 0, t, 0.003); slotV.fv.o.stop(t + 0.03); } catch (x) {} }
+        var o = ctx.createOscillator(), b1 = ctx.createBiquadFilter(), b2 = ctx.createBiquadFilter(), g = ctx.createGain();
+        try { o.type = P.saw || !P.pulse ? 'sawtooth' : 'square'; } catch (x) {}
+        setV(o.frequency, mtof(u.midi + P.tune / 100) * range, t);
+        var base = clamp(7.8 * Math.pow(2, P.cutoff * 200 / 12 + P.vcfKey * 5 * (u.midi - 60) / 60), 20, 18000);
+        var peak = clamp(base * Math.pow(2, J.env * P.envAmt), 20, 18000), fs2 = clamp(base * Math.pow(2, J.env * P.envAmt * sus), 20, 18000);
+        [b1, b2].forEach(function (b, q) {
+          try { b.type = 'lowpass'; } catch (x) {}
+          val(b.Q, q ? 0.5 + 10 * P.resonance : 0.5);
+          setV(b.frequency, base, t); lin(b.frequency, peak, t + aT); target(b.frequency, fs2, t + aT, dT); target(b.frequency, base, e.off, rT);
+        });
+        var amp = 0.12 * (uni ? 0.6 / 6 * 6 / Math.sqrt(6) : 1), stop = e.off + rT * 8 + 0.05;
+        setV(g.gain, 0, t); lin(g.gain, amp, t + aT); target(g.gain, amp * sus, t + aT, dT); target(g.gain, 0, e.off, rT);
+        o.connect(b1); b1.connect(b2); b2.connect(g); g.connect(inst.pre);
+        var nv = { o: o, g: g, done: false };
+        nv.rec = liveNote(inst, t, stop, (function (oo) { return function (tc) { try { oo.stop(tc); } catch (x) {} }; })(o));
+        o.onended = (function (nv2, b1_, b2_) { return function () { nv2.done = true; disc(nv2.o); disc(b1_); disc(b2_); disc(nv2.g); nv2.rec.dispose(); }; })(nv, b1, b2);
+        try { o.start(t); o.stop(stop); } catch (x) {}
+        slotV.fv = nv;
+      }
+    };
+    inst.onPanic = function () { pl.prev = null; pl.vo = null; };
   };
 
   // ------------------------------------------------------------------ API
