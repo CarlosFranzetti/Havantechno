@@ -52,3 +52,7 @@ Final counts on one tree, run by the coordinator with exit codes read directly: 
 ## 7. Files
 
 `BRIEF.md`, `transcripts/B1-sampler.md`, `B2-808.md`, `B3-909.md`, `log-A1.md`, `log-A3.md`, `log-A4.md`, `log-A6.md`, `log-A7.md`, `log-A10.md`, `log-A12.md`, `log-coordinator.md` (shared with the Crate and Lab Crews), this report. Code: `app/engine/programs.js`, `drums.js`, the sampler and fm in `synths.js`, `host.js`, `songdoc.js`, `project.js`, `app/ui/facedefs.js`, `faces.js`, `system-editor.js`, `app/shell/*`, `tools/serve.js`, `tools/drums-check.js`.
+
+## 8. Addendum, 11 November 2026 (ET)
+
+After this report was written the owner supplied the TR-808 service notes and owner's manual and the TR-909 service notes. B2 and B3 read them (third passes in their transcripts), A12 fitted the 27 voices to the manuals' tables in two passes, and A9's `tools/drums-score.js` scores every voice against them: 61 pass and 44 fail after the first fitting, 86 pass and 19 fail after the second (coordinator's run, exit 1). Sections 2 and 5 above describe the state before the manuals arrived; the statements there that the manuals were unreachable and that no voice had been scored are superseded by this addendum. Still true: nobody has compared a voice with a real machine by ear. The 808 and 909 also have hardware-style machine panels now (Patch Crew, `docs/research/2026-11-11-patch-crew/`).

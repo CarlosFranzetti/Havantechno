@@ -33,7 +33,7 @@
 
   // Envelope stretch factors from A9's scoring (the measure is peak -> 1/10 of peak on the rendered sum of bands/stages):
   // the multi-band voices decay to 1/10 sooner than their slowest band's own constant, so the bands are lengthened to land on the table.
-  var STRETCH = { hat: 1.48, cy: 1.36, cb: 2.2, cp: 2.2 };
+  var STRETCH = { hat: 1.48, cy: 1.36, cb: 2.2, cp: 1.7 };
   var LN10 = 2.302585;                         // ln(10): seconds-to-1/10 (the manual's decay definition) -> exponential time constant
   function tcOf(t10) { return Math.max(t10, 0.0005) / LN10; }
 
@@ -154,7 +154,7 @@
     var c = cacheOf(ctx);
     if (c.noise) return c.noise;
     try {
-      var sr = ctx.sampleRate || 44100, n = Math.floor(sr * 2), b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0), r = mulberry(9);
+      var sr = ctx.sampleRate || 44100, n = Math.floor(sr * 2), b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0), r = mulberry(1);
       for (var i = 0; i < n; i++) d[i] = r() * 2 - 1;
       c.noise = b;
       return b;
@@ -403,7 +403,7 @@
       setV(gB.gain, lv, ti);
       target(gB.gain, 0, ti, btc);
     }
-    setV(gT.gain, 0, t); lin(gT.gain, a * p.tail * 1.1, t + 0.002); target(gT.gain, 0, t + 0.002, tcT);   // the long-decay (reverb) envelope runs from the trigger, under the pulses
+    setV(gT.gain, 0, t); setV(gT.gain, 0, tLast); lin(gT.gain, a * p.tail * 1.1, tLast + 0.006); target(gT.gain, 0, tLast + 0.006, tcT);   // the main decay swells in behind the last pulse
     con(bp, gB); con(bp, gT); con(gB, out); con(gT, out);
     con(out, outOf(v, inst, null, t));
   }

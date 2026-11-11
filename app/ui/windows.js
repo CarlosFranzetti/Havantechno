@@ -11,6 +11,10 @@
  * Also: init, count, ids, isPinned, isHidden, selected, selectedTrack, setLink, cycleLink,
  *       embed (child window), registerChild (called by a child window on the opener).
  *
+ * Panel view (Patch Crew P4): when ui/panels.js is loaded and Panels.for(device, host) names a panel, the view segment gains a
+ * "Panel" button (first) and the body shows Panels.render(device, host) (a hardware-style panel that scales with the window).
+ * A device with a panel opens on it unless a view was chosen for that device before; without panels.js nothing changes.
+ *
  * Window rules: F-H2 round 5 (Logic Link Off/Single/Multi, V hides all, size and position per device id),
  * F-O1 round 5 (one window per device, Single link follows the selection, Pin freezes), REPORT.md section 11. */
 (function (root) {
@@ -100,6 +104,7 @@
     '.wn-wbody{flex:1 1 auto;min-height:0;overflow:auto;padding:0;position:relative;display:flex;flex-direction:column}',
     '.wn-wbody>*{box-sizing:border-box;flex:1 1 auto;min-width:0;min-height:0}',
     '.wn-wbody.wn-ctl>*{flex:0 0 auto;min-height:auto}',
+    '.wn-wbody.wn-pnl{overflow:hidden}',
     '.wn-wmsg{color:var(--dim,#8a8a96);padding:16px}',
     '.wn-wf{display:flex;gap:12px;align-items:center;padding:3px 8px;border-top:1px solid var(--line,#34343c);color:var(--dim,#8a8a96);font-size:11px;flex:0 0 auto;min-height:20px;white-space:nowrap;overflow:hidden}',
     '.wn-wf .wn-fv{color:var(--fg,#e8e8ec);flex:0 1 auto;overflow:hidden;text-overflow:ellipsis}',
@@ -165,9 +170,9 @@
   // ------------------------------------------------------------------ chrome (shared by panels and child windows)
   // ctl: { getLink(), cycleLink(), isPinned(id), pin(id, b), close(id), touch(id), rectKey(id) }
   function Chrome(h, id, ctl, embedded) {
-    var c = { id: id, host: h, view: 'editor', dev: null, face: null, el: null, embedded: !!embedded, _frame: 0, _seen: -1, _hover: null };
+    var c = { id: id, host: h, view: null, dev: null, face: null, el: null, embedded: !!embedded, _frame: 0, _seen: -1, _hover: null };
     var saved = lsGet(LS_RECT + id);
-    if (saved && saved.v === 'controls') c.view = 'controls';
+    if (saved && (saved.v === 'controls' || saved.v === 'editor' || saved.v === 'panel')) c.view = saved.v;
 
     var root_ = el('div', 'wn-win' + (embedded ? ' wn-embedded' : ''));
     root_.setAttribute('role', 'dialog');
@@ -187,9 +192,11 @@
     var seg = el('span', 'wn-wseg');
     seg.setAttribute('role', 'group');
     seg.setAttribute('aria-label', 'View');
+    var bPanel = btn('wn-panel', 'Panel', 'Panel view: the instrument drawn after the hardware');
+    bPanel.hidden = true;
     var bEditor = btn('', 'Editor', 'Editor view: the designed face');
     var bCtrl = btn('', 'Controls', 'Controls view: every parameter as a plain control');
-    seg.appendChild(bEditor); seg.appendChild(bCtrl);
+    seg.appendChild(bPanel); seg.appendChild(bEditor); seg.appendChild(bCtrl);
     var bLink = btn('wn-link', 'Link', 'Link mode: click to cycle Off, Single, Multi');
     var bPin = btn('wn-pin', '⧉', 'Pin this window to its device');
     bPin.setAttribute('aria-pressed', 'false');
@@ -214,6 +221,7 @@
       r.v = v; lsSet(LS_RECT + c.id, r);
       c.build();
     }
+    bPanel.addEventListener('click', function () { setView('panel'); });
     bEditor.addEventListener('click', function () { setView('editor'); });
     bCtrl.addEventListener('click', function () { setView('controls'); });
     bLink.addEventListener('click', function () { ctl.cycleLink(); c.refreshHead(true); });
@@ -268,6 +276,7 @@
         var tl = mode === 'mute' ? 'Mute track ' + (trackOf(d) || '') : 'Bypass ' + nm;
         toggle.title = tl; toggle.setAttribute('aria-label', tl);
       }
+      bPanel.setAttribute('aria-pressed', c.view === 'panel' ? 'true' : 'false');
       bEditor.setAttribute('aria-pressed', c.view === 'editor' ? 'true' : 'false');
       bCtrl.setAttribute('aria-pressed', c.view === 'controls' ? 'true' : 'false');
       var lm = ctl.getLink();
@@ -282,16 +291,21 @@
       if (c.face && typeof c.face.dispose === 'function') { try { c.face.dispose(); } catch (e) { note(e); } }
       c.face = null;
       body.textContent = '';
-      body.className = 'wn-wbody' + (c.view === 'controls' ? ' wn-ctl' : '');
       var d = null;
       try { d = h.device(c.id); } catch (e) { d = null; }
       c.dev = d || null;
+      var Pn = root.Panels, hasPanel = false;
+      if (d && Pn && typeof Pn.for === 'function') { try { hasPanel = !!Pn.for(d, h); } catch (e) { hasPanel = false; } }
+      bPanel.hidden = !hasPanel;
+      if (!c.view || (c.view === 'panel' && !hasPanel)) c.view = hasPanel ? 'panel' : 'editor';
+      body.className = 'wn-wbody' + (c.view === 'controls' ? ' wn-ctl' : '') + (c.view === 'panel' ? ' wn-pnl' : '');
       if (!d) { body.appendChild(el('div', 'wn-wmsg', 'This device is not in the current song.')); c.refreshHead(true); return; }
       var F = root.Faces;
       var made = null;
       try {
-        if (!F) throw new Error('Faces is not loaded');
-        if (c.view === 'controls') made = F.fallback ? F.fallback(d, 'window', h) : F.render(d, 'window', h);
+        if (c.view === 'panel') made = Pn.render(d, h);
+        else if (!F) throw new Error('Faces is not loaded');
+        else if (c.view === 'controls') made = F.fallback ? F.fallback(d, 'window', h) : F.render(d, 'window', h);
         else made = F.render(d, 'window', h);
       } catch (e) {
         note(e);
@@ -363,7 +377,7 @@
       if (c._frame % 3 === 0) c.footer();
     };
 
-    c.setDevice = function (nid) { c.id = nid; var s = lsGet(LS_RECT + nid); c.view = (s && s.v === 'controls') ? 'controls' : 'editor'; c.build(); };
+    c.setDevice = function (nid) { c.id = nid; var s = lsGet(LS_RECT + nid); c.view = (s && (s.v === 'controls' || s.v === 'editor' || s.v === 'panel')) ? s.v : null; c.build(); };
     c.dispose = function () {
       if (c._ro) { try { c._ro.disconnect(); } catch (e) { /* ignore */ } c._ro = null; }
       if (c.face && typeof c.face.dispose === 'function') { try { c.face.dispose(); } catch (e) { note(e); } }

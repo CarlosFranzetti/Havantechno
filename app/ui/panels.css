@@ -1,0 +1,18 @@
+/* Havantechno app - ui/panels.css: hardware-style instrument panels (ui/panels.js, Patch Crew P4).
+   The panel draws its own colours inside the SVG; this file only frames it, sets the type and the interaction states. */
+.pn-root { display: flex; align-items: center; justify-content: center; overflow: hidden; background: #0b0b0c; box-sizing: border-box; }
+.pn-svg { display: block; flex: 0 0 auto; max-width: 100%; max-height: 100%; user-select: none; -webkit-user-select: none; touch-action: none; }
+.pn-svg text { white-space: pre; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; pointer-events: none; }
+.pn-svg .pn-sel, .pn-svg .pn-tile text { pointer-events: auto; }
+.pn-ctl { cursor: ns-resize; outline: none; }
+.pn-ctl[aria-disabled=true] { cursor: default; }
+.pn-rotary { cursor: pointer; }
+.pn-btn, .pn-slide, .pn-tile { cursor: pointer; outline: none; }
+.pn-btn[aria-disabled=true] { cursor: default; }
+.pn-focus { fill: none; stroke: #6fc3ff; stroke-width: 2.5; opacity: 0; pointer-events: none; }
+.pn-ctl:focus-visible .pn-focus, .pn-btn:focus-visible .pn-focus, .pn-slide:focus-visible .pn-focus { opacity: 1; }
+.pn-btn:hover:not([aria-disabled=true]) > rect:first-child { filter: brightness(1.08); }
+.pn-key:active:not([aria-disabled=true]) > rect:first-child { transform: translateY(1px); }
+.pn-prior { fill: none; stroke: #ffb347; stroke-width: 1.3; stroke-dasharray: 1.5 2.5; pointer-events: none; }
+.pn-tip rect { fill: rgba(12, 12, 14, .92); stroke: #6fc3ff; stroke-width: 1; }
+.pn-tip text { fill: #f2f2f4; font-size: 12px; font-weight: 600; }
