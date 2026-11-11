@@ -183,6 +183,79 @@
     return c ? ez / (ez + eh + 1e-9) : NaN;
   }
 
+  // ------------------------------------------------------------ polyphony (decision B), L2
+  // spectral peaks of a magnitude spectrum: [{f, a}] (linear amplitude, parabolic interpolation on dB), strongest first,
+  // local maxima within `floorDb` of the strongest
+  function specPeaks(ms, sr, size, floorDb, fmax) {
+    var mx = 0, k, out = [], top = Math.min(ms.length - 2, Math.round((fmax || 5000) / sr * size));
+    for (k = 2; k < top; k++) if (ms[k] > mx) mx = ms[k];
+    var thr = mx * Math.pow(10, -(floorDb || 50) / 20);
+    for (k = 2; k < top; k++) if (ms[k] > thr && ms[k] >= ms[k - 1] && ms[k] > ms[k + 1]) {
+      var a = 20 * Math.log10(ms[k - 1] + 1e-12), b = 20 * Math.log10(ms[k] + 1e-12), c = 20 * Math.log10(ms[k + 1] + 1e-12), d = a - 2 * b + c, p = d < 0 ? 0.5 * (a - c) / d : 0;
+      out.push({ f: (k + p) * sr / size, a: Math.pow(10, (b - 0.25 * (a - c) * p) / 20) });
+    }
+    out.sort(function (x, y) { return y.a - x.a; });
+    return out;
+  }
+  // iterative multiple-F0 estimation on one frame (Klapuri 2003's estimate-and-cancel with spectral smoothness, as L1
+  // tested it): candidates are each strong peak divided by 1..4 (30 to 2000 Hz); salience = sum of matched harmonic
+  // amplitudes (tolerance 1.2 % or 1.5 bins) over sqrt(k); a candidate needs its fundamental, or its 2nd and 3rd
+  // harmonics; the winner's harmonics are reduced by at most the mean of their neighbours (smoothness), so a partial
+  // shared with another note keeps the rest; repeat until the salience falls under `stop` of the first. F0s within
+  // 50 cents merge (a detuned pair is one note).
+  function multiF0(ms, sr, size, o) {
+    o = o || {};
+    var P = specPeaks(ms, sr, size, o.floorDb || 45, o.fmax || 6000).slice(0, 60), out = [], first = 0, it, i, k;
+    if (!P.length) return out;
+    var bin = sr / size;
+    function match(f, k) { var tol = Math.max(0.012 * k * f, 1.5 * bin), best = -1, bd = Infinity; for (var j = 0; j < P.length; j++) { var d = Math.abs(P[j].f - k * f); if (d < tol && d < bd) { bd = d; best = j; } } return best; }
+    for (it = 0; it < (o.max || 8); it++) {
+      var cands = [], seen = {};
+      for (i = 0; i < Math.min(P.length, 20); i++) for (k = 1; k <= 4; k++) { var f = P[i].f / k; if (f >= 30 && f <= 2000 && P[i].a > 0) { var key = Math.round(48 * Math.log(f) / Math.LN2); if (!seen[key]) { seen[key] = 1; cands.push(f); } } }
+      var bestF = 0, bestS = 0, bestM = null;
+      cands.forEach(function (f) {
+        var m = [], s = 0, kk;
+        for (kk = 1; kk <= 12 && kk * f < (o.fmax || 6000); kk++) { var j = match(f, kk); m.push(j); if (j >= 0) s += P[j].a / Math.sqrt(kk); }
+        if (!(m[0] >= 0 && P[m[0]].a > 0) && !(m[1] >= 0 && m[2] >= 0 && P[m[1]].a > 0 && P[m[2]].a > 0)) return;
+        if (s > bestS) { bestS = s; bestF = f; bestM = m; }
+      });
+      if (!bestM || (first && bestS < (o.stop || 0.12) * first)) break;
+      if (!first) first = bestS;
+      // refine the F0 from the matched harmonics (amplitude-weighted)
+      var num = 0, den = 0;
+      bestM.forEach(function (j, q) { if (j >= 0) { num += P[j].a * P[j].f / (q + 1); den += P[j].a; } });
+      var f0 = den ? num / den : bestF;
+      var amps = bestM.map(function (j) { return j >= 0 ? P[j].a : 0; });
+      bestM.forEach(function (j, q) { if (j < 0) return; var nb = [], v; if (q > 0) nb.push(amps[q - 1]); if (q + 1 < amps.length) nb.push(amps[q + 1]); v = nb.length ? nb.reduce(function (x, y) { return x + y; }, 0) / nb.length : amps[q]; P[j].a = Math.max(0, P[j].a - Math.min(P[j].a, Math.max(v, q === 0 ? P[j].a : 0))); });
+      out.push({ f0: f0, salience: bestS });
+    }
+    out.sort(function (x, y) { return x.f0 - y.f0; });
+    var merged = [];
+    out.forEach(function (n) { var last = merged[merged.length - 1]; if (last && Math.abs(1200 * Math.log(n.f0 / last.f0) / Math.LN2) < 50) { if (n.salience > last.salience) merged[merged.length - 1] = n; } else merged.push(n); });
+    return merged;
+  }
+  // polyphony of an element: multi-F0 on 93 ms Hann frames (zero-padded to 16384) every 46 ms where the frame is within
+  // 30 dB of the loudest frame. Returns {frames: [[Hz]], counts, median, p90, maxCount, notes: {midi: frameCount},
+  // frameCount}. Also the pitch track's continuity: `glides` counts frame pairs where a single note moved by 0.3 to
+  // 7 semitones without an onset between them (a portamento or a slide), from a 10 ms YIN track on mono frames.
+  function polyphony(L, R, sr, o) {
+    o = o || {};
+    var m = D.mono(L, R), N = o.frame || 8192, hop = N >> 1, size = o.size || 32768, e = [], i, k, frames = [], counts = [], notes = {};
+    for (i = 0; i + N <= m.length; i += hop) e.push(D.energy(m, i, i + N));
+    var mx = 0; e.forEach(function (v) { if (v > mx) mx = v; });
+    var maxFrames = o.maxFrames || 160, idx = [];
+    for (k = 0; k < e.length; k++) if (e[k] > mx * 1e-3) idx.push(k);
+    var stepI = Math.max(1, Math.ceil(idx.length / maxFrames));
+    for (k = 0; k < idx.length; k += stepI) {
+      var a = idx[k] * hop, ms = D.magSpec(m.subarray ? m.subarray(a, a + N) : m.slice(a, a + N), size), f = multiF0(ms, sr, size, o).map(function (n) { return n.f0; });
+      frames.push(f); counts.push(f.length);
+      f.forEach(function (hz) { var mi = Math.round(69 + 12 * Math.log(hz / 440) / Math.LN2); notes[mi] = (notes[mi] || 0) + 1; });
+    }
+    var sc = counts.slice().sort(function (x, y) { return x - y; });
+    return { frames: frames, counts: counts, frameCount: counts.length, median: D.median(counts), p90: sc.length ? sc[Math.floor(0.9 * (sc.length - 1))] : NaN,
+             maxCount: sc.length ? sc[sc.length - 1] : 0, notes: notes, single: counts.filter(function (c) { return c === 1; }).length / (counts.length || 1) };
+  }
+
   // ------------------------------------------------------------ reverb (decision D)
   function energySeq(L, R, a) { var n = L.length - a, e = new Float64Array(Math.max(0, n)), i; for (i = 0; i < n; i++) e[i] = L[a + i] * L[a + i] + (R ? R[a + i] * R[a + i] : L[a + i] * L[a + i]); return e; }
   // free decay after the last hit: early slope (EDC -1..-11 dB), late slope (-25..-45 dB), time to -60 dB, and the late RT
@@ -266,5 +339,5 @@
     return sig;
   }
 
-  A.features = { BANDS: BANDS, hits: hits, identity: identity, yin: yin, hitPitches: hitPitches, formantSlope: formantSlope, freeDecay: freeDecay, predelay: predelay, tailSignature: tailSignature };
+  A.features = { BANDS: BANDS, hits: hits, identity: identity, yin: yin, specPeaks: specPeaks, multiF0: multiF0, polyphony: polyphony, hitPitches: hitPitches, formantSlope: formantSlope, freeDecay: freeDecay, predelay: predelay, tailSignature: tailSignature };
 })();
