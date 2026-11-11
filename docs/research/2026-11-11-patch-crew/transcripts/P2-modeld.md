@@ -262,3 +262,138 @@ Step trigger rule: a note with `ev.slide` (the new event field) or a gate overla
 2. Zavalishin, "The Art of VA Filter Design" (`native-instruments.com`), chapter on the Moog ladder.
 3. Huovilainen DAFx-04 and Välimäki and Huovilainen 2006, D'Angelo and Välimäki 2013.
 4. The CA-72 repository for the real mixer and contour constants and its licence file.
+
+## 14. Second pass: evidence from the CA-72 repository and the other clones (supersedes sections 2 to 11 where they differ)
+
+Sources read (SEEN-CODE, all via `git clone --depth 1` from github.com, files under the session scratchpad, nothing copied into the repo):
+- `idlefoundry/ca-72`: `README.md` (panel and behaviour), `docs/circuit/board1.md` to `board4.md` (circuit descriptions quoting the Moog service manual's sections and figures, with ngspice checks), `docs/calibration/README.md` (laws fitted to measurements of a hardware reference, a modern Model D recreation, 48 kHz captures), `docs/decisions.md`, `crates/ca72/src/light.rs` (pulse duties, level weights), `crates/ca72-panel/assets/worn/README.md` (how its panel looks). Licence: `LICENSE` is the GPL v3 text; README: "free software under the GNU General Public License, version 3 or later. Copyright (c) 2026 Idle Foundry Ltd." Trademark note in its README section "Trademarks" (not read in full): treat names as identification only.
+- `G4m4/openmini` README: "OpenMini is under GPLv3" (C++, relies on the SoundTailor library; repo moved to Codeberg; the clone held only the README).
+- `t2techno/Faug` README (Minimoog in Faust/JUCE, a reinterpretation with extras such as a dedicated LFO and a filter EG mod source).
+- `kevin-chau/minimoog.js`: its `js/synth/` files are Juno-style (`dco.js`, `hpf.js`), so it is not a Minimoog model in practice. Not used.
+Caveat on the evidence: the CA-72's calibration target is a hardware reference "that matches the Model D almost exactly" by the owner's ear, a modern recreation, not a 1970s unit; the CA-72 docs are secondary to the service manual, which I still have not read myself. Numbers below are therefore SEEN-CODE (a statement in a repo doc) with the Moog service manual as their stated origin where they quote it.
+
+### 14.1 Licences of the Model D emulations, and what may be ported
+
+| Project | Licence (as read) | Use here |
+|---|---|---|
+| CA-72 (Rust) | GPL-3.0-or-later (LICENSE, README) | May be combined into an AGPL-3.0-or-later project with attribution and a THIRD_PARTY.md entry. Its value is the data: laws and constants in the docs. The code is a SPICE-derived Newton solver in Rust, too heavy to port; take numbers, cite the doc file and section |
+| OpenMini (C++) | GPLv3 (README) | Same terms; not read beyond the README; low value |
+| Faug (Faust and JUCE) | No LICENSE file in the clone and none in the README | Unlicensed: all rights reserved by default. Read for ideas only, port nothing |
+| minimoog.js | No LICENSE file; the code is Juno-style | Do not port |
+| D'Angelo and Valimaki "Improved" ladder (in MoogLadders) | ISC (section 4b) | Still the recommended ladder core |
+
+### 14.2 Filter: measured laws (CA-72 docs/calibration README, changes 6, 10, 11, 12, 14, 15; docs/circuit/board4.md)
+
+- Response at EMPHASIS 0, relative to the passband, at 0.5, 0.7, 1, 1.4, 2, 2.8 and 4 times the corner: -0.6, -1.2, -3.0, -6.7, -13.1, -21.0, -30.8 dB (reference). The slope between 2 and 4 times the corner is -17.8 dB/oct, not yet 24. The 24 dB/oct asymptote needs several octaves above the corner, so A9 must fit the slope from 6x to 20x the corner (correction to my first-pass row).
+- Self-oscillation: the ratio of the oscillation frequency to the corner is 1.578 on the reference (change 3). With the filter singing alone (EMPHASIS 10, sources off, no keyboard tracking) the reference's pitch at CUTOFF -3, -2, -1, 0, +1, +2 was 110.8, 206.6, 472.2, 1073.8, 2344, 5188 Hz (session N, README "Not changed"). Dividing by 1.578 gives the corner: about 70, 131, 299, 680, 1485, 3288 Hz. At -4 the reference hardly sang.
+- CUTOFF knob law: 300 degrees of travel, eleven ticks from -5 to +5, 30 degrees apart; 10.0 octaves from stop to stop; corner 19.0 kHz at the +5 stop (measured with CUT CV 0); steeper in the middle (1.17 octave per mark) and flatter in the last mark (0.5 to 0.6 octave). From those points, my interpolation of the corner (panel p to Hz): -5: 18.6 (extrapolated), -4: 35 (extrapolated), -3: 70, -2: 131, -1: 299, 0: 680, 1: 1485, 2: 3288, 3: 7000 (extrapolated), 4: 13000 (extrapolated), 5: 19000. Interpolate linearly in log2(Hz) between the marks. Defaults: `cutoff` at the panel 0 mark, 680 Hz.
+- Control voltage: 1 octave per volt (CUT CV 0.996 to 1.018 octave per volt).
+- Keyboard control: switch 1 adds one third, switch 2 two thirds, both give 0.967 to 0.970 octave per octave (reference 0.970, the CA-72 tuned to 0.967). The keyboard voltage's zero is on C2 (MIDI 36) in the reference (change 11) and on the original's lowest key F (MIDI 41); the CA-72 follows the reference. Decision for modeld: pivot MIDI 36, so the panel cutoff is the corner at C2 and each octave above adds tracking octaves. The 44 keys are MIDI 41 to 84 (F2 to C6) at 8'.
+- EMPHASIS: passband loss at panel 2.5, 5, 7.5: -2.25, -9.53, -12.50 dB; at 6, 7, 8.5: -10.43, -11.92, -14.67 dB; the reference self-oscillates at 8.5 (peak +47 to +54 dB over the passband), and the peak rises +0.4, +11.6, +21 to +33 dB across the cutoffs at 2.5, 5, 7.5. Using passband gain = 1/(1+k), the feedback gain k at those marks is (my arithmetic): 0 at 0, 0.30 at 2.5, 2.0 at 5, 2.3 at 6, 2.9 at 7, 3.2 at 7.5, and self-oscillation (k at or just over 4) near 8 to 8.5; 10 is far into oscillation. This replaces `k = 4 * emphasis`: use piecewise linear in k through (0, 0), (2.5, 0.30), (5, 2.0), (6, 2.3), (7, 2.9), (7.5, 3.2), (8, 4.0), (10, 4.4) with 4.0 the onset. Note the model's k is per the Improved ladder's resonance scale where oscillation starts at 4 and tuning errors shift the onset; calibrate the onset on the chosen ladder with A9's self-oscillation test and move the 8 mark if needed.
+- AMOUNT OF CONTOUR (session J): with the filter singing, a contour step of 1.38 V (from 0.29 V at rest to 1.67 V at SUSTAIN 5) moved the corner by 0, 0.606, 1.506, 2.389, 3.081 octaves at amount 0, 2.5, 5, 7.5, 10. The filter contour runs from 0.15 V at rest to 4.49 V at its peak (board2.md), so the full excursion is about 4.34 V, which is about 9.7 octaves at amount 10 (my arithmetic, 3.081 / 1.38 * 4.34) and 4.7 octaves at amount 5. The knob's law as a fraction of the 10 value: 0, 0.197, 0.489, 0.775, 1.0 at 0, 2.5, 5, 7.5, 10. The sustain knob is not given; the one point (panel 5 gives 1.67 V, which is 0.35 of the 4.34 V excursion) fits `level = v^1.5`.
+- Mixer into the filter: a hard-driven filter shows a passband change of -0.43 to -0.54 dB and the corner at 0.92 to 0.95 of its clean value (reference). The input stage is a transistor pair: three oscillators at full VOLUME drive it nonlinear (board4.md item 1), so this is the 'mixer overdrive' and it is the filter's own input tanh, not a separate stage. In the Improved ladder the first stage already has `tanh((drive*in + k*V3)/(2*VT))`; set `drive` to put three oscillators at VOLUME 10 into saturation (A9 tunes by the THD test below) and do not add a second clipper.
+- Bass loss: confirmed by the EMPHASIS passband table above (-9.5 dB at 5, -12.5 dB at 7.5): a quarter makeup (my section 10, block 7) is not in the original; remove it by default and offer it later as a `drive`-style option if the owner dislikes thin bass. Correction.
+
+### 14.3 Oscillators (docs/circuit/board1.md, board3.md, calibration README, light.rs)
+
+- Range: six positions LO, 32', 16', 8', 4', 2', one octave per step; MIDI note 57 sounds 220 Hz at 8' (the factory tuning "A3 at 220.000 Hz"), so 8' is the key's concert pitch. LO is 4.74 octaves below 32' on the reference (5 octaves in the drawn circuit, assumption A3).
+- FREQUENCY knobs of oscillators 2 and 3 span 16.7 semitones (service manual 5.35 allows 14 to 17; CA-72 16.70 and 16.76), so plus or minus 8.35 semitones about the centre detent; Faug uses plus or minus 7.5. Take plus or minus 8.35. Oscillator 1 has no tune knob. TUNE (master) is not measured; Faug has plus or minus 2.5 semitones, I keep plus or minus 100 cents (a design choice).
+- OSC. 3 CONTROL off: the keyboard, tune and bend no longer reach oscillator 3; its FREQUENCY knob then spans 68.8 semitones (service manual 2.18: wider range, the later board plus or minus 3 octaves), about plus or minus 34.4 semitones. The reference sits at 198.82 Hz at 8' with the knob centred and control off. Ranges step by octaves: 16' is 99.4 Hz, 32' is 49.7 Hz, and LO is 4.74 octaves under 32', so the LO centre is 198.8 / 2^(2 + 4.74) = 1.86 Hz (my arithmetic), and the knob's span of plus or minus 2.87 octaves gives about 0.25 to 13.6 Hz; the reference measured 0.205 Hz (a click every 4.8 to 4.95 s; service manual allows 2 to 5 s) at the minimum and 10.99 Hz at the maximum on LO. Free-running mapping for modeld: freq = 198.8 Hz * 2^(octave offset from 8') * 2^(4.12 * osc3Detune / 12), with LO as offset -(2 + 4.74).
+- Waveform duty cycles (light.rs `DUTY`, factory component set): square 0.484, wide 0.304, narrow 0.189 (0.482, 0.294, 0.174 in the CA-72's provisional profile calibrated to the hardware recordings). Take 0.50 / 0.30 / 0.18. This corrects my first-pass 33 % and 20 %. Faug claims 0.7 and 0.85 (i.e. 30 % and 15 % with the other polarity); CA-72 wins for being fitted to recordings.
+- Level weights relative to a sawtooth of 1.0 (light.rs): triangle 0.895, reverse sawtooth 1.0, sawtooth 1.0, square, wide and narrow pulses 1.057. The shark-fin is a resistor-network mix of triangle and sawtooth (weights computed from R030/R031; not evaluated). Oscillator 3's second waveform is the reverse sawtooth (a transistor inverter on the ramp), the shark-fin is absent there (board1.md).
+- Mismatch and drift (decisions.md R-character): at the CA-72's 100 % character: each oscillator's tuning offset up to 8 cents, a mean-reverting drift walk of 6 cents with a 4 s time constant, a waver of 0.8 cent under 30 Hz, cutoff drift 0.03 octave. Their default is 5 % ENTROPY (small). Adopt: static offsets of plus or minus 2 cents per oscillator, drift 1.5 cents (4 s), cutoff drift 0.01 octave, with a deterministic seed.
+
+### 14.4 Mixer, noise and modulation (board3.md, board4.md, calibration README)
+
+- Each oscillator and the noise channel has a 25K linear volume pot, an on/off switch (series resistors 33K for oscillators and external input, 11K for noise), summing in a current node about 70 times smaller than the wiper, so the sum is hard to overdrive from one source and easy from three. Volume law (reference MIX against VOLUME 10): -2.10, -5.19, -9.42, -16.51 dB at panel 8, 6, 4, 2 (the pot's S shape: track fractions 0.155, 0.378, 0.623, 0.845 at 8, 6, 4, 2). One law serves oscillators 1 to 3 and noise. This replaces `v^1.5`: gain_dB(v) interpolated through (10, 0), (8, -2.10), (6, -5.19), (4, -9.42), (2, -16.51), (0, -inf).
+- External input: 1M audio pot; gain at VOLUME 2, 4, 5, 6, 8 relative to 10: -39.5, -33.1, -31.3, -29.9, -16.9 dB; OVERLOAD lamp lights at VOLUME 9.2 for the input preamp. Headphone feedback: the CA-72 offers a FEEDBACK knob (the phones volume) that models the cable from PHONES to EXTERNAL INPUT, with the loop closed at 4x sample rate with the circuit's exact preamplifier solve for the cost. Our `mixFeedback` is both the external row's volume and the cable (one sample delay is acceptable at 2x/4x oversampling).
+- Noise: white is flat within 1.1 dB from 100 Hz to 10 kHz; pink falls 10 dB per decade from 100 Hz to 1 kHz and 10.8 from 1 to 10 kHz (about 3 dB per octave); red is a pole near 106 Hz (6 dB per octave above). The NOISE switch sends white to the mixer and pink to the modulation mix, or pink to the mixer and red to the modulation mix (so the modulation noise is one step redder than the heard noise; Faug repeats this). Both noises sit at -6 dB relative to oscillator 1's triangle at VOLUME 4 with the filter open (service manual 5.8 and 5.27).
+- Modulation mix: a 25K linear pot with its wiper grounded between oscillator 3 (counterclockwise) and noise (clockwise) through 24K each into an inverting amplifier of gain -0.838 from either end. So at the middle both sources are reduced, it is not constant power. Oscillator 3's mixer volume and switch do not affect its modulation contribution (README). The modulation line goes through the MODULATION wheel (a rheostat to ground) to the oscillators' mod bus (if OSCILLATOR MODULATION) and to the filter control node through 33K (if FILTER MODULATION). Measured depth at wheel fully forward with oscillator 3's low square: oscillator 1 swings 13.5 semitones (service manual 5.37: 13 to 23), the filter corner rises 16.5 times (5.19: at least 5.45). So modAmount 1 equals a 13.5 semitone peak-to-peak pitch swing and a 4.0 octave peak-to-peak cutoff swing for a square; scale linearly with the source level. Oscillator 3 does not receive its own modulation.
+- Glide: a constant-rate slide in octaves per second, not an RC exponential. Measured 20 to 80 % slide rates, up and down: panel 2.5: 58 and 23; 5: 29 and 13; 7.5: 3.9 and 2.05; 10: 1.65 and 0.86 octaves per second (the amplifier saturates, so down is slower at the slow settings). Interpolate log(rate) linearly in panel position; fastest settings are near instant. Faug's maximum "about 6 s" agrees in magnitude (a 1 octave step at panel 10 takes 0.6 to 1.2 s; a 5 octave step 3 to 6 s). Glide is active only when notes overlap (key held) and `glideOn`. This replaces my RC model.
+- Bend range 2 semitones default in the plug-in (the instrument's wheel travel is 16.1 semitones, service manual 5.35: 13 to 17).
+
+### 14.5 Contours (board2.md, calibration README changes 7, 13, 17)
+
+- Trigger: a key triggers the contours about 8 ms after the press (C7 charging) and re-arms about 12 ms after release; legato does not retrigger (the trigger bus stays high while any key is held); lowest-key priority by default.
+- Release: DECAY on, the capacitor decays through the DECAY pot (the release equals the decay time); DECAY off, it is dumped through 1.5K: -6 to -40 dB in about 9.5 to 9.9 ms. Faug quotes about 10 ms. Use 10 ms (previous 4 ms is replaced).
+- Attack: the capacitor charges through the 1M rheostat toward +9.3 V and the flip-flop resets when the output reaches 4.49 V (filter) or 5.28 V (loudness): a concave exponential cut at the peak. Minimum 10 to 90 % attack 0.6 to 0.9 ms.
+- Decay: exponential from the peak toward the sustain level.
+- Dial law, positions as fractions of the 300 degree travel (0 to 1), printed marks on the reference dial: 0.1: 10 ms; 0.2: 200 ms; 0.4: 600 ms; 0.6: 1 s; 0.7: 5 s; 0.85: 10 s; 1.0: the top tick. The measured times at the 1 s mark, the 10 s mark and fully clockwise are (attack 10 to 90 %, decay 90 to 50 %): loudness attack 457 ms, 6.78 s, 9.47 s; loudness decay 293 ms, 4.02 s, 5.53 s; filter attack 294 ms, 4.18 s, 5.92 s; filter decay 343 ms, 4.33 s, 5.82 s. So the printed numbers are rough labels; the true laws, by the time measures above, are what P5 should fit (log-linear between the measured points, the generic audio taper below the 10 ms mark). Using decay as RC time constant tau: tau = 90-to-50 time / ln(1.8) = time / 0.588, so the 'decay' value in the table below is the 90 to 50 % time and time to -60 dB is about 11.7 x that. This replaces section 9's 0 to 35 s guess: the reference's longest decay is about 6 s (90-to-50), i.e. tau about 10 s; the 35 s figure belongs to the reissue sheet (SEEN-SNIPPET), a different unit.
+- Sustain: not reported as a law. Use level = v^1.5 as a fit to the one point above (panel 5 gives 0.35).
+
+### 14.6 Panel (crates/ca72-panel/assets/worn/README.md, calibration README change 10, board descriptions)
+
+Corrections and additions to section 8:
+- Case: oiled black walnut; the face is black textured paint over aluminium printed in white, "gently used".
+- Knobs: black, skirted, flared, with broad fluted grip, a spun aluminium cap and a white dot at twelve o'clock (the modular-systems knob); a larger version with a wider cap for the oscillators' FREQUENCY knobs; RANGE and WAVEFORM selectors are wedge pointer knobs with a cream line at twelve o'clock. Dials turn 300 degrees; CUTOFF has eleven ticks from -5 to +5, 30 degrees apart; the contour and volume knobs are 0 to 10.
+- Rockers: blue and orange moulded rockers in black openings (the controller block's are ivory); a black ribbed POWER rocker; filament lamps behind jewels (the OVERLOAD lamp); metal jacks.
+- The instrument as sold by Moog is a three-oscillator mono synth with a 44-key keyboard (F to C) and left-hand pitch and modulation wheels; the 'Decay' and 'Glide' rockers are on the left-hand controller block with the wheels (service drawing 9-12), not beside TUNE. TUNE, GLIDE, MODULATION MIX sit above the wheels.
+
+### 14.7 Revised build spec table for `modeld` (supersedes section 9)
+
+Frozen names only. Basis: source = a statement in a cloned repo's code or docs (CA-72 unless noted, with the Moog service manual as the origin it quotes); prior = my memory or design choice. "Panel" values are 0 to 10 knob marks.
+
+| Name | Range | Default | Unit | Panel to physical | Basis |
+|---|---|---|---|---|---|
+| `tune` | -100 to 100 | 0 | ct | linear, all oscillators | prior (Faug: plus or minus 2.5 st) |
+| `glide` | 0 to 10 | 3 | panel | constant-rate slide, octaves per second up/down: 2.5 gives 58/23, 5 gives 29/13, 7.5 gives 3.9/2.05, 10 gives 1.65/0.86; interpolate log-rate, above 2.5 faster up to instant at 0 | source (14.4) |
+| `glideOn` | 0 or 1 | 0 | switch | glide only when notes overlap and 1 | source |
+| `modMix` | 0 to 1 | 0 | | pot with grounded wiper: osc3 gain = 1 - m, noise gain = m for m on each side of the middle, the pot is not constant power: g3 = min(1, 2*(1-m)), gN = min(1, 2*m), then times -0.838 (inverting) | source (14.4), law of the pot from the circuit |
+| `oscMod` | 0 or 1 | 0 | switch | mod line to oscillators 1 and 2 pitch | source |
+| `filterMod` | 0 or 1 | 0 | switch | mod line to the cutoff | source |
+| `osc1Range` | 'lo','32','16','8','4','2' | '8' | ft | octave steps; 8' = key concert pitch (MIDI 57 gives 220 Hz) | source |
+| `osc1Wave` | 'tri','shark','saw','square','wide','narrow' | 'saw' | | PolyBLEP/BLAMP; duty 0.50, 0.30, 0.18; level weights tri 0.895, saw 1.0, pulses 1.057 | source |
+| `osc2Range` | as osc1 | '8' | | as osc1 | source |
+| `osc2Wave` | as osc1 | 'saw' | | as osc1 | source |
+| `osc2Detune` | -8.35 to 8.35 | 0.06 | st | linear semitones | source (16.7 st travel) |
+| `osc3Range` | as osc1 | '8' | | as osc1; with `osc3Keys` 0 see 14.3 | source |
+| `osc3Wave` | 'tri','revsaw','saw','square','wide','narrow' | 'saw' | | as osc1 but revsaw replaces shark | source |
+| `osc3Detune` | -8.35 to 8.35 | -0.06 | st | keys on: as osc2; keys off: the knob is scaled by 68.8/16.7 = 4.12, freq = 198.8 Hz * 2^(octave offset from 8') * 2^(4.12 * osc3Detune / 12), LO at 4.74 octaves under 32' | source (14.3) |
+| `osc3Keys` | 0 or 1 | 1 | switch | 0 = free-running, keyboard, tune and bend disconnected | source |
+| `mixOsc1`, `mixOsc2`, `mixOsc3` | 0 to 1 | 0.7, 0.7, 0.5 | | panel = 10 * v; gain_dB through (10, 0), (8, -2.10), (6, -5.19), (4, -9.42), (2, -16.51), (0, -inf) | source |
+| `mixNoise` | 0 to 1 | 0 | | same law; noise at -6 dB relative to oscillator 1 triangle at panel 4 | source |
+| `noiseType` | 'white','pink' | 'white' | | white: flat; pink: -3 dB/oct above 100 Hz; modulation source one step redder (pink or red, pole 106 Hz) | source |
+| `mixFeedback` | 0 to 1.5 | 0 | | external row plus the phones cable; output into the mixer sum with a one-sample delay at oversampled rate, ext law above | source / prior |
+| `cutoff` | -5 to 5 | 0 | mark | corner Hz from the points in 14.2 (680 Hz at 0, 19 kHz at +5, 18.6 Hz at -5), log-linear between marks; this is the corner at MIDI 36 when tracking is on | source |
+| `emphasis` | 0 to 10 | 2 | mark | k through (0,0), (2.5,0.30), (5,2.0), (6,2.3), (7,2.9), (7.5,3.2), (8,4.0), (10,4.4); onset of oscillation at 4 | source (14.2, derived) |
+| `contour` | 0 to 10 | 4 | mark | octaves = 9.7 * f(a) * env, f = 0, 0.197, 0.489, 0.775, 1.0 at 0, 2.5, 5, 7.5, 10 | source (14.2, derived) |
+| `keyTrack1` | 0 or 1 | 1 | switch | +1/3 octave per octave about MIDI 36 | source |
+| `keyTrack2` | 0 or 1 | 0 | switch | +2/3 (both = 0.97 of full) | source |
+| `fAttack` | 0 to 10 | 0.5 | mark | time law: log-linear through the measured points in 14.5 (1 ms floor) | source |
+| `fDecay` | 0 to 10 | 4 | mark | same, filter-decay column; also release when `decaySwitch` | source |
+| `fSustain` | 0 to 10 | 3 | mark | level = (v/10)^1.5 of the peak | source (one point) |
+| `attack` | 0 to 10 | 0.3 | mark | loudness-attack column | source |
+| `decay` | 0 to 10 | 5 | mark | loudness-decay column | source |
+| `sustain` | 0 to 10 | 7 | mark | level = (v/10)^1.5 | source (one point) |
+| `decaySwitch` | 0 or 1 | 1 | switch | 1: release = decay time; 0: about 10 ms dump | source |
+| `level` | 0 to 1.5 | 1 | | output gain | prior |
+
+Dial angles for P4: knob travel 300 degrees (-150 to +150); contour/time marks as fractions of the travel in 14.5; the 'tune, glide, mix' knobs 0 to 10. P4 can show `cutoff` as -5 to +5 and the others as 0 to 10 like the hardware; P5 maps the panel number (not 0 to 1) to physical, as the spec above does, and the engine's `{min, max, value, unit}` for those entries are the panel units.
+
+### 14.8 Behaviours P5 must reproduce and A9 measurements (revised)
+
+| Behaviour | Target | A9 measurement |
+|---|---|---|
+| Filter slope | -0.6, -1.2, -3.0, -6.7, -13.1, -21.0, -30.8 dB at 0.5, 0.7, 1, 1.4, 2, 2.8, 4 times the corner at emphasis 0; -24 dB/oct only far above | white noise, emphasis 0, cutoff 680 Hz: compare the table within 1 dB; slope from 6x to 20x the corner within 22 to 25 dB/oct |
+| Self-oscillation | oscillation at 1.578 times the corner (singing pitch) with emphasis 10, no input | cutoff -3..+2 expect 110.8, 206.6, 472.2, 1073.8, 2344, 5188 Hz within 3 %; emphasis 7 must not sing |
+| Emphasis passband loss | -2.25, -9.53, -12.50 dB at 2.5, 5, 7.5 | sine at 100 Hz, cutoff +3: within 1 dB |
+| Keyboard tracking | 0, 1/3, 2/3, 0.97 octave per octave about MIDI 36 | ringing filter on notes 29 to 77; slope of log2(f) vs octave |
+| Contour amount | 0.606, 1.506, 2.389, 3.081 octaves of corner movement for a contour step of 1.38 V (env 0.318 of full) at amount 2.5, 5, 7.5, 10; full excursion about 9.7 octaves at amount 10 | singing filter, step the contour via sustain; measure ring frequency shift |
+| Contour times | loudness attack 10 to 90 % of 457 ms, 6.78 s, 9.47 s at the 1 s mark, 10 s mark and full; decay 90 to 50 % 293 ms, 4.02 s, 5.53 s; filter column from 14.5; floor 0.6 to 0.9 ms attack | fit the envelope of a held note; allow 5 % |
+| Release | decay switch off: -6 to -40 dB in 9.5 ms | gate-off render |
+| Trigger | contours start 8 ms after a key (can be dropped to 0 to keep step timing; recommended: model as an option, default 0) and legato does not retrigger | overlapping notes |
+| Glide | constant rate in octaves per second, up faster than down at slow settings | 2 octave slide, measure pitch vs time |
+| Detune beating | beat = f * (2^(d/1200) - 1) | as before |
+| Mixer overdrive | three oscillators at VOLUME 10 into the input pair saturate; one at 4 stays linear within 0.5 dB gain compression; volume law above | 1 kHz sine-like waveform at panel 2, 4, 6, 8: -16.5, -9.4, -5.2, -2.1 dB |
+| Modulation depth | oscillator 1 swings 13.5 semitones p-p, the cutoff 4.0 octaves p-p, at modAmount 1 with a square from oscillator 3 | record the pitch/cutoff trace |
+| Noise | white flat to 1.1 dB 100 Hz to 10 kHz; pink -10 dB/decade | spectrum of the noise only |
+| Waveform duty and level | 0.50/0.30/0.18, triangle 0.895 and pulses 1.057 against saw 1.0 | time-domain duty and RMS |
+
+### 14.9 Frozen names: second-pass verdict
+
+- Still needed: `modAmount` (wheel depth, 0 to 1, default 0.5) and `bend` is not needed (the engine has no wheel).
+- `keyTrack1`/`keyTrack2` are right as frozen (the first-pass worry was wrong: both on gives full tracking).
+- `cutoff`, `emphasis`, `contour`, the six contour names and `glide` carry panel-mark units (-5..+5 and 0..10) rather than 0..1, because the laws above are published per mark; if the coordinator wants 0..1 on the wire the engine can map v to marks (v*10).
+- `decaySwitch`: confirmed single switch for both contours in the real instrument (service drawing 9-12); but the hardware reference used for the CA-72's calibration had one switch per contour, so a later `fDecaySwitch` is cheap to add.
+- Add a free-running LFO? The CA-72's own LFOs and Faug's dedicated LFO are extras of the reissue and plug-ins, not the original; keep out.
+- `osc1Range` etc. are strings. Make P4 show the stops LO 32 16 8 4 2.
