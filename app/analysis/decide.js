@@ -59,6 +59,39 @@
     return out('undecided', 'low', 0.5, ev.concat(['partial similarity: modulation, velocity layers or effects']), [{ value: 'synth', p: 0.5 }, { value: 'sample', p: 0.5 }]);
   }
 
+  // ------------------------------------------------------------ decision B: mono or poly (L2)
+  // p = features.polyphony. The question answered is the owner's: can the instrument sound more than one pitch at once?
+  // Counts are pitch classes per frame (octave layers and sub oscillators are one voice). A poly synth that plays one
+  // note at a time with no overlapping release cannot be told from a mono synth: that is said, not guessed.
+  function monoPoly(p) {
+    if (!p || p.frameCount < 5) return out('unknown', 'none', 0.5, ['fewer than 5 sounding frames']);
+    var ev = ['frames ' + p.frameCount + ', median pitch classes ' + p.median + ', 90th percentile ' + p.p90 + ', one pitch in ' + Math.round(100 * p.single) + ' %, two or more in ' + Math.round(100 * p.multi) + ' %'];
+    if (p.octaveLayered > 0.3) ev.push('octave layering in ' + Math.round(100 * p.octaveLayered) + ' % of frames: a sub or octave oscillator, or octave doubling');
+    var top = Object.keys(p.notes).sort(function (a, b) { return p.notes[b] - p.notes[a]; }).slice(0, 6);
+    ev.push('commonest notes (MIDI): ' + top.join(', '));
+    if (p.median >= 2) return out('poly', p.multi > 0.6 ? 'high' : 'medium', p.multi > 0.6 ? 0.9 : 0.75, ev.concat(['several pitches sound together: chords or overlapping notes']), [{ value: 'mono', p: p.multi > 0.6 ? 0.1 : 0.25 }]);
+    if (p.multi > 0.3) return out('poly', 'medium', 0.7, ev.concat(['mostly one pitch, but in ' + Math.round(100 * p.multi) + ' % of frames a second pitch rings on: releases overlapping the next note, which a mono synth cuts']), [{ value: 'mono', p: 0.3 }]);
+    return out('mono', p.frameCount >= 10 ? 'medium' : 'low', p.frameCount >= 10 ? 0.75 : 0.6, ev.concat(['one pitch at a time; a poly synth played one note at a time, with no overlapping release, would read the same']), [{ value: 'poly', p: 0.25 }]);
+  }
+
+  // ------------------------------------------------------------ decision C: FM or subtractive (L2, L1's method)
+  // fit = features.fmFit; poly = decide.monoPoly's value (chords are not attempted: partials of different notes collide)
+  function fmOrSubtractive(fit, poly) {
+    if (poly === 'poly') return out('not attempted', 'none', 0.5, ['several pitches at once: the per-note fit needs one note at a time']);
+    if (!fit || !fit.fm || !fit.sub) return out('unknown', 'none', 0.5, ['no clearly pitched notes with 3 or more frames of 4 or more harmonics' + (fit ? ' (' + fit.notes + ' notes, ' + fit.frames + ' frames' + (fit.sineFrames ? ', ' + fit.sineFrames + ' near-sine frames: a sine, low-index FM or a heavily filtered wave cannot be told apart' : '') + ')' : '')]);
+    var ev = ['notes ' + fit.notes + ' (' + (fit.f0s || []).join(', ') + ' Hz), frames ' + fit.frames,
+              'FM fit ' + f2(fit.fm.err) + ' dB (carrier:modulator ' + fit.fm.pair.join(':') + ', index ' + f2(fit.fm.indexStart) + ' -> ' + f2(fit.fm.indexEnd) + ')',
+              'subtractive fit ' + f2(fit.sub.err) + ' dB (' + fit.sub.wave + ' through a 2-pole lowpass, Q ' + fit.sub.q + ')',
+              'inharmonicity ' + f2(fit.inharmonicCents) + ' cents'];
+    if (fit.inharmonicCents > 15 && fit.sub.err - fit.fm.err > -1) return out('fm', 'medium', 0.75, ev.concat(['partials off the harmonic series: FM with a non-integer ratio, ring modulation, or a bell or metal sound']), [{ value: 'subtractive', p: 0.25 }]);
+    var gap = fit.sub.err - fit.fm.err;
+    if (gap > 2) return out('fm', 'high', 0.9, ev, [{ value: 'subtractive', p: 0.1 }]);
+    if (gap > 1) return out('fm', 'medium', 0.75, ev, [{ value: 'subtractive', p: 0.25 }]);
+    if (gap < -2) return out('subtractive', 'high', 0.9, ev, [{ value: 'fm', p: 0.1 }]);
+    if (gap < -1) return out('subtractive', 'medium', 0.75, ev, [{ value: 'fm', p: 0.25 }]);
+    return out('undecided', 'low', 0.5, ev.concat(['the two families fit within 1 dB of each other (e.g. FM 1:2 and a filtered square both give odd harmonics)']), [{ value: 'fm', p: 0.5 }, { value: 'subtractive', p: 0.5 }]);
+  }
+
   // ------------------------------------------------------------ decision D: reverb present, RT60, pre-delay
   // fd = features.freeDecay, pd = features.predelay (optional)
   function reverb(fd, pd) {
@@ -141,5 +174,5 @@
     return { elements: result, groups: Object.keys(groups).map(function (g) { return groups[g]; }), pairs: pairs };
   }
 
-  A.decide = { THRESHOLDS: T, synthOrSample: synthOrSample, reverb: reverb, sameReverb: sameReverb, sharedOrSpecific: sharedOrSpecific };
+  A.decide = { THRESHOLDS: T, synthOrSample: synthOrSample, monoPoly: monoPoly, fmOrSubtractive: fmOrSubtractive, reverb: reverb, sameReverb: sameReverb, sharedOrSpecific: sharedOrSpecific };
 })();

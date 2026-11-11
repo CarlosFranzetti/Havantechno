@@ -201,7 +201,7 @@
   // tested it): candidates are each strong peak divided by 1..4 (30 to 2000 Hz); salience = sum of matched harmonic
   // amplitudes (tolerance 1.2 % or 1.5 bins) over sqrt(k); a candidate needs its fundamental, or its 2nd and 3rd
   // harmonics; the winner's harmonics are reduced by at most the mean of their neighbours (smoothness), so a partial
-  // shared with another note keeps the rest; repeat until the salience falls under `stop` of the first. F0s within
+  // shared with another note keeps the rest; repeat until the salience falls under `stop` (0.25; L1's 0.12 over-counted every chord here) of the first. F0s within
   // 50 cents merge (a detuned pair is one note).
   function multiF0(ms, sr, size, o) {
     o = o || {};
@@ -219,7 +219,7 @@
         if (!(m[0] >= 0 && P[m[0]].a > 0) && !(m[1] >= 0 && m[2] >= 0 && P[m[1]].a > 0 && P[m[2]].a > 0)) return;
         if (s > bestS) { bestS = s; bestF = f; bestM = m; }
       });
-      if (!bestM || (first && bestS < (o.stop || 0.12) * first)) break;
+      if (!bestM || (first && bestS < (o.stop || 0.25) * first)) break;
       if (!first) first = bestS;
       // refine the F0 from the matched harmonics (amplitude-weighted)
       var num = 0, den = 0;
@@ -234,13 +234,13 @@
     out.forEach(function (n) { var last = merged[merged.length - 1]; if (last && Math.abs(1200 * Math.log(n.f0 / last.f0) / Math.LN2) < 50) { if (n.salience > last.salience) merged[merged.length - 1] = n; } else merged.push(n); });
     return merged;
   }
-  // polyphony of an element: multi-F0 on 93 ms Hann frames (zero-padded to 16384) every 46 ms where the frame is within
+  // polyphony of an element: multi-F0 on 93 ms Hann frames (zero-padded to 16384) every 46 ms (sweep on the truth set:
+  // 186 ms frames scored 17 of 29 exact counts, 93 ms 21 of 29) where the frame is within
   // 30 dB of the loudest frame. Returns {frames: [[Hz]], counts, median, p90, maxCount, notes: {midi: frameCount},
-  // frameCount}. Also the pitch track's continuity: `glides` counts frame pairs where a single note moved by 0.3 to
-  // 7 semitones without an onset between them (a portamento or a slide), from a 10 ms YIN track on mono frames.
+  // frameCount, single (share of frames with one pitch class), multi (share with two or more), octaveLayered}.
   function polyphony(L, R, sr, o) {
     o = o || {};
-    var m = D.mono(L, R), N = o.frame || 8192, hop = N >> 1, size = o.size || 32768, e = [], i, k, frames = [], counts = [], notes = {};
+    var m = D.mono(L, R), N = o.frame || 4096, hop = N >> 1, size = o.size || 16384, e = [], i, k, frames = [], counts = [], octs = [], notes = {};
     for (i = 0; i + N <= m.length; i += hop) e.push(D.energy(m, i, i + N));
     var mx = 0; e.forEach(function (v) { if (v > mx) mx = v; });
     var maxFrames = o.maxFrames || 160, idx = [];
@@ -248,12 +248,110 @@
     var stepI = Math.max(1, Math.ceil(idx.length / maxFrames));
     for (k = 0; k < idx.length; k += stepI) {
       var a = idx[k] * hop, ms = D.magSpec(m.subarray ? m.subarray(a, a + N) : m.slice(a, a + N), size), f = multiF0(ms, sr, size, o).map(function (n) { return n.f0; });
-      frames.push(f); counts.push(f.length);
+      // count pitch classes, not F0s: a note with a sub-octave oscillator (the engine's bass, the juno's sub) or an octave
+      // layer is one voice to this decision; the octave layering is reported separately
+      var pcs = {}, oct = 0;
+      f.forEach(function (hz) { var mi = Math.round(69 + 12 * Math.log(hz / 440) / Math.LN2), pc = ((mi % 12) + 12) % 12; if (pcs[pc]) oct++; pcs[pc] = 1; });
+      frames.push(f); counts.push(Object.keys(pcs).length); octs.push(oct);
       f.forEach(function (hz) { var mi = Math.round(69 + 12 * Math.log(hz / 440) / Math.LN2); notes[mi] = (notes[mi] || 0) + 1; });
     }
     var sc = counts.slice().sort(function (x, y) { return x - y; });
     return { frames: frames, counts: counts, frameCount: counts.length, median: D.median(counts), p90: sc.length ? sc[Math.floor(0.9 * (sc.length - 1))] : NaN,
-             maxCount: sc.length ? sc[sc.length - 1] : 0, notes: notes, single: counts.filter(function (c) { return c === 1; }).length / (counts.length || 1) };
+             maxCount: sc.length ? sc[sc.length - 1] : 0, notes: notes, single: counts.filter(function (c) { return c === 1; }).length / (counts.length || 1),
+             octaveLayered: octs.filter(function (c) { return c > 0; }).length / (octs.length || 1),
+             multi: counts.filter(function (c) { return c >= 2; }).length / (counts.length || 1) };
+  }
+
+  // ------------------------------------------------------------ FM against subtractive (decision C), L2
+  // L1's model comparison (transcript 5.1): per note, harmonic-amplitude frames (40 ms Hann, every 10 ms, 10 to 400 ms
+  // after the onset, within 30 dB of the note's loudest frame); per frame the best member of each family with one free
+  // parameter (FM: the index 0..12 for a fixed carrier:modulator pair; subtractive: the cutoff of a 2-pole resonant
+  // lowpass on a saw or a square, fixed Q); the family's error is the median over frames of the mean absolute dB error
+  // over harmonics within 40 dB of the frame's strongest, level offset removed; the global choices (ratio pair, wave,
+  // Q) are the ones with the lowest error. Before that, an inharmonicity check: the energy-weighted deviation of spectral
+  // peaks (60 to 160 ms after the onset, after attack transients) from the harmonic series of the YIN pitch, in cents.
+  var NH = 16, BES = null, IGRID = [];
+  function besselTable() {
+    if (BES) return BES;
+    BES = []; var ii, n, j, M = 96;
+    for (ii = 0; ii <= 120; ii++) IGRID.push(ii / 10);
+    for (ii = 0; ii < IGRID.length; ii++) {
+      var row = {}, x = IGRID[ii];
+      for (n = -24; n <= 24; n++) { var sum = 0; for (j = 0; j <= M; j++) { var tau = Math.PI * j / M, w = (j === 0 || j === M) ? 0.5 : 1; sum += w * Math.cos(n * tau - x * Math.sin(tau)); } row[n] = sum / M; }
+      BES.push(row);
+    }
+    return BES;
+  }
+  var FM_PAIRS = [[1, 1], [1, 2], [2, 1], [1, 3], [3, 1], [1, 4], [2, 3], [3, 2]];
+  // harmonic amplitudes (linear) of a c:m FM pair at index row b, harmonics 1..NH of the fundamental gcd
+  // The modulator's phase matters where sidebands fold over zero: frequency modulation by a sine starting at phase 0
+  // (a Web Audio oscillator on a frequency AudioParam, a DX operator) is phase modulation by -cos, so sideband n carries
+  // phase -n*pi/2 and a folded sideband the conjugate. Both phases (0 and pi/2) are tried; the better fit is kept.
+  function fmHarm(c, m, b, phi) {
+    var re = new Float64Array(NH + 1), im = new Float64Array(NH + 1), n;
+    for (n = -24; n <= 24; n++) {
+      var k = c + n * m, cr = Math.cos(n * phi), ci = -Math.sin(n * phi);
+      if (k > 0 && k <= NH) { re[k] += b[n] * cr; im[k] += b[n] * ci; }
+      else if (k < 0 && -k <= NH) { re[-k] -= b[n] * cr; im[-k] += b[n] * ci; }
+    }
+    var out = []; for (n = 1; n <= NH; n++) out.push(Math.sqrt(re[n] * re[n] + im[n] * im[n])); return out;
+  }
+  function subHarm(wave, q, w0) {   // w0 = f0 / cutoff
+    var out = [], k;
+    for (k = 1; k <= NH; k++) { var a = (wave === 'square' && k % 2 === 0) ? 0 : 1 / k, w = k * w0, H = 1 / Math.sqrt((1 - w * w) * (1 - w * w) + (w / q) * (w / q)); out.push(a * H); }
+    return out;
+  }
+  function frameErr(obs, model) {   // obs, model: dB arrays (NaN = ignored); level offset removed; model clipped at -60 re its max
+    var mx = -Infinity, i, d = [], n = 0, off = 0;
+    for (i = 0; i < model.length; i++) if (model[i] > mx) mx = model[i];
+    for (i = 0; i < obs.length; i++) if (obs[i] === obs[i]) { var mv = Math.max(model[i], mx - 60); d.push(obs[i] - mv); off += obs[i] - mv; n++; }
+    if (n < 4) return NaN; off /= n; var e = 0;
+    for (i = 0; i < d.length; i++) e += Math.abs(d[i] - off);
+    return e / n;
+  }
+  function toDbArr(a) { return a.map(function (v) { return 20 * Math.log10(v + 1e-9); }); }
+  function fmFit(L, R, sr, o) {
+    o = o || {};
+    var h = hits(L, R, sr, o), hp = hitPitches(L, R, sr, { hits: h }), res = { notes: 0, frames: 0, inharmonicCents: NaN, fm: null, sub: null };
+    var notes = hp.notes.slice(0, o.maxNotes || 6);
+    if (!notes.length) return res;
+    var B = besselTable(), W = Math.round(0.04 * sr), hopF = Math.round(0.01 * sr), size = 8192, frames = [], dev = 0, devW = 0;
+    notes.forEach(function (nt) {
+      var x = nt.full, f0 = nt.f0, fr = [], mx = -Infinity, t;
+      for (t = Math.round(0.01 * sr); t + W <= Math.min(x.length, Math.round(0.4 * sr)); t += hopF) {
+        var ms = D.magSpec(x.subarray ? x.subarray(t, t + W) : x.slice(t, t + W), size), hd = [], e = 0, k;
+        for (k = 1; k <= NH; k++) {
+          var c = k * f0 / sr * size, lo = Math.max(1, Math.floor(c * 0.97)), hi = Math.min(ms.length - 1, Math.ceil(c * 1.03)), m = 0, j;
+          for (j = lo; j <= hi; j++) if (ms[j] > m) m = ms[j];
+          hd.push(k * f0 < sr * 0.45 ? 20 * Math.log10(m + 1e-12) : NaN); e += m * m;
+        }
+        fr.push({ h: hd, e: 10 * Math.log10(e + 1e-24) }); if (fr[fr.length - 1].e > mx) mx = fr[fr.length - 1].e;
+      }
+      fr.forEach(function (f) { if (f.e > mx - 30) { var top = Math.max.apply(null, f.h.filter(function (v) { return v === v; })), hh = f.h.map(function (v) { return v > top - 40 ? v : NaN; }); if (hh.filter(function (v) { return v === v; }).length >= 4) frames.push(hh); else res.sineFrames = (res.sineFrames || 0) + 1; } });
+      // inharmonicity on the first 60 ms: spectral peaks against the harmonic series
+      var seg = x.subarray ? x.subarray(Math.round(0.06 * sr), Math.min(x.length, Math.round(0.16 * sr))) : x.slice(Math.round(0.06 * sr), Math.round(0.16 * sr)), sp = specPeaks(D.magSpec(seg, 16384), sr, 16384, 30, Math.min(8000, 20 * f0));
+      sp.slice(0, 12).forEach(function (pk) { var k = Math.max(1, Math.round(pk.f / f0)), cents = Math.abs(1200 * Math.log(pk.f / (k * f0)) / Math.LN2); dev += pk.a * pk.a * Math.min(cents, 100); devW += pk.a * pk.a; });
+    });
+    res.notes = notes.length; res.frames = frames.length; res.inharmonicCents = devW ? dev / devW : NaN; res.f0s = notes.map(function (n) { return Math.round(n.f0 * 10) / 10; });
+    if (frames.length < 3) return res;
+    // FM family
+    var bestFm = null;
+    FM_PAIRS.forEach(function (pr) { [0, Math.PI / 2].forEach(function (phi) {
+      var models = B.map(function (b) { return toDbArr(fmHarm(pr[0], pr[1], b, phi)); }), errs = [], idx = [];
+      frames.forEach(function (f) { var be = Infinity, bi = 0; models.forEach(function (m, i) { var e = frameErr(f, m); if (e < be) { be = e; bi = i; } }); if (be < Infinity) { errs.push(be); idx.push(IGRID[bi]); } });
+      var med = D.median(errs);
+      if (med === med && (!bestFm || med < bestFm.err)) bestFm = { err: med, pair: pr, ratio: pr[1] / pr[0], phase: phi, indexStart: D.median(idx.slice(0, 3)), indexEnd: D.median(idx.slice(-3)) };
+    }); });
+    // subtractive family
+    var bestSub = null, W0 = []; for (var g = 0; g < 48; g++) W0.push(Math.pow(2, -5.5 + 8.5 * g / 47));   // f0/cutoff from 1/45 to 2
+    ['saw', 'square'].forEach(function (wave) { [0.7, 1.5, 3, 6, 12].forEach(function (q) {
+      var models = W0.map(function (w0) { return toDbArr(subHarm(wave, q, w0)); }), errs = [];
+      frames.forEach(function (f) { var be = Infinity; models.forEach(function (m) { var e = frameErr(f, m); if (e < be) be = e; }); if (be < Infinity) errs.push(be); });
+      var med = D.median(errs);
+      if (med === med && (!bestSub || med < bestSub.err)) bestSub = { err: med, wave: wave, q: q };
+    }); });
+    res.fm = bestFm; res.sub = bestSub;
+    return res;
   }
 
   // ------------------------------------------------------------ reverb (decision D)
@@ -339,5 +437,5 @@
     return sig;
   }
 
-  A.features = { BANDS: BANDS, hits: hits, identity: identity, yin: yin, specPeaks: specPeaks, multiF0: multiF0, polyphony: polyphony, hitPitches: hitPitches, formantSlope: formantSlope, freeDecay: freeDecay, predelay: predelay, tailSignature: tailSignature };
+  A.features = { BANDS: BANDS, hits: hits, identity: identity, yin: yin, specPeaks: specPeaks, multiF0: multiF0, polyphony: polyphony, fmFit: fmFit, hitPitches: hitPitches, formantSlope: formantSlope, freeDecay: freeDecay, predelay: predelay, tailSignature: tailSignature };
 })();
