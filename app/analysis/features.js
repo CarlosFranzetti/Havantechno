@@ -189,7 +189,7 @@
   // in three bands. A reverb shows as a late slope far longer than the early one; dry hits end with a short late slope.
   function freeDecay(L, R, sr, o) {
     o = o || {};
-    var m = D.mono(L, R), on = D.onsets(m, sr), res = { lastOnset: NaN, early: NaN, late: NaN, to60: NaN, reached45: false, bands: [] };
+    var m = D.mono(L, R), on = D.onsets(m, sr), res = { lastOnset: NaN, early: NaN, late: NaN, to60: NaN, reached45: false, bands: [], stereo: false, tailCorr: NaN, sideLate: NaN };
     if (!on.length) return res;
     var a = on[on.length - 1], edc = D.schroeder(energySeq(L, R, a)), i;
     res.lastOnset = a / sr; res.early = D.rtFit(edc, sr, -1, -11); res.late = D.rtFit(edc, sr, -25, -45);
@@ -199,6 +199,23 @@
     for (i = 0; i < B.length; i++) {
       var bl = D.band(L.subarray ? L.subarray(a) : L.slice(a), B[i][0], B[i][1], sr, 4), br = R ? D.band(R.subarray ? R.subarray(a) : R.slice(a), B[i][0], B[i][1], sr, 4) : null;
       res.bands.push({ lo: B[i][0], hi: B[i][1], late: D.rtFit(D.schroeder(energySeq(bl, br, 0)), sr, -25, -45) });
+    }
+    // L2: stereo evidence. A reverb tail is decorrelated between channels; an element's own decay (an 808 kick's ring,
+    // the 808 clap's built-in noise tail) stays mono. tailCorr = L/R correlation from the EDC's -25 dB point to its -45 dB
+    // point (the late window of `late`; from -15 dB the engine's hat still carried its near-mono dry decay, corr 0.97). sideLate = the decay of the side channel alone (EDC -5..-35 dB), which for a centred dry source is the wet
+    // signal only; when the element decays more slowly than the reverb, both read the element's decay.
+    res.stereo = !!R && R !== L;
+    if (res.stereo) {
+      var same = true; for (i = a; i < Math.min(L.length, a + 4096); i++) if (L[i] !== R[i]) { same = false; break; }
+      if (same) res.stereo = false;
+    }
+    if (res.stereo) {
+      var i15 = -1, i45 = -1;
+      for (i = 0; i < edc.length; i++) { if (i15 < 0 && edc[i] < -25) i15 = i; if (edc[i] < -45) { i45 = i; break; } }
+      if (i15 >= 0 && i45 > i15 + Math.round(0.02 * sr)) res.tailCorr = D.corr(L.slice(a + i15, a + i45), R.slice(a + i15, a + i45));
+      var S = D.side(L.subarray ? L.subarray(a) : L.slice(a), R.subarray ? R.subarray(a) : R.slice(a)), se = new Float64Array(S.length);
+      for (i = 0; i < S.length; i++) se[i] = S[i] * S[i];
+      res.sideLate = D.rtFit(D.schroeder(se), sr, -5, -35);
     }
     return res;
   }

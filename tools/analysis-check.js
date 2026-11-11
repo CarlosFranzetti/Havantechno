@@ -84,6 +84,21 @@ for (var i = 0; i < panned[0].length; i++) { panned[0][i] = 0.8 * dryNoise[i] + 
 var pp = F.predelay(panned[0], panned[1], SR);
 check('D pre-delay refused on a panned dry source', pp.ms === null, pp.reason);
 
+// L2: long decays. An 808-style ring (55 Hz, 0.9 s to -60 dB) at a 0.3 s spacing: every hit found (the old detector
+// needed a 45 dB fall between hits and read one hit), and its long decay is not called reverb (narrow band, mono).
+function ring(n) { var y = new Float64Array(n), i; for (i = 0; i < n; i++) y[i] = Math.sin(2 * Math.PI * 55 * i / SR) * Math.pow(10, -3 * (i / SR) / 0.9) * Math.min(1, i / 20); return y; }
+var ringOne = ring(Math.round(1.5 * SR)), ringTrack = track(function () { return ringOne; }, 20, 0.3);
+var ringOn = D.onsets(ringTrack, SR);
+check('onsets: 20 overlapping 808-style rings at 0.3 s -> 20 onsets', ringOn.length === 20, ringOn.length + ' onsets');
+var ringCopy = new Float64Array(ringTrack), rRing = X.reverb(F.freeDecay(ringTrack, ringCopy, SR));
+check('D a resonator\'s own long decay (mono, one band) is not reverb', rRing.value.present === false, 'late ' + F.freeDecay(ringTrack, ringCopy, SR).late.toFixed(2) + ' s, ' + rRing.confidence);
+// a stereo file whose long tail is identical in both channels: the element's own decay, not a stereo reverb
+var monoTail = [new Float64Array(wetA[0].length), new Float64Array(wetA[0].length)];
+for (var q = 0; q < monoTail[0].length; q++) { monoTail[0][q] = wetA[0][q]; monoTail[1][q] = wetA[0][q] * 0.9; }
+monoTail[1][100] += 1e-3;   // not bit-identical, so the file counts as stereo
+var rMono = X.reverb(F.freeDecay(monoTail[0], monoTail[1], SR));
+check('D a long tail with L/R correlation 1 in a stereo file: own decay, not reverb', rMono.value.present === false && rMono.value.tailCorr > 0.99, 'tail corr ' + rMono.value.tailCorr);
+
 // ------------------------------------------------------------ the engine's renders (labels from GUIDANCE_V3)
 function readWav(p) {
   var b = fs.readFileSync(p), off = 12, fmt = null, data = null;

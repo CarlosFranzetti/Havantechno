@@ -13,7 +13,7 @@
   if (!F || !D) throw new Error('Analysis.decide: load dsp.js and features.js first');
 
   function out(value, conf, p, ev, alt) { return { value: value, confidence: conf, p: p, evidence: ev, alternatives: alt || [] }; }
-  function f2(x) { return x === x ? x.toFixed(2) : 'n/a'; }
+  function f2(x) { return typeof x === 'number' && x === x ? x.toFixed(2) : 'n/a'; }
 
   // ------------------------------------------------------------ decision A: synth or sample
   // id = Analysis.features.identity(...); o.formantSlope (from features.formantSlope) and o.libraryMatch (best NCC
@@ -57,10 +57,22 @@
   function reverb(fd, pd) {
     if (!fd || !(fd.lastOnset >= 0)) return out({ present: 'unknown' }, 'none', 0.5, ['no onset found']);
     var ev = ['free decay after the last hit at ' + fd.lastOnset.toFixed(2) + ' s: early slope ' + f2(fd.early) + ' s, late slope ' + f2(fd.late) + ' s (EDC -25..-45 dB)'];
-    var late = fd.late, present = late === late && late >= 0.5 && (!(fd.to60 === fd.to60) || fd.to60 >= 0.4);
-    var v = { present: present, rt60: present ? late : null, method: 'Schroeder EDC, -25..-45 dB, free decay', bands: fd.bands, predelayMs: null };
+    var late = fd.late, long = late === late && late >= 0.5 && (!(fd.to60 === fd.to60) || fd.to60 >= 0.4), present = long, monoTail = false;
+    // L2: a long decay is a reverb only if it is decorrelated (stereo) or broadband (mono files). Engine truth: the 808
+    // kick's ring read late 0.90 s and the 808 clap's built-in tail 0.53 s, both with L = R (correlation 1); the engine's reverb send read -0.00 to 0.71 in the -25..-45 dB window (clap, hat, pad, stab), so only > 0.99 counts as mono.
+    if (long && fd.stereo && fd.tailCorr === fd.tailCorr && fd.tailCorr > 0.99) { present = false; monoTail = true; }
+    var wideBands = (fd.bands || []).filter(function (b) { return b.late >= 0.3; }).length;
+    if (long && !fd.stereo && wideBands < 2) present = false;
+    var v = { present: present, rt60: present ? late : null, method: 'Schroeder EDC, -25..-45 dB, free decay', bands: fd.bands, predelayMs: null,
+              tailCorr: fd.tailCorr === fd.tailCorr ? fd.tailCorr : null, sideRt60: fd.sideLate === fd.sideLate ? fd.sideLate : null };
+    if (fd.tailCorr === fd.tailCorr) ev.push('tail L/R correlation ' + f2(fd.tailCorr));
+    if (monoTail) ev.push('the long decay (' + f2(late) + ' s) is identical in both channels: the element\'s own decay (a resonator, or a built-in mono tail), not a stereo reverb; a mono reverb would read the same');
+    if (long && !fd.stereo) ev.push('mono file: reverb told from the element\'s own decay only by bandwidth (' + wideBands + ' of 3 bands decay slowly)');
+    if (present && v.sideRt60 != null) ev.push('side-channel decay ' + f2(v.sideRt60) + ' s (wet only for a centred source); if the element decays more slowly than the reverb, both values are the element\'s decay and bound the reverb\'s RT60 from above');
     if (pd) { if (pd.ms != null && present) { v.predelayMs = pd.ms; ev.push('pre-delay ' + pd.ms.toFixed(1) + ' ms (side-channel onset)'); } else if (pd.reason) ev.push('pre-delay not measured: ' + pd.reason); }
     if (!fd.reached45) { ev.push('the decay did not reach -45 dB before the end'); return out(v, 'low', 0.6, ev); }
+    if (long && !fd.stereo) return out(v, 'low', 0.6, ev);
+    if (monoTail) return out(v, 'medium', 0.75, ev);
     if (present) return out(v, late > 1 ? 'high' : 'medium', late > 1 ? 0.95 : 0.75, ev);
     return out(v, (late === late && late < 0.25) ? 'high' : 'medium', (late === late && late < 0.25) ? 0.95 : 0.7, ev.concat(['no long tail']));
   }
