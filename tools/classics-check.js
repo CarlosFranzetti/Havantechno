@@ -320,6 +320,18 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
   var x = run('hvt-tb303', 0.05, {}); x.proc.port.onmessage({ data: 'stop' });
   ok(x.proc.process([], [[new Float32Array(128)]], (function () { var P = {}; PROCS['hvt-tb303'].parameterDescriptors.forEach(function (dd) { P[dd.name] = new Float32Array([dd.defaultValue]); }); return P; })()) === false, "the 'stop' message ends the processor");
 
+  // output level (coordinator, after the first verification): a hot default-ish patch peaks at or under 0.9
+  var sd8 = 0.125, e8 = { trig: [], gate: [], pitch: [], acc: [] }, ln = [36, 36, 48, 36, 39, 36, 43, 48, 36, 36, 46, 36, 41, 36, 48, 51];
+  for (q = 0; q < 32; q++) { var tq = 0.05 + q * sd8; e8.trig.push([tq, q + 1]); e8.pitch.push([tq, ln[q % 16]]); e8.acc.push([tq, [2, 5, 6, 10, 13, 14].indexOf(q % 16) >= 0 ? 1 : 0]); e8.gate.push([tq, 1], [tq + sd8 / 2, 0]); }
+  var hot = run('hvt-tb303', 4.3, e8, { resonance: 0.8, envMod: 0.7, accent: 0.7 }), def3 = run('hvt-tb303', 4.3, e8, {});
+  var dm = {}, sm = C.spec('modeld');
+  Object.keys(sm).forEach(function (k) { if (k !== 'level') C.values('modeld', k, sm[k].value).forEach(function (pq) { dm[pq[0]] = pq[1]; }); });
+  var mb = { trig: [], gate: [], pitch: [] }, bl8 = [36, 36, 43, 36, 39, 36, 41, 34];
+  for (q = 0; q < 16; q++) { var tb = 0.05 + q * 0.25; mb.trig.push([tb, q + 1]); mb.pitch.push([tb, bl8[q % 8]]); mb.gate.push([tb, 1], [tb + 0.2275, 0]); }
+  var mdl = run('hvt-modeld', 4.5, mb, dm);
+  ok(peakOf(hot, 0, hot.length) <= 0.9 && peakOf(def3, 0, def3.length) <= 0.9 && peakOf(hot, 0, hot.length) > 0.5, 'tb303 output: resonance 0.8 / envMod 0.7 / accent 0.7 with six accents peaks ' + peakOf(hot, 0, hot.length).toFixed(3) + ', defaults with accents ' + peakOf(def3, 0, def3.length).toFixed(3) + ' (<= 0.9)');
+  ok(peakOf(mdl, 0, mdl.length) <= 0.9 && peakOf(mdl, 0, mdl.length) > 0.5, 'modeld output: the default patch\'s eighth-note bass line peaks ' + peakOf(mdl, 0, mdl.length).toFixed(3) + ' (<= 0.9)');
+
   // ------------------------------------------------------------------ 7. hooks
   console.log('7. hooks');
   var sh = load(sandbox(false), ['core', 'synths', 'drums', 'worklets', 'classics', 'processors', 'songdoc', 'sequencer', 'song', 'host']);

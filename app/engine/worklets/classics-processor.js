@@ -138,7 +138,7 @@ var T303 = {
   hp1: 44.486, hp2: 24.167, ap: 14.008, fbHp: 150, // Hz (Open303)
   cutFloor: 200, cutCeil: 20000, // Hz (Open303 TeeBeeFilter clamp)
   duty: 0.47,                    // square: Open303 -tanh(dB2amp(36.9) x saw + 4.37) is high for 47 % of a period
-  outGain: 0.5                   // calibration: an unaccented saw note at the defaults peaks near 0.5 (P5, measured)
+  outGain: 0.3                   // calibration: a resonance 0.8 / envMod 0.7 / accent 0.7 line with six accents peaks near 0.85 (P5, measured; was 0.5)
 };
 // Open303 calculateEnvModScalerAndOffset, measured mapping (useMeasuredMapping = true)
 function envMap(cutoff, envMod) {
@@ -295,7 +295,7 @@ var MD = {
   dump: 0.00243,                              // s, release RC with the decay switch off: -6 to -40 dB in 9.5 ms (CA-72)
   offsetCt: 2, driftCt: 1.5, driftTau: 4,     // static offset, drift walk and its time constant per oscillator (P2 14.3, prior)
   cutDriftOct: 0.01,
-  outGain: 1
+  outGain: 0.56                               // calibration: the default patch's eighth-note bass line peaks near 0.85 (P5, measured; was 1)
 };
 
 class ModelDProcessor extends AudioWorkletProcessor {
