@@ -59,19 +59,28 @@
   // `off` dB under that peak or `rearm` dB under the peak since the last onset (off by default; pass it for wet, dense
   // material where tails never fall 45 dB between hits); each onset is refined back to the last sample 50 dB under the following 50 ms maximum of a
   // 1 ms envelope.
+  // L2 (2026-11-11): `rearm` now defaults to 10 dB, because long decays (an 808 kick, toms, cymbals at a 0.3 s
+  // spacing) never fall 45 dB under the peak between hits and were read as one hit. Re-arming and the rise test use a
+  // 25 ms envelope (`smooth` ms), because a 3 ms RMS of a 50 Hz tone ripples by more than 10 dB within one period and
+  // re-fired three times per 808 kick. A re-armed detector fires only on a rise of `rise` dB (default 8) of that envelope
+  // above its trough since re-arming, so a tail that stays above the threshold does not fire by itself, and the
+  // refinement stops at the trough level instead of searching for -50 dB.
   function onsets(x, sr, o) {
     o = o || {};
-    var on = o.on == null ? -30 : o.on, off = o.off == null ? -45 : o.off, rearm = o.rearm == null ? Infinity : o.rearm, lp = -Infinity, gap = Math.round((o.minGap || 0.08) * sr);
-    var e = toDb(env(x, 3, sr)), e1 = toDb(env(x, 1, sr)), pk = -Infinity, i, j, out = [], armed = true, last = -1e12;
+    var on = o.on == null ? -30 : o.on, off = o.off == null ? -45 : o.off, rearm = o.rearm == null ? 10 : o.rearm, rise = o.rise == null ? 8 : o.rise;
+    var lp = -Infinity, gap = Math.round((o.minGap || 0.08) * sr), trough = -Infinity;
+    var e = toDb(env(x, 3, sr)), e1 = toDb(env(x, 1, sr)), es = toDb(env(x, o.smooth || 25, sr)), pk = -Infinity, i, j, out = [], armed = true, last = -1e12;
     for (i = 0; i < e.length; i++) if (e[i] > pk) pk = e[i];
     var w50 = Math.round(0.05 * sr), w30 = Math.round(0.03 * sr);
     for (i = 0; i < e.length; i += 8) {
-      if (armed && e[i] > pk + on && i - last > gap) {
+      if (armed && es[i] < trough) trough = es[i];
+      if (armed && e[i] > pk + on && es[i] > trough + rise && i - last > gap) {
         var loc = -Infinity, a = Math.max(1, i - w30), k = a;
         for (j = i; j < Math.min(e1.length, i + w50); j++) if (e1[j] > loc) loc = e1[j];
-        for (j = i; j >= a; j--) if (e1[j] < loc - 50) { k = j + 1; break; }
-        out.push(k); last = i; armed = false; lp = e[i];
-      } else if (!armed) { if (e[i] > lp) lp = e[i]; if (e[i] < pk + off || e[i] < lp - rearm) armed = true; }
+        var thr = Math.max(loc - 50, trough + 3);
+        for (j = i; j >= a; j--) if (e1[j] < thr) { k = j + 1; break; }
+        out.push(k); last = i; armed = false; lp = es[i];
+      } else if (!armed) { if (es[i] > lp) lp = es[i]; if (e[i] < pk + off || es[i] < lp - rearm) { armed = true; trough = Math.min(es[i], e[i] < pk + off ? -Infinity : es[i]); } }
     }
     return out;
   }

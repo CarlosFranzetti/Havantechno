@@ -28,7 +28,7 @@
 
   var FAMILY = {
     kick: 'drums', clap: 'drums', hat_closed: 'drums', hat_open: 'drums', shaker: 'drums', perc: 'drums',
-    sub: 'bass', bass: 'bass', stab: 'keys', lead: 'keys', pad: 'keys', riser: 'fx', impact: 'fx', sampler: 'drums',
+    sub: 'bass', bass: 'bass', tb303: 'bass', modeld: 'bass', juno: 'keys', stab: 'keys', lead: 'keys', pad: 'keys', riser: 'fx', impact: 'fx', sampler: 'drums',
     compressor: 'dynamics', limiter: 'dynamics', sidechain: 'dynamics', delay: 'time', reverb: 'time', chorus: 'time',
     filter: 'tone', eq3: 'tone', saturator: 'tone', widener: 'utility', channel: 'utility'
   };
@@ -320,17 +320,26 @@
             ctx = opts.context || (AC ? new AC({ latencyHint: 'interactive' }) : null);
           }
           if (!ctx) { startPromise = null; resolve(false); return; }
-          live = true;
-          rebuild(true);
-          emit('document', { reason: 'start', rebuilt: true });
-          if (missingIds().length) host.reloadAudio(lastAudioOpts);
+          // resume inside the user gesture; build only after the worklet modules resolved on ctx (worklets.js)
           var r = (ctx.state !== 'running' && ctx.resume) ? ctx.resume() : null;
-          if (r && r.then) r.then(function () { resolve(true); }, function () { resolve(true); });
-          else resolve(true);
-        } catch (e) {
+          if (r && r.catch) r.catch(function () {});
+          var W = root.Worklets, wl = (W && typeof W.load === 'function') ? W.load(ctx) : null;
+          var go = function () {
+            try {
+              live = true;
+              rebuild(true);
+              emit('document', { reason: 'start', rebuilt: true });
+              if (missingIds().length) host.reloadAudio(lastAudioOpts);
+              if (r && r.then) r.then(function () { resolve(true); }, function () { resolve(true); });
+              else resolve(true);
+            } catch (e2) { fail(e2); }
+          };
+          if (wl && wl.then) wl.then(go, go); else go();
+        } catch (e) { fail(e); }
+        function fail(e) {
           warn('start failed: ' + (e && e.message));
           ctx = null; live = false; startPromise = null;
-          try { rebuild(true); } catch (e2) {}
+          try { rebuild(true); } catch (e3) {}
           resolve(false);
         }
       });

@@ -539,6 +539,11 @@
         if (to <= from) { reject(new Error('empty range')); return; }
         var sr = opts.sampleRate || 44100, seconds = (to - from) * dry.barSec() + (opts.tail == null ? 2.5 : opts.tail) + 0.1;
         var octx = new OAC(2, Math.ceil(sr * seconds), sr);
+        // worklet modules (worklets.js) must have resolved on this context before instruments are built on it
+        var WL = root.Worklets, go = function () { try { build(); } catch (e) { reject(e); } };
+        if (WL && typeof WL.load === 'function') WL.load(octx).then(go, go); else go();
+      } catch (e) { reject(e); }
+      function build() {
         var seq = create(octx, { bpm: dry.bpm, swing: dry.swing });
         buildFn(seq);
         var t0 = 0.05, a = from * STEPS, b = to * STEPS, sd = seq.stepSec(), chunk = seq.barSec();
@@ -563,7 +568,7 @@
         var p = octx.startRendering();
         if (p && p.then) p.then(resolve, reject);
         else { octx.oncomplete = function (e) { resolve(e.renderedBuffer); }; }
-      } catch (e) { reject(e); }
+      }
     });
   }
 

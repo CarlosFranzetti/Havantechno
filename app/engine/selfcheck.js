@@ -64,7 +64,7 @@ FakeContext.prototype.flush = function () { var s = this._srcs.splice(0); for (v
 
 function load(sandbox) {
   // programs.js (A7, batch 1) loads after synths.js when it exists
-  var files = ['core', 'synths', 'drums', 'programs', 'processors', 'songdoc', 'sequencer', 'song'].filter(function (f) { return f !== 'programs' || fs.existsSync(path.join(__dirname, 'programs.js')); });
+  var files = ['core', 'synths', 'drums', 'worklets', 'classics', 'programs', 'processors', 'songdoc', 'sequencer', 'song'].filter(function (f) { return f !== 'programs' || fs.existsSync(path.join(__dirname, 'programs.js')); });
   files.forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, f + '.js'), 'utf8'), sandbox, { filename: f + '.js' });
   });

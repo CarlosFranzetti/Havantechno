@@ -96,20 +96,68 @@
     return res;
   }
 
-  // formant movement across notes: notes = [{x: segment, f0: Hz}]; log-log slope of the envelope peak against f0.
-  // 1 = the envelope moves with pitch (a transposed sample), 0 = a fixed filter (a synth). Needs 3 or more pitches.
+  // fundamental frequency of one segment by YIN's cumulative-mean-normalised difference (de Cheveigne and Kawahara,
+  // JASA 2002), threshold 0.15, parabolic refinement. Returns {f0, clarity (1 - d'), } or f0 NaN when unvoiced.
+  function yin(x, sr, fmin, fmax) {
+    fmin = fmin || 30; fmax = fmax || 1500;
+    var W = Math.min(x.length >> 1, Math.round(sr / fmin) * 2), tmax = Math.min(W, Math.round(sr / fmin)), tmin = Math.max(2, Math.floor(sr / fmax));
+    if (W < tmax || tmax <= tmin + 2) return { f0: NaN, clarity: 0 };
+    var d = new Float64Array(tmax + 1), t, j, run = 0, best = -1;
+    for (t = 1; t <= tmax; t++) { var s = 0; for (j = 0; j < W; j++) { var v = x[j] - x[j + t]; s += v * v; } d[t] = s; }
+    var dn = new Float64Array(tmax + 1); dn[0] = 1;
+    for (t = 1; t <= tmax; t++) { run += d[t]; dn[t] = run > 0 ? d[t] * t / run : 1; }
+    for (t = tmin; t < tmax; t++) if (dn[t] < 0.15) { while (t + 1 < tmax && dn[t + 1] < dn[t]) t++; best = t; break; }
+    if (best < 0) { var mv = Infinity; for (t = tmin; t < tmax; t++) if (dn[t] < mv) { mv = dn[t]; best = t; } if (mv > 0.35) return { f0: NaN, clarity: 1 - mv }; }
+    var a = dn[best - 1], b = dn[best], c = dn[best + 1], den = a - 2 * b + c, sh = den > 0 ? 0.5 * (a - c) / den : 0;
+    return { f0: sr / (best + sh), clarity: 1 - b };
+  }
+
+  // notes of a pitched element: per hit, YIN on 80 ms starting 20 ms after the onset. Returns
+  // {notes: [{x, f0, at}], distinct: count of distinct semitones}. Used for the formant test (decision A).
+  function hitPitches(L, R, sr, o) {
+    var h = (o && o.hits) || hits(L, R, sr, o), n = Math.round(0.08 * sr), skip = Math.round(0.02 * sr), out = [], semis = {}, i;
+    for (i = 0; i < h.onsets.length && out.length < 40; i++) {
+      var a = h.onsets[i] + skip; if (a + 2 * n > h.mono.length) continue;
+      var seg = h.mono.subarray ? h.mono.subarray(a, a + 2 * n) : h.mono.slice(a, a + 2 * n), y = yin(seg, sr);
+      if (y.f0 === y.f0 && y.clarity > 0.8) { out.push({ x: seg.subarray ? seg.subarray(0, n) : seg.slice(0, n), f0: y.f0, at: h.onsets[i] / sr }); semis[Math.round(12 * Math.log(y.f0 / 440) / Math.LN2)] = 1; }
+    }
+    return { notes: out, distinct: Object.keys(semis).length };
+  }
+
+  // formant movement across notes: notes = [{x: segment, f0: Hz}] at 3 or more pitches. L2 (2026-11-11) replaced
+  // L1's peak-harmonic slope, which was fragile (an FM sample transposed over a fifth read 0.42): per note the harmonic
+  // amplitudes (dB, harmonics 1..40 under 10 kHz) are compared pairwise two ways, aligned by harmonic number (a
+  // transposed recording keeps its harmonic profile) and aligned in Hz (a fixed filter keeps its curve in Hz), each after
+  // removing the level offset. Returns s = errHz / (errHz + errHarm): 1 = the profile moves with pitch (a transposed
+  // sample, but also FM or a key-tracked filter), 0 = a fixed spectral envelope (a synth with a fixed filter, or a
+  // multi-sampled instrument), 0.5 = no difference (an unfiltered oscillator: undecidable).
+  function harmonicsDb(x, f0, sr) {
+    var size = 1 << 15, ms = D.magSpec(x, size), out = [], k;
+    for (k = 1; k <= 40 && k * f0 < Math.min(10000, sr * 0.45); k++) {
+      var c = k * f0 / sr * size, lo = Math.floor(c * 0.97), hi = Math.ceil(c * 1.03), m = 0, j;
+      for (j = lo; j <= hi; j++) if (ms[j] > m) m = ms[j];
+      out.push(20 * Math.log10(m + 1e-12));
+    }
+    return out;
+  }
+  function interpLog(H, f0, f) { var p = f / f0 - 1, i = Math.floor(p); if (p < 0 || i + 1 >= H.length) return NaN; return H[i] + (H[i + 1] - H[i]) * (p - i); }
+  function offsetRms(a, b) {
+    var n = 0, m = 0, i, e = 0; for (i = 0; i < a.length; i++) if (a[i] === a[i] && b[i] === b[i]) { m += a[i] - b[i]; n++; }
+    if (n < 4) return NaN; m /= n;
+    for (i = 0; i < a.length; i++) if (a[i] === a[i] && b[i] === b[i]) e += (a[i] - b[i] - m) * (a[i] - b[i] - m);
+    return Math.sqrt(e / n);
+  }
   function formantSlope(notes, sr) {
     if (!notes || notes.length < 3) return NaN;
-    var X = [], Y = [], size = 1 << 16, i, k;
-    for (i = 0; i < notes.length; i++) {
-      var f0 = notes[i].f0, ms = D.magSpec(notes[i].x, size), best = -1, bk = 1;
-      for (k = 1; k * f0 < Math.min(8000, sr / 2); k++) { var a = ms[Math.round(k * f0 / sr * size)] * k; if (a > best) { best = a; bk = k; } }
-      X.push(Math.log(f0)); Y.push(Math.log(bk * f0));
+    var H = notes.map(function (n) { return harmonicsDb(n.x, n.f0, sr); }), eh = 0, ez = 0, c = 0, i, j, k;
+    for (i = 0; i < notes.length; i++) for (j = i + 1; j < notes.length; j++) {
+      var r = notes[i].f0 / notes[j].f0; if (Math.abs(Math.log(r)) < 0.04) continue;   // same pitch: no information
+      var lo = Math.max(notes[i].f0, notes[j].f0), hi = Math.min(notes[i].f0 * H[i].length, notes[j].f0 * H[j].length), A = [], B = [];
+      for (k = 0; k < 24; k++) { var f = lo * Math.pow(hi / lo, k / 23); A.push(interpLog(H[i], notes[i].f0, f)); B.push(interpLog(H[j], notes[j].f0, f)); }
+      var dz = offsetRms(A, B), dh = offsetRms(H[i].slice(0, Math.min(H[i].length, H[j].length)), H[j].slice(0, Math.min(H[i].length, H[j].length)));
+      if (dz === dz && dh === dh) { ez += dz; eh += dh; c++; }
     }
-    var mx = 0, my = 0, sxy = 0, sxx = 0;
-    for (i = 0; i < X.length; i++) { mx += X[i]; my += Y[i]; } mx /= X.length; my /= Y.length;
-    for (i = 0; i < X.length; i++) { sxy += (X[i] - mx) * (Y[i] - my); sxx += (X[i] - mx) * (X[i] - mx); }
-    return sxx > 0 ? sxy / sxx : NaN;
+    return c ? ez / (ez + eh + 1e-9) : NaN;
   }
 
   // ------------------------------------------------------------ reverb (decision D)
@@ -177,5 +225,5 @@
     return sig;
   }
 
-  A.features = { BANDS: BANDS, hits: hits, identity: identity, formantSlope: formantSlope, freeDecay: freeDecay, predelay: predelay, tailSignature: tailSignature };
+  A.features = { BANDS: BANDS, hits: hits, identity: identity, yin: yin, hitPitches: hitPitches, formantSlope: formantSlope, freeDecay: freeDecay, predelay: predelay, tailSignature: tailSignature };
 })();
