@@ -33,7 +33,7 @@
 
   // Envelope stretch factors from A9's scoring (the measure is peak -> 1/10 of peak on the rendered sum of bands/stages):
   // the multi-band voices decay to 1/10 sooner than their slowest band's own constant, so the bands are lengthened to land on the table.
-  var STRETCH = { hat: 1.48, cy: 1.36, cb: 2.2, cp: 1.7 };
+  var STRETCH = { hat: 1.48, cy: 1.36, cb: 2.2, cp: 2.2 };
   var LN10 = 2.302585;                         // ln(10): seconds-to-1/10 (the manual's decay definition) -> exponential time constant
   function tcOf(t10) { return Math.max(t10, 0.0005) / LN10; }
 
@@ -71,10 +71,10 @@
   // ------------------------------------------------------------ small helpers
   function velOf(ev) { return clamp(ev && typeof ev.vel === 'number' ? ev.vel : 0.8, 0, 1.5); }
   // 808: the accent hit is the full-scale hit; an unaccented hit is 1/ratio of it (ratios from the check table, ACC808)
-  // OUT808: per-voice output scale so the accent peaks sit in the manual's proportions (check table accent Vpp 10..12 for
+  // OUT808: per-voice output scale so the accent peaks sit near the manual's proportions (the noisy hats, cymbal, cowbell and clap are lifted to about 0.8 because their crest factor is high and the RMS is what the ear balances) (check table accent Vpp 10..12 for
   // BD/SD/toms/congas/CB, 8 claves, 7 CY/OH, 6 CH, 5 maracas, scaled so the loudest accent is about 0.9 of full scale)
-  var OUT808 = { bd808: 0.75, sd808: 0.74, cp808: 2.4, cb808: 3.4, ch808: 2.6, oh808: 1.4, cy808: 0.86, lt808: 0.87, mt808: 0.82, ht808: 0.89,
-                 lc808: 0.89, mc808: 0.74, hc808: 0.89, rs808: 0.75, cl808: 0.6, ma808: 0.57 };
+  var OUT808 = { bd808: 0.75, sd808: 0.74, cp808: 2.75, cb808: 3.4, ch808: 4.5, oh808: 2.1, cy808: 1.25, lt808: 0.77, mt808: 0.8, ht808: 0.76,
+                 lc808: 0.75, mc808: 0.70, hc808: 0.76, rs808: 0.75, cl808: 0.6, ma808: 0.57 };
   function ampOf(ev, inst) {
     var r = (inst && ACC808[inst.type]) || 1, g = (inst && OUT808[inst.type]) || 1;
     return velOf(ev) * g * (ev && ev.accent ? 1 : 1 / r);
@@ -148,6 +148,19 @@
     return b;
   }
 
+  // white noise, seeded: every context gets the same 2 s buffer, so a hit renders the same twice (the scoring tool compares levels
+  // across renders on fresh contexts)
+  function noiseBuf(ctx) {
+    var c = cacheOf(ctx);
+    if (c.noise) return c.noise;
+    try {
+      var sr = ctx.sampleRate || 44100, n = Math.floor(sr * 2), b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0), r = mulberry(9);
+      for (var i = 0; i < n; i++) d[i] = r() * 2 - 1;
+      c.noise = b;
+      return b;
+    } catch (e) { return null; }
+  }
+
   // a 1 ms (or `ms`) DC pulse: the trigger edge of the analogue voices
   function pulseBuf(ctx, ms) {
     var c = cacheOf(ctx), key = String(ms);
@@ -204,7 +217,7 @@
       return v.src(o, t0, t1);
     };
     v.noise = function (t0, t1) {
-      var buf = K.noise(ctx);
+      var buf = noiseBuf(ctx);
       if (!buf) return null;
       var s = ctx.createBufferSource();
       s.buffer = buf; s.loop = true;
@@ -390,7 +403,7 @@
       setV(gB.gain, lv, ti);
       target(gB.gain, 0, ti, btc);
     }
-    setV(gT.gain, 0, t); setV(gT.gain, 0, tLast); lin(gT.gain, a * p.tail * 1.1, tLast + 0.0002); target(gT.gain, 0, tLast + 0.0002, tcT);
+    setV(gT.gain, 0, t); lin(gT.gain, a * p.tail * 1.1, t + 0.002); target(gT.gain, 0, t + 0.002, tcT);   // the long-decay (reverb) envelope runs from the trigger, under the pulses
     con(bp, gB); con(bp, gT); con(gB, out); con(gT, out);
     con(out, outOf(v, inst, null, t));
   }
@@ -607,12 +620,12 @@
       start: P(150, 400, BD909.start, 'Hz', 'source', 'bassdrum.ts FreqStart 274; the VCO frequency is not resolved in the manual'),
       end: P(40, 70, BD909.end, 'Hz', 'source', 'bassdrum.ts FreqEnd 53'),
       tune: P(0.007, 0.04, 0.007, 's (time constant)', 'manual', 'pitch envelope R57 22k x C9 0.33u = 7.3 ms, with VR2 100k = 40 ms; source default 7 ms (7 to 29.4)'),
-      decay: P(0.012, 0.35, 0.035, 's (time constant)', 'manual', 'R58 47k x C8 0.33u = 15.5 ms up to 346 ms with VR5 1M; source default 35 ms (12 to 100)'),
+      decay: P(0.0155, 0.35, 0.035, 's (time constant)', 'manual', 'R58 47k x C8 0.33u = 15.5 ms up to 346 ms with VR5 1M; source default 35 ms (12 to 100)'),
       hold: P(0, 0.1, BD909.hold, 's', 'source', 'ReleaseStartTime 0.060'),
       attack: P(-12, 6, 0, 'dB', 'source', 'panel Attack = click gain in dB (bassdrum.ts 36); the range is a choice'),
       clickDecay: P(0.0003, 0.003, 0.0007, 's', 'manual', 'ENV2: R41 22k x C12 0.033u = 0.73 ms'),
       clickLp: P(500, 8000, 3000, 'Hz', 'prior', 'ER-99 3 kHz')
-    }, 0.35),
+    }, 0.1),
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
@@ -621,12 +634,12 @@
         var o = v.osc('sine', p.start, t, end);
         target(o.frequency, p.end, t, p.tune);
         var g = v.gain(0), mix = v.gain(1);
-        expEnv(g.gain, t, a * 0.9, p.hold, p.decay);
+        expEnv(g.gain, t, a * 0.65, p.hold, p.decay);
         con(o, g); con(g, mix);
         var n = v.noise(t, t + p.clickDecay * 9 + 0.02);
         if (n) {
           var lp = v.filter('lowpass', p.clickLp, 0.7), gc = v.gain(0);
-          expEnv(gc.gain, t, a * 0.9 * dbToGain(p.attack), 0, p.clickDecay);
+          expEnv(gc.gain, t, a * 0.4 * dbToGain(p.attack), 0, p.clickDecay);
           con(n, lp); con(lp, gc); con(gc, mix);
         }
         con(mix, outOf(v, inst, null, t));
@@ -639,7 +652,7 @@
   BUILD.sd909 = {
     spec: base({
       tune: P(-0.5, 0.5, 0, 'oct', 'source', 'preset.ts 76 TuneMapping, applied to the tone part only'),
-      tone: P(0.04, 0.34, 0.2, 's (time constant)', 'source', 'noise decay, preset.ts 73 default 200 ms (range 40 to 200); the manual\'s RC gives 103 to 338 ms, unreconciled'),
+      tone: P(0.10, 0.34, 0.2, 's (time constant)', 'source', 'noise decay, preset.ts 73 default 200 ms (range 40 to 200); the manual\'s RC gives 103 to 338 ms, unreconciled'),
       snappy: P(-18, 6, 0, 'dB', 'source', 'noise gain, snaredrum.ts 24; the range is a choice'),
       base: P(120, 300, 190, 'Hz', 'prior', 'body oscillator 1; absolute pitch not resolved in the manual (VR6 tune pot)'),
       ratio: P(1.2, 1.8, 1.47, 'x', 'manual', 'VCO-2 over VCO-1 = C69 0.01u / C71 0.0068u'),
@@ -647,7 +660,7 @@
       glide: P(0, 4, 1, 'x', 'prior', 'extra pitch at the start = f x (1 + glide); ER-99 4x'),
       glideTime: P(0.01, 0.03, 0.02, 's', 'manual', 'pitch bend "about 20 ms" (p. 6)'),
       hpf: P(800, 6000, 2000, 'Hz', 'prior', 'noise high-pass, no source')
-    }, 0.3),
+    }, 0.04),
     build: function (inst) {
       var ctx = inst.ctx;
       inst.trigger = function (t, ev) {
@@ -686,7 +699,7 @@
         depth: P(0, 3, 1, 'x', 'prior', 'pitch envelope extra = f x depth; ER-99 2x'),
         pitchDecay: P(0.02, 0.25, 0.1, 's (time constant)', 'prior', 'ER-99 100 ms'),
         noise: P(0, 0.3, 0.05, '', 'prior', 'ER-99 0.05')
-      }, 0.25),
+      }, 0.1),
       build: function (inst) {
         var ctx = inst.ctx;
         inst.trigger = function (t, ev) {
@@ -695,7 +708,7 @@
           var o = v.osc('sine', f * (1 + p.depth), t, end);
           target(o.frequency, f, t, p.pitchDecay);
           var g = v.gain(0);
-          expEnv(g.gain, t, a * 0.9, p.hold, p.decay);
+          expEnv(g.gain, t, a * 0.65, p.hold, p.decay);
           con(o, g); con(g, mix);
           var n = v.noise(t, t + 0.06);
           if (n) { var gN = v.gain(0); expEnv(gN.gain, t, a * p.noise, 0, 0.008); con(n, gN); con(gN, mix); }
@@ -741,7 +754,7 @@
       burstDecay: P(0.003, 0.02, 0.008, 's', 'prior', 'time constant of each burst'),
       decay: P(0.1, 0.6, 0.1, 's', 'prior', 'tail, seconds to 1/10; the scope shows a tail of roughly 0.1 s'),
       tail: P(0, 1, 0.4, '', 'prior', 'tail amount')
-    }, 0.1),
+    }, 0),
     build: function (inst) { inst.trigger = function (t, ev) { clapVoice(inst, t, ev, { spacingKey: 'spread', hp: 185, nine: true, gate: 0, tau: 0 }); }; }
   };
 

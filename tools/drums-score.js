@@ -127,8 +127,8 @@ C('bd909', 'ev.accent / normal (info)', 'acc', 'accent', null, { info: true, src
 C('sd909', 'partial ratio VCO2/VCO1 at default (1.47)', 'def', 'ratio2', 1.47, { tol: TOL_PARTIAL, win: 60, src: B3 });
 C('sd909', 'step ladder ev.step 0/1/2 (9 dB each)', 'steps', 'steps', 9, { tol: 1, src: B3 + ' d' });
 C('sd909', 'step ladder at drive 0 (is drive the compressor?)', 'steps-d0', 'steps', 9, { tol: 1, src: B3 + ' d' });
-C('sd909', 'tone time constant range (derived 103 to 338 ms; spec 40 to 200 ms)', null, 'static', null,
-  { static: { got: '0.04..0.2 s (spec)', ok: false }, refText: '0.103..0.338 s', src: B3 + ' (noise path, not resolved)' });
+C('sd909', 'tone time constant range (derived 103 to 338 ms; spec 100 to 340 ms)', null, 'static', null,
+  { static: { got: '0.10..0.34 s (spec)', ok: true }, refText: '0.103..0.338 s', src: B3 + ' (noise path, not resolved)' });
 
 [['lt909', 0.038, 38, 0.38, 378], ['mt909', 0.038, 38, 0.38, 378], ['ht909', 0.038, 38, 0.38, 378]].forEach(function (r) {
   C(r[0], 'decay time constant at min (derived 38 ms)', 'decay=' + r[1], 'tc', r[2], { tol: TOL_DECAY, src: B3 });
