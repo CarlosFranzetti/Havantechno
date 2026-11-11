@@ -198,6 +198,12 @@
       audio: function () { return host.audio(); },
       loadAudio: function (src, o) { return host.loadAudio(src, o); },
       transportPos: function () { return host.transport.pos(); },
+      // Patch Crew P4: panels in child windows edit steps, add tracks and start/stop through these
+      document: function () { return host.document(); },
+      editor: function () { return host.editor(); },
+      commit: function () { return host.commit(); },
+      transportToggle: function () { return host.transport.toggle(); },
+      transportStop: function () { return host.transport.stop(); },
       playing: function () { return !!host.transport.playing; },
       on: function (type, fn) { return host.on(type, fn); },
       off: function (type, fn) { return host.off(type, fn); },
@@ -703,12 +709,14 @@
 
     var subs = [];
     var h = {};
-    ['setParam', 'getParam', 'hold', 'release', 'releaseAll', 'heldCount', 'isHeld', 'device', 'devices', 'meter', 'sections', 'tracks', 'sends', 'bpm', 'swing', 'totalBars', 'mute', 'solo', 'bypass', 'isBypassed', 'audio', 'loadAudio'].forEach(function (n) {
+    ['setParam', 'getParam', 'hold', 'release', 'releaseAll', 'heldCount', 'isHeld', 'device', 'devices', 'meter', 'sections', 'tracks', 'sends', 'bpm', 'swing', 'totalBars', 'mute', 'solo', 'bypass', 'isBypassed', 'audio', 'loadAudio', 'document', 'editor', 'commit'].forEach(function (n) {
       if (typeof bridge[n] === 'function') h[n] = function () { return bridge[n].apply(bridge, arguments); };
     });
     h.on = function (type, fn) { subs.push([type, fn]); bridge.on(type, fn); return h; };
     h.off = function (type, fn) { bridge.off(type, fn); return h; };
     h.transport = { pos: function () { return bridge.transportPos(); } };
+    if (typeof bridge.transportToggle === 'function') h.transport.toggle = function () { return bridge.transportToggle(); };
+    if (typeof bridge.transportStop === 'function') h.transport.stop = function () { return bridge.transportStop(); };
     Object.defineProperty(h.transport, 'playing', { enumerable: true, get: function () { return bridge.playing(); } });
 
     var emb;

@@ -167,10 +167,12 @@
     // ---- a slider-role control (knob, trimmer, rotary); o: {x, y, r, label, voice (type|null), param, draw(pos, c), kind,
     //      value: {get(), set(v), min, max, unit, label} for a non-device value (tempo)}
     function control(parent, o) {
+      if (missing(o)) return null;
       var c = { x: o.x, y: o.y, r: o.r || 16, label: o.label || o.param || '', o: o, v: null, pos: 0, sc: null, entry: null, path: null, dev: null,
                 held: false, dragging: false, raw: 0, lastY: 0, pid: null, wheelT: null, rev: -1, home: undefined, disabled: false };
       var g = sv('g', { 'class': 'pn-ctl pn-' + (o.kind || 'knob'), role: 'slider', tabindex: 0, 'aria-label': c.label, transform: 'translate(' + f2(o.x) + ' ' + f2(o.y) + ')' }, parent);
       c.g = g;
+      if (o.param || o.dataParam) g.setAttribute('data-param', o.param || o.dataParam);
       var own = [];
       function listen(node, type, fn, opt) { own.push(listenAll(node, type, fn, opt)); }
       if (o.hit) {
@@ -316,8 +318,13 @@
       return c;
     }
 
+    // a single-device panel draws a control only for spec rows that exist (a renamed param then fails panels-check
+    // instead of leaving a dead knob); machine panels keep absent voices' controls (dimmed, with an add button)
+    function missing(o) { return !o.value && o.param && !o.voice && !voice(null).entry(o.param); }
+
     // ---- knob art
     function knob(parent, o) {
+      if (missing(o)) return null;
       var st = o.style || {}, r = o.r || 16, sw = st.sweep || SWEEP, a0 = 270 - sw / 2;
       o.r = r;
       o.draw = o.draw || function (art, pos, c) {
@@ -429,12 +436,13 @@
     // ---- a stepped selector over a string (or listed) param: a knob whose positions are the options.
     //      o: {x, y, r, voice, param, options (fallback), labels {value: text}, style, caption, sweep}
     function choice(parent, o) {
+      if (missing(o)) return null;
       var opts = optionsOf(o.voice || null, o.param, o.options), n = Math.max(1, opts.length);
       var vo = voice(o.voice || null), path = vo.path(o.param), e = vo.entry(o.param);
       function idx(v) { for (var i = 0; i < opts.length; i++) if (same(opts[i], v)) return i; return 0; }
       function lab(i) { var v = opts[clamp(Math.round(i), 0, n - 1)]; return (o.labels && o.labels[v] != null) ? o.labels[v] : String(v); }
       var song = vo.dev ? docValue(vo.dev, o.param) : undefined;
-      var kn = knob(parent, { x: o.x, y: o.y, r: o.r, label: o.label, caption: o.caption, captionY: o.captionY, captionSize: o.captionSize, kind: 'choice', step: 1,
+      var kn = knob(parent, { x: o.x, y: o.y, r: o.r, label: o.label, dataParam: o.param, caption: o.caption, captionY: o.captionY, captionSize: o.captionSize, kind: 'choice', step: 1,
         style: Object.assign({ sweep: o.sweep || Math.min(300, 40 * (n - 1)), ticks: n }, o.style || {}), format: lab,
         value: { min: 0, max: n - 1, basis: e && e.basis, disabled: !path || !e,
           get: function () { return idx(pval(o.voice || null, o.param)); },
@@ -453,8 +461,10 @@
 
     // ---- an on/off switch over a 0..1 flag or a boolean param; o: {x, y, w, h, voice, param, label, draw(art, on, b)}
     function toggle(parent, o) {
+      if (missing(o)) return null;
       var g = sv('g', { 'class': 'pn-sw ' + (o.cls || ''), role: 'switch', tabindex: 0, 'aria-label': o.label || o.param, transform: 'translate(' + f2(o.x) + ' ' + f2(o.y) + ')' }, parent);
       var w = o.w || 22, h = o.h || 34, t = { g: g, on: null, art: sv('g', null, g) };
+      g.setAttribute('data-param', o.param);
       sv('rect', { 'class': 'pn-focus', x: -w / 2 - 4, y: -h / 2 - 4, width: w + 8, height: h + 8, rx: 4 }, g);
       sv('rect', { x: -w / 2 - 4, y: -h / 2 - 4, width: w + 8, height: h + 8, fill: 'transparent' }, g);
       var two = o.values || null;            // a string param with two settings: [off, on]
@@ -488,8 +498,9 @@
     // ---- one button per option of a param (chorus, range, modes); o: {x, y, w, h, gap, vertical, voice, param, options (fallback),
     //      labels, fill, ink, led, ledOff, caption}
     function radio(parent, o) {
+      if (missing(o)) return null;
       var opts = optionsOf(o.voice || null, o.param, o.options), btns = [], last = null;
-      var grp = sv('g', { 'class': 'pn-radio', role: 'radiogroup', 'aria-label': o.label || o.param }, parent);
+      var grp = sv('g', { 'class': 'pn-radio', role: 'radiogroup', 'aria-label': o.label || o.param, 'data-param': o.param }, parent);
       opts.forEach(function (v, i) {
         var bx = o.vertical ? o.x : o.x + i * (o.w + (o.gap == null ? 6 : o.gap)), by = o.vertical ? o.y + i * (o.h + (o.gap == null ? 6 : o.gap)) : o.y;
         var lbl = (o.labels && o.labels[v] != null) ? o.labels[v] : String(v);
@@ -516,6 +527,7 @@
 
     // ---- vertical fader; o: {x, y (centre), len, voice, param, label, caption, cap colour, step}
     function fader(parent, o) {
+      if (missing(o)) return null;
       var len = o.len || 120, half = len / 2;
       o.r = half; o.hit = { w: 30, h: len + 20 }; o.kind = 'fader';
       o.draw = function (art, pos, c) {
@@ -1367,7 +1379,7 @@
       var K = function (x, y, p, cap, o) { o = o || {}; return P.knob(svg, Object.assign({ x: x, y: y, r: o.r || 22, param: p, label: cap.toLowerCase(), caption: cap, captionY: -(o.r || 22) - 24, captionSize: 9.5, style: o.st || ks, numbers: o.numbers || N10 }, o.extra || {})); };
       var R = function (x, y, p, cap, colour, values) {
         var t = P.toggle(svg, { x: x, y: y, w: 18, h: 30, param: p, label: cap.toLowerCase(), values: values, draw: rocker(colour) });
-        P.text(svg, x, y + 30, cap, { fill: C.ink, 'font-size': 8.5, 'font-weight': 700 });
+        if (t) P.text(svg, x, y + 30, cap, { fill: C.ink, 'font-size': 8.5, 'font-weight': 700 });
         return t;
       };
       function section(x0, x1, title) {
@@ -1393,17 +1405,16 @@
       [1, 2, 3].forEach(function (n, j) {
         var y = 96 + j * 118;
         P.text(svg, 248, y - 44, 'OSC ' + n, { 'text-anchor': 'start', fill: C.ink, 'font-size': 9.5, 'font-weight': 700 });
-        P.choice(svg, { x: 300, y: y, r: 20, param: 'osc' + n + 'Range', options: ['lo', '32', '16', '8', '4', '2'], labels: RL, label: 'oscillator ' + n + ' range', style: wedgeSt, sweep: 200, legendR: 15, legendSize: 8 });
+        P.choice(svg, { x: 300, y: y, r: 20, param: 'osc' + n + 'Range', options: ['lo', '32', '16', '8', '4', '2'], labels: RL, label: 'oscillator ' + n + ' range', style: wedgeSt, sweep: 220, legendR: 17, legendSize: 8 });
         if (n > 1) K(418, y, 'osc' + n + 'Detune', 'FREQUENCY', { r: 25, st: big, numbers: ['-7', '', '', '0', '', '', '+7'], extra: { label: 'oscillator ' + n + ' frequency' } });
         else R(418, y, 'osc3Keys', 'OSC 3 CTRL', C.blue);
-        P.choice(svg, { x: 536, y: y, r: 20, param: 'osc' + n + 'Wave', options: n === 3 ? ['tri', 'revsaw', 'saw', 'square', 'wide', 'narrow'] : ['tri', 'shark', 'saw', 'square', 'wide', 'narrow'], labels: WL, label: 'oscillator ' + n + ' waveform', style: wedgeSt, sweep: 200, legendR: 15, legendSize: 8 });
+        P.choice(svg, { x: 536, y: y, r: 20, param: 'osc' + n + 'Wave', options: n === 3 ? ['tri', 'revsaw', 'saw', 'square', 'wide', 'narrow'] : ['tri', 'shark', 'saw', 'square', 'wide', 'narrow'], labels: WL, label: 'oscillator ' + n + ' waveform', style: wedgeSt, sweep: 220, legendR: 17, legendSize: 8 });
       });
       // MIXER
       section(600, 850, 'MIXER');
       [['mixOsc1', 'OSC 1'], ['mixFeedback', 'EXT IN'], ['mixOsc2', 'OSC 2'], ['mixNoise', 'NOISE'], ['mixOsc3', 'OSC 3']].forEach(function (m, j) {
         var y = 62 + j * 78;
-        K(680, y + 8, m[0], '', { r: 18, numbers: [] });
-        P.text(svg, 725, y + 12, m[1], { 'text-anchor': 'start', fill: C.ink, 'font-size': 9.5, 'font-weight': 700 });
+        if (K(680, y + 8, m[0], '', { r: 18, numbers: [], extra: { label: m[1].toLowerCase() + ' level' } })) P.text(svg, 725, y + 12, m[1], { 'text-anchor': 'start', fill: C.ink, 'font-size': 9.5, 'font-weight': 700 });
       });
       R(806, 296, 'noiseType', 'WHITE/PINK', C.ivory, P.options(null, 'noiseType', ['white', 'pink']).slice(0, 2));
       // MODIFIERS
@@ -1486,7 +1497,7 @@
         P.text(svg, (x0 + x1) / 2, 35, title, { fill: C.dark, 'font-size': 11, 'font-weight': 800, 'letter-spacing': 2 });
         P.el('rect', { x: x0 + 4, y: 42, width: x1 - x0 - 8, height: 5, fill: colour }, svg);
       }
-      var FL = 150, FY = 190;
+      var FL = 186, FY = 206;
       function F(x, p, cap, o) { o = o || {}; return P.fader(svg, Object.assign({ x: x, y: FY, len: FL, param: p, label: cap.toLowerCase(), caption: cap, captionSize: 9.5, cap: o.cap || '#c4c3bd', labelInk: C.ink, tick: '#8a8a8a' }, o)); }
       function radio(x, y, p, opts, labels, o) { o = o || {}; return P.radio(svg, Object.assign({ x: x, y: y, w: 46, h: 22, gap: 16, vertical: true, param: p, options: opts, labels: labels, size: 9.5, fill: C.btn, ink: C.dark, ledY: -6 }, o)); }
       function lamp(x, y, p, lbl) {
@@ -1500,7 +1511,7 @@
       // LFO
       section(250, 380, 'LFO', C.blue);
       F(285, 'lfoRate', 'RATE'); F(345, 'lfoDelay', 'DELAY');
-      lamp(315, 330, 'lfoAuto', 'AUTO');
+      lamp(315, 354, 'lfoAuto', 'AUTO');
       // DCO
       section(380, 770, 'DCO', C.orange);
       F(410, 'dcoLfo', 'LFO'); F(460, 'pwm', 'PWM');

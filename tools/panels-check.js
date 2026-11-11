@@ -4,7 +4,9 @@
  * Covers: the registry; an HVT-808 with some voices present and some absent; a knob gesture = one host.hold and the right
  * setParam path; keys, wheel, double-click home; step keys toggling the document with one undo entry each (accent too); the
  * add affordance adding a track; the HVT-909; a bridge-like host (no document/editor); the windows.js Panel view; dispose
- * leaving no listeners.
+ * leaving no listeners. Synth panels: HVT-303 and HVT-D against Classics.spec (every spec row has a control, every control a
+ * spec row; a renamed row is skipped, not left dead), the 303's step section (select, note keys, octave, accent, slide, rest,
+ * one undo entry each), HVT-106 against a stub spec from P3's table (radios, lamp switches, a stepped fader).
  */
 'use strict';
 var fs = require('fs'), path = require('path'), vm = require('vm');
@@ -75,7 +77,7 @@ var sb = { console: console, Math: Math, JSON: JSON, Date: Date, Float32Array: F
 sb.window = sb; sb.document = fakeDoc; sb.globalThis = sb; sb.URLSearchParams = URLSearchParams;
 vm.createContext(sb);
 function load(rel) { vm.runInContext(fs.readFileSync(path.join(APP, rel), 'utf8'), sb, { filename: rel }); }
-['engine/core.js', 'engine/programs.js', 'engine/synths.js', 'engine/drums.js', 'engine/processors.js', 'engine/songdoc.js', 'engine/sequencer.js', 'engine/song.js', 'engine/host.js',
+['engine/core.js', 'engine/programs.js', 'engine/synths.js', 'engine/drums.js', 'engine/classics.js', 'engine/processors.js', 'engine/songdoc.js', 'engine/sequencer.js', 'engine/song.js', 'engine/host.js',
  'ui/widgets.js', 'ui/faces.js', 'ui/facedefs.js', 'ui/panels.js', 'ui/windows.js'].forEach(load);
 
 var passed = 0;
@@ -289,6 +291,139 @@ win = winLayer.children[winLayer.children.length - 1];
 pbtn = win.find(function (n) { return n.tagName === 'BUTTON' && n.textContent === 'Panel'; })[0];
 ok(pbtn && pbtn.hidden && win.find(function (n) { return n.className === 'pn-root'; }).length === 0, 'a synth window has no Panel button (editor face as before)');
 sb.Windows.close('track:kick');
+
+// ==================================================================== synth panels
+ok(['hvt303', 'hvtd', 'hvt106'].every(function (k) { return P.keys().indexOf(k) >= 0; }), 'hvt303, hvtd and hvt106 are registered');
+var CL = sb.Classics;
+ok(CL && CL.spec('tb303') && CL.spec('modeld'), 'Classics.spec(tb303) and (modeld) load');
+function controlsOf(r) {
+  var out = {};
+  r.el.walk(function (n) { var p = n.attrs['data-param']; if (p) out[p] = (out[p] || 0) + 1; });
+  return out;
+}
+function everyRow(r, spec, name) {
+  var have = controlsOf(r), missing = Object.keys(spec).filter(function (p) { return !have[p]; }), extra = Object.keys(have).filter(function (p) { return !spec[p]; });
+  ok(!missing.length, name + ': every spec row has a control (missing: ' + missing.join(', ') + ')');
+  ok(!extra.length, name + ': every control names a spec row (extra: ' + extra.join(', ') + ')');
+}
+var cells303 = [36, null, 48, 36, null, 39, 36, null, 43, null, 36, 46, null, 36, 41, null].map(function (n) { return n == null ? null : { note: n, vel: 0.85, len: 1 }; });
+ed.group(function (e) {
+  e.addTrack({ name: 'tb303', type: 'tb303', inst: 'tb303', kind: 'melody', family: 'bass', gain: 0.8, variants: { A: { bars: 1, cells: cells303 } } });
+  e.addTrack({ name: 'modeld', type: 'modeld', inst: 'modeld', kind: 'melody', family: 'bass', gain: 0.8, variants: { A: { bars: 1, cells: cells303 } } });
+});
+host.commit();
+var d303 = host.device('track:tb303'), dD = host.device('track:modeld');
+ok(d303 && dD && P.for(d303, host) === 'hvt303' && P.for(dD, host) === 'hvtd', 'tb303 opens HVT-303, modeld opens HVT-D');
+
+// ---- HVT-303
+var r3 = P.render(d303, host);
+ok(/HVT-303/.test(r3.el.textContent) && !/Roland|TB-303/.test(r3.el.textContent), 'HVT-303 drawn, no maker marks');
+everyRow(r3, d303.spec, 'HVT-303');
+function q(r, pred) { return r.el.find(pred); }
+function ctl(r, p) { return q(r, function (n) { return n.attrs['data-param'] === p; })[0]; }
+calls.hold = []; calls.set = [];
+var cut = ctl(r3, 'cutoff');
+cut.fire('pointerdown', { button: 0, clientY: 200, pointerId: 3 }); cut.fire('pointermove', { clientY: 180 }); cut.fire('pointermove', { clientY: 170 }); cut.fire('pointerup', {});
+ok(calls.hold.length === 1 && calls.hold[0] === 'tb303.cutoff' && calls.set.length === 2 && calls.set[0][0] === 'tb303.cutoff', '303 cutoff drag: one hold, setParam tb303.cutoff');
+calls.hold = [];
+var wave = ctl(r3, 'wave'), w0 = host.getParam('tb303.wave');
+wave.fire('click', {});
+ok(host.getParam('tb303.wave') !== w0 && /^(saw|square)$/.test(host.getParam('tb303.wave')) && calls.hold[0] === 'tb303.wave', 'waveform switch writes the other string, one hold (' + w0 + ' -> ' + host.getParam('tb303.wave') + ')');
+// step section
+var sec0 = host.document().sections[host.transport.pos().section].name;
+function c303() { var t = sb.Panels.util.findTrack(host.document(), 'tb303'), vn = sb.Panels.util.variantName(host.document().sections[host.transport.pos().section], 'tb303'); return vn ? t.variants[vn].cells.slice(0, 16) : null; }
+function k3(re) { return q(r3, function (n) { return re.test(n.attrs['aria-label'] || ''); })[0]; }
+r3.update();
+var sk3 = q(r3, function (n) { return /^Step \d+/.test(n.attrs['aria-label'] || ''); });
+ok(sk3.length === 16 && /Step 1: rest/.test(sk3[0].attrs['aria-label']) && c303() === null, 'sixteen step keys; the new track does not play here yet, so step 1 reads rest');
+var u3 = undoN();
+sk3[1].fire('click', {}); r3.update();
+ok(/selected/.test(sk3[1].attrs['aria-label']) && undoN() === u3, 'clicking a step selects it (no edit)');
+k3(/^Note E$/).fire('click', {});
+ok(c303() && c303()[1] && c303()[1].note === 40 && undoN() === u3 + 1, 'note key E on a rest writes note 40 (E2) in one undo entry (and the section plays the track)');
+r3.update();
+ok(/Step 1: C2/.test(sk3[0].attrs['aria-label']), 'now the pattern shows: step 1 reads C2');
+k3(/^Octave up/).fire('click', {});
+ok(c303()[1].note === 52 && undoN() === u3 + 2, 'UP raises the step an octave, one undo entry');
+k3(/^Accent on/).fire('click', {});
+ok(c303()[1].acc === true && undoN() === u3 + 3, 'ACCENT sets acc, one undo entry');
+k3(/^Slide from/).fire('click', {});
+ok(c303()[1].slide === true && undoN() === u3 + 4, 'SLIDE sets slide, one undo entry');
+r3.update();
+ok(/E3, accent, slide/.test(sk3[1].attrs['aria-label']), 'the key shows note, accent and slide (' + sk3[1].attrs['aria-label'] + ')');
+k3(/^Slide from/).fire('click', {});
+ok(!c303()[1].slide, 'SLIDE again clears it');
+sk3[2].fire('click', { shiftKey: true });
+ok(c303()[2] && c303()[2].acc === true, 'Shift-click on a step accents it');
+k3(/^Make the selected step a rest/).fire('click', {});
+ok(c303()[2] === null, 'REST clears the selected step');
+ed.undo(); host.commit();
+ok(c303()[2] && c303()[2].acc === true, 'undo restores the step');
+var L3 = LIVE.n; r3.dispose();
+ok(r3.listenerCount() === 0 && listenersUnder(r3.el) === 0 && LIVE.n < L3, 'HVT-303 dispose removes its listeners');
+// bridge-like host: knobs work, step editing disabled
+var rb3 = P.render(d303, bh); rb3.update();
+ok(q(rb3, function (n) { return /^Note C$/.test(n.attrs['aria-label'] || ''); })[0].attrs['aria-disabled'] === 'true', 'bridge host without editor: note keys disabled');
+rb3.dispose();
+
+// ---- HVT-D
+var rD = P.render(dD, host);
+ok(/HVT-D/.test(rD.el.textContent) && !/Moog|Minimoog/i.test(rD.el.textContent), 'HVT-D drawn, no maker marks');
+everyRow(rD, dD.spec, 'HVT-D');
+calls.hold = []; calls.set = [];
+var rng = ctl(rD, 'osc1Range'), r0 = host.getParam('modeld.osc1Range');
+rng.focus(); rng.fire('keydown', { key: 'ArrowUp' }); rng.fire('keyup', {});
+var r1 = host.getParam('modeld.osc1Range'), opts = dD.spec.osc1Range.options;
+ok(typeof r1 === 'string' && opts.indexOf(r1) === opts.indexOf(String(r0)) + 1 && calls.hold[0] === 'modeld.osc1Range', 'range selector: arrow moves one stop, writes the string, one hold (' + r0 + ' -> ' + r1 + ')');
+ok(/'|lo/i.test(rng.attrs['aria-valuetext']), 'range selector reads as a range (' + rng.attrs['aria-valuetext'] + ')');
+calls.hold = [];
+var gl = ctl(rD, 'glideOn'), g0 = host.getParam('modeld.glideOn');
+gl.fire('click', {});
+ok(host.getParam('modeld.glideOn') === (g0 >= 0.5 ? 0 : 1) && calls.hold[0] === 'modeld.glideOn' && gl.attrs['aria-checked'] === (g0 >= 0.5 ? 'false' : 'true'), 'glide rocker writes 0/1 with one hold');
+var nt = ctl(rD, 'noiseType'), n0t = host.getParam('modeld.noiseType');
+nt.fire('click', {});
+ok(host.getParam('modeld.noiseType') !== n0t && dD.spec.noiseType.options.indexOf(host.getParam('modeld.noiseType')) >= 0, 'white/pink rocker writes the other string');
+var cutD = ctl(rD, 'cutoff');
+ok(cutD.attrs['aria-valuemin'] === String(dD.spec.cutoff.min) && cutD.attrs['aria-valuemax'] === String(dD.spec.cutoff.max), 'cutoff knob range from the spec (' + dD.spec.cutoff.min + '..' + dD.spec.cutoff.max + ')');
+var LD = LIVE.n; rD.dispose();
+ok(rD.listenerCount() === 0 && listenersUnder(rD.el) === 0 && LIVE.n < LD, 'HVT-D dispose removes its listeners');
+// a renamed row is skipped, not drawn dead
+var spec2 = JSON.parse(JSON.stringify(dD.spec)); spec2.freq = spec2.cutoff; delete spec2.cutoff;
+var rD2 = P.render(Object.assign({}, dD, { spec: spec2, id: 'track:renamed' }), host);
+var have2 = controlsOf(rD2);
+ok(!have2.cutoff && !have2.freq, 'a spec without cutoff draws no cutoff knob, and the new row has no control (so everyRow would fail)');
+rD2.dispose();
+
+// ---- HVT-106 on a stub spec (P3's table; names from BRIEF.md)
+var JUNO = {
+  tune: { min: -100, max: 100, value: 0, unit: 'ct' }, bend: { min: 0, max: 12, value: 2, unit: 'st' }, portamento: { min: 0, max: 1, value: 0 },
+  voiceMode: { value: 'poly', options: ['poly', 'unison'] }, lfoRate: { min: 0, max: 1, value: 0.35 }, lfoDelay: { min: 0, max: 1, value: 0 }, lfoAuto: { value: true },
+  dcoLfo: { min: 0, max: 1, value: 0 }, pwm: { min: 0, max: 1, value: 0.5 }, pwmMode: { value: 'lfo', options: ['lfo', 'manual', 'env'] }, pulse: { value: false }, saw: { value: true },
+  sub: { min: 0, max: 1, value: 0 }, noise: { min: 0, max: 1, value: 0 }, range: { value: 8, options: [16, 8, 4] }, hpf: { min: 0, max: 3, value: 1 },
+  cutoff: { min: 0, max: 1, value: 0.6 }, resonance: { min: 0, max: 1, value: 0.15 }, envAmt: { min: -1, max: 1, value: 0.4 }, vcfLfo: { min: 0, max: 1, value: 0 }, vcfKey: { min: 0, max: 1, value: 0.5 },
+  vcaMode: { value: 'env', options: ['env', 'gate'] }, attack: { min: 0, max: 1, value: 0.1 }, decay: { min: 0, max: 1, value: 0.5 }, sustain: { min: 0, max: 1, value: 0.7 }, release: { min: 0, max: 1, value: 0.35 },
+  chorus: { value: 1, options: [0, 1, 2] }, chorusNoise: { min: 0, max: 1, value: 0 }, level: { min: 0, max: 1.5, value: 1 } };
+var jv = {}, jh = { hold: [], set: [] };
+var jhost = { getParam: function (p) { return jv[p]; }, setParam: function (p, v) { jv[p] = v; jh.set.push([p, v]); }, hold: function (p) { jh.hold.push(p); },
+  devices: function () { return [jdev]; }, device: function () { return jdev; }, sections: function () { return []; }, transport: { pos: function () { return { step: 0 }; }, playing: false }, on: function () {}, off: function () {} };
+var jdev = { id: 'track:juno', type: 'juno', kind: 'instrument', track: 'juno', name: 'juno', family: 'keys', pathPrefix: 'juno', spec: JUNO };
+ok(P.for(jdev, jhost) === 'hvt106', 'juno opens HVT-106');
+var rJ = P.render(jdev, jhost);
+ok(/HVT-106/.test(rJ.el.textContent) && !/Roland|Juno/i.test(rJ.el.textContent), 'HVT-106 drawn, no maker marks');
+everyRow(rJ, JUNO, 'HVT-106');
+var chII = q(rJ, function (n) { return n.attrs.role === 'radio' && /^chorus II$/.test(n.attrs['aria-label']); })[0];
+chII.fire('click', {}); rJ.update();
+ok(jv['juno.chorus'] === 2 && jh.hold[jh.hold.length - 1] === 'juno.chorus' && chII.attrs['aria-checked'] === 'true', 'chorus II writes the number 2 with one hold and lights');
+var r16 = q(rJ, function (n) { return n.attrs.role === 'radio' && /^range 16'$/.test(n.attrs['aria-label']); })[0];
+r16.fire('click', {});
+ok(jv['juno.range'] === 16, 'range 16\' writes 16');
+var pulse = ctl(rJ, 'pulse'); pulse.fire('click', {});
+ok(jv['juno.pulse'] === true && pulse.attrs['aria-checked'] === 'true', 'the pulse lamp switch writes a boolean');
+var hpf = ctl(rJ, 'hpf');
+hpf.fire('pointerdown', { button: 0, clientY: 300 }); hpf.fire('pointermove', { clientY: 230 }); hpf.fire('pointerup', {});
+ok(jv['juno.hpf'] === Math.round(jv['juno.hpf']) && jv['juno.hpf'] > 1, 'the HPF fader snaps to whole positions (' + jv['juno.hpf'] + ')');
+var LJ = LIVE.n; rJ.dispose();
+ok(rJ.listenerCount() === 0 && listenersUnder(rJ.el) === 0 && LIVE.n < LJ, 'HVT-106 dispose removes its listeners');
 
 timers.forEach(clearTimeout);
 console.log('OK: ' + passed + ' checks passed');
