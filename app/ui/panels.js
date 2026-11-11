@@ -173,16 +173,21 @@
       c.g = g;
       var own = [];
       function listen(node, type, fn, opt) { own.push(listenAll(node, type, fn, opt)); }
-      sv('circle', { 'class': 'pn-hit', r: c.r + 7, fill: 'transparent' }, g);
-      sv('circle', { 'class': 'pn-focus', r: c.r + 5 }, g);
+      if (o.hit) {
+        sv('rect', { 'class': 'pn-hit', x: -o.hit.w / 2, y: -o.hit.h / 2, width: o.hit.w, height: o.hit.h, fill: 'transparent' }, g);
+        sv('rect', { 'class': 'pn-focus', x: -o.hit.w / 2 - 3, y: -o.hit.h / 2 - 3, width: o.hit.w + 6, height: o.hit.h + 6, rx: 4 }, g);
+      } else {
+        sv('circle', { 'class': 'pn-hit', r: c.r + 7, fill: 'transparent' }, g);
+        sv('circle', { 'class': 'pn-focus', r: c.r + 5 }, g);
+      }
       c.art = sv('g', null, g);
       c.ring = null;
 
       function bind() {
         c.rev = state.devRev;
         if (o.value) {
-          c.entry = { min: o.value.min, max: o.value.max, unit: o.value.unit || '', value: o.value.get() };
-          c.path = o.value.path || null; c.dev = null; c.disabled = !o.value.set;
+          c.entry = { min: o.value.min, max: o.value.max, unit: o.value.unit || '', value: o.value.get(), basis: o.value.basis };
+          c.path = o.value.path || null; c.dev = null; c.disabled = !o.value.set || !!o.value.disabled;
         } else {
           var vo = voice(o.voice || null);
           c.dev = vo.dev; c.path = vo.path(o.param); c.entry = vo.entry(o.param);
@@ -216,10 +221,11 @@
         if (!isNum(v) || v === c.v) return;
         c.v = v; paint();
       }
-      c.text = function () { return isNum(c.v) ? fmt(c.v, c.entry && c.entry.unit) : ''; };
+      c.text = function () { return isNum(c.v) ? (o.format ? o.format(c.v) : fmt(c.v, c.entry && c.entry.unit)) : ''; };
       function write(v) {
         if (c.disabled) return;
         v = clamp(v, c.sc.min, c.sc.max);
+        if (o.step) v = clamp(c.sc.min + Math.round((v - c.sc.min) / o.step) * o.step, c.sc.min, c.sc.max);
         if (v === c.v) return;
         if (!c.held) {
           c.held = true;
@@ -272,12 +278,15 @@
         if (e.preventDefault) e.preventDefault();
         if (c.wheelT) clearTimeout(c.wheelT); else c.held = false;
         c.wheelT = setTimeout(function () { c.wheelT = null; c.held = false; }, 300);
-        setPos(c.pos + clamp(-dy / 100, -3, 3) * KEY * (e.shiftKey ? FINE : 1));
+        if (o.step) write(c.v + (dy < 0 ? o.step : -o.step));
+        else setPos(c.pos + clamp(-dy / 100, -3, 3) * KEY * (e.shiftKey ? FINE : 1));
       }, { passive: false });
       listen(g, 'keydown', function (e) {
         if (c.disabled) return;
         var k = e.key, used = true;
-        if (k === 'ArrowUp' || k === 'ArrowRight') setPos(c.pos + (e.shiftKey ? KEY * FINE : KEY));
+        if (o.step && (k === 'ArrowUp' || k === 'ArrowRight')) write(c.v + o.step);
+        else if (o.step && (k === 'ArrowDown' || k === 'ArrowLeft')) write(c.v - o.step);
+        else if (k === 'ArrowUp' || k === 'ArrowRight') setPos(c.pos + (e.shiftKey ? KEY * FINE : KEY));
         else if (k === 'ArrowDown' || k === 'ArrowLeft') setPos(c.pos - (e.shiftKey ? KEY * FINE : KEY));
         else if (k === 'PageUp') setPos(c.pos + 0.1);
         else if (k === 'PageDown') setPos(c.pos - 0.1);
@@ -309,7 +318,7 @@
 
     // ---- knob art
     function knob(parent, o) {
-      var st = o.style || {}, r = o.r || 16;
+      var st = o.style || {}, r = o.r || 16, sw = st.sweep || SWEEP, a0 = 270 - sw / 2;
       o.r = r;
       o.draw = o.draw || function (art, pos, c) {
         if (!c.built) {
@@ -318,7 +327,7 @@
           if (ticks) {
             var tg = sv('g', { 'class': 'pn-ticks', stroke: st.tick || '#d8d8d0', 'stroke-width': st.tickW || 1.4, 'stroke-linecap': 'round' }, art);
             for (i = 0; i < ticks; i++) {
-              var a = A0 + SWEEP * i / (ticks - 1), p0 = pt(0, 0, r + 4, a), p1 = pt(0, 0, r + ((i === 0 || i === ticks - 1 || i === (ticks - 1) / 2) ? 9 : 7), a);
+              var a = a0 + sw * i / (ticks - 1), p0 = pt(0, 0, r + 4, a), p1 = pt(0, 0, r + ((i === 0 || i === ticks - 1 || i === (ticks - 1) / 2) ? 9 : 7), a);
               sv('line', { x1: f2(p0[0]), y1: f2(p0[1]), x2: f2(p1[0]), y2: f2(p1[1]) }, tg);
             }
           }
@@ -328,7 +337,7 @@
           if (st.shine !== false) sv('ellipse', { rx: r * 0.42, ry: r * 0.22, cx: -r * 0.2, cy: -r * 0.42, fill: 'rgba(255,255,255,.16)' }, art);
           c.ptr = sv('line', { stroke: st.pointer || '#f4f1e8', 'stroke-width': st.pointerW || 2.4, 'stroke-linecap': 'round' }, art);
         }
-        var a = A0 + SWEEP * pos, q0 = pt(0, 0, st.slot ? -r * 0.8 : r * 0.12, a), q1 = pt(0, 0, r * (st.slot ? 0.8 : 0.92), a);
+        var a = a0 + sw * pos, q0 = pt(0, 0, st.slot ? -r * 0.8 : r * 0.12, a), q1 = pt(0, 0, r * (st.slot ? 0.8 : 0.92), a);
         c.ptr.setAttribute('x1', f2(q0[0])); c.ptr.setAttribute('y1', f2(q0[1])); c.ptr.setAttribute('x2', f2(q1[0])); c.ptr.setAttribute('y2', f2(q1[1]));
       };
       var c = control(parent, o);
@@ -383,6 +392,154 @@
       return s;
     }
 
+    // ---- single-device helpers: read and write one param of a voice (null = the window's own device)
+    function pval(type, p) {
+      var vo = voice(type), path = vo.path(p), v;
+      if (path) v = safe(function () { return host.getParam(path); }, undefined);
+      if (v === undefined || v === null) { var e = vo.entry(p); v = e ? e.value : undefined; }
+      return v;
+    }
+    function pwrite(type, p, v, holdIt) {
+      var path = voice(type).path(p);
+      if (!path || !isFn(host.setParam)) return false;
+      if (holdIt && isFn(host.hold)) safe(function () { host.hold(path); });
+      safe(function () { host.setParam(path, v); });
+      return true;
+    }
+    function optionsOf(type, p, fallback) {
+      var e = voice(type).entry(p);
+      if (e && e.options && e.options.length) return e.options.slice();
+      return fallback ? fallback.slice() : (e ? [e.value] : []);
+    }
+    function same(a, b) { return a === b || String(a) === String(b); }
+
+    // ---- a stepped selector over a string (or listed) param: a knob whose positions are the options.
+    //      o: {x, y, r, voice, param, options (fallback), labels {value: text}, style, caption, sweep}
+    function choice(parent, o) {
+      var opts = optionsOf(o.voice || null, o.param, o.options), n = Math.max(1, opts.length);
+      var vo = voice(o.voice || null), path = vo.path(o.param), e = vo.entry(o.param);
+      function idx(v) { for (var i = 0; i < opts.length; i++) if (same(opts[i], v)) return i; return 0; }
+      function lab(i) { var v = opts[clamp(Math.round(i), 0, n - 1)]; return (o.labels && o.labels[v] != null) ? o.labels[v] : String(v); }
+      var song = vo.dev ? docValue(vo.dev, o.param) : undefined;
+      var kn = knob(parent, { x: o.x, y: o.y, r: o.r, label: o.label, caption: o.caption, captionY: o.captionY, captionSize: o.captionSize, kind: 'choice', step: 1,
+        style: Object.assign({ sweep: o.sweep || Math.min(300, 40 * (n - 1)), ticks: n }, o.style || {}), format: lab,
+        value: { min: 0, max: n - 1, basis: e && e.basis, disabled: !path || !e,
+          get: function () { return idx(pval(o.voice || null, o.param)); },
+          set: function (v) { pwrite(o.voice || null, o.param, opts[clamp(Math.round(v), 0, n - 1)], false); },
+          hold: function () { if (path && isFn(host.hold)) safe(function () { host.hold(path); }); },
+          home: idx(song !== undefined ? song : (e ? e.value : opts[0])) } });
+      if (o.legends !== false) {
+        var sw = (o.style && o.style.sweep) || o.sweep || Math.min(300, 40 * (n - 1)), a0 = 270 - sw / 2, rr = o.r + (o.legendR || 17);
+        opts.forEach(function (v, i) {
+          var a = n > 1 ? a0 + sw * i / (n - 1) : 270, q = pt(o.x, o.y, rr, a);
+          P.text(parent, q[0], q[1] + 3.5, lab(i), { 'font-size': o.legendSize || 9, fill: (o.style && o.style.label) || '#eee', 'font-weight': 600 });
+        });
+      }
+      return kn;
+    }
+
+    // ---- an on/off switch over a 0..1 flag or a boolean param; o: {x, y, w, h, voice, param, label, draw(art, on, b)}
+    function toggle(parent, o) {
+      var g = sv('g', { 'class': 'pn-sw ' + (o.cls || ''), role: 'switch', tabindex: 0, 'aria-label': o.label || o.param, transform: 'translate(' + f2(o.x) + ' ' + f2(o.y) + ')' }, parent);
+      var w = o.w || 22, h = o.h || 34, t = { g: g, on: null, art: sv('g', null, g) };
+      sv('rect', { 'class': 'pn-focus', x: -w / 2 - 4, y: -h / 2 - 4, width: w + 8, height: h + 8, rx: 4 }, g);
+      sv('rect', { x: -w / 2 - 4, y: -h / 2 - 4, width: w + 8, height: h + 8, fill: 'transparent' }, g);
+      function isOn(v) { return v === true || (isNum(v) && v >= 0.5) || v === 'on'; }
+      function flip() {
+        var vo = voice(o.voice || null), e = vo.entry(o.param);
+        if (!vo.dev || !e) return;
+        var on = !isOn(pval(o.voice || null, o.param));
+        pwrite(o.voice || null, o.param, typeof e.value === 'boolean' ? on : (on ? 1 : 0), true);
+        t.update();
+      }
+      listen(g, 'click', flip);
+      listen(g, 'keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { if (ev.preventDefault) ev.preventDefault(); flip(); } });
+      t.update = function () {
+        var vo = voice(o.voice || null), e = vo.entry(o.param), on = isOn(pval(o.voice || null, o.param)), dis = !vo.dev || !e;
+        if (on === t.on && dis === t.dis) return;
+        t.on = on; t.dis = dis;
+        g.setAttribute('aria-checked', on ? 'true' : 'false');
+        g.setAttribute('aria-disabled', dis ? 'true' : 'false');
+        g.setAttribute('tabindex', dis ? '-1' : '0');
+        g.setAttribute('opacity', dis ? '0.35' : '1');
+        while (t.art.firstChild) t.art.removeChild(t.art.firstChild);
+        o.draw(t.art, on, { w: w, h: h });
+      };
+      t.update();
+      updaters.push(t.update);
+      return t;
+    }
+
+    // ---- one button per option of a param (chorus, range, modes); o: {x, y, w, h, gap, vertical, voice, param, options (fallback),
+    //      labels, fill, ink, led, ledOff, caption}
+    function radio(parent, o) {
+      var opts = optionsOf(o.voice || null, o.param, o.options), btns = [], last = null;
+      var grp = sv('g', { 'class': 'pn-radio', role: 'radiogroup', 'aria-label': o.label || o.param }, parent);
+      opts.forEach(function (v, i) {
+        var bx = o.vertical ? o.x : o.x + i * (o.w + (o.gap == null ? 6 : o.gap)), by = o.vertical ? o.y + i * (o.h + (o.gap == null ? 6 : o.gap)) : o.y;
+        var lbl = (o.labels && o.labels[v] != null) ? o.labels[v] : String(v);
+        var b = button(grp, { x: bx, y: by, w: o.w, h: o.h, rx: o.rx == null ? 2 : o.rx, label: lbl, size: o.size || 10, fill: o.fill || '#cfcfcb', ink: o.ink || '#151515',
+          role: 'radio', aria: (o.label || o.param) + ' ' + lbl, onClick: function () { pwrite(o.voice || null, o.param, v, true); last = null; upd(); } });
+        b.led = sv('circle', { cx: o.w / 2, cy: o.ledY == null ? -6 : o.ledY, r: 3.2, fill: o.ledOff || '#3a1510' }, b.g);
+        btns.push(b);
+      });
+      function upd() {
+        var cur = pval(o.voice || null, o.param), vo = voice(o.voice || null), dis = !vo.dev || !vo.entry(o.param), sig = String(cur) + dis;
+        if (sig === last) return;
+        last = sig;
+        btns.forEach(function (b, i) {
+          var on = same(opts[i], cur);
+          b.g.setAttribute('aria-checked', on ? 'true' : 'false');
+          b.led.setAttribute('fill', on ? (o.led || '#ff3b22') : (o.ledOff || '#3a1510'));
+          b.setDisabled(dis);
+        });
+      }
+      upd();
+      updaters.push(upd);
+      return { g: grp, buttons: btns, update: upd };
+    }
+
+    // ---- vertical fader; o: {x, y (centre), len, voice, param, label, caption, cap colour, step}
+    function fader(parent, o) {
+      var len = o.len || 120, half = len / 2;
+      o.r = half; o.hit = { w: 30, h: len + 20 }; o.kind = 'fader';
+      o.draw = function (art, pos, c) {
+        if (!c.built) {
+          c.built = true;
+          for (var i = 0; i <= 10; i++) { var ty = half - len * i / 10; sv('line', { x1: -13, x2: i % 5 ? -9 : -15, y1: f2(ty), y2: f2(ty), stroke: o.tick || '#9a9a9a', 'stroke-width': 1 }, art); sv('line', { x1: 9, x2: i % 5 ? 13 : 15, y1: f2(ty), y2: f2(ty), stroke: o.tick || '#9a9a9a', 'stroke-width': 1 }, art); }
+          sv('rect', { x: -2.5, y: -half - 4, width: 5, height: len + 8, rx: 2, fill: '#050505', stroke: '#2a2a2a' }, art);
+          c.thumb = sv('g', null, art);
+          sv('rect', { x: -9, y: -7, width: 18, height: 14, rx: 2, fill: o.cap || '#bdbdb8', stroke: '#111', 'stroke-width': 1 }, c.thumb);
+          sv('line', { x1: -9, x2: 9, y1: 0, y2: 0, stroke: o.index || '#111', 'stroke-width': 2 }, c.thumb);
+        }
+        c.thumb.setAttribute('transform', 'translate(0 ' + f2(half - len * pos) + ')');
+      };
+      var c = control(parent, o);
+      if (o.caption) P.text(c.g, 0, half + 22, o.caption, { fill: o.labelInk || '#e8e8e8', 'font-size': o.captionSize || 10, 'font-weight': 700 });
+      return c;
+    }
+
+    // ---- tempo and transport for any panel
+    function tempoValue(range) {
+      return { min: range[0], max: range[1], unit: 'BPM', path: 'bpm',
+        get: function () { var b = safe(function () { return host.getParam('bpm'); }, undefined); if (!isNum(b)) b = safe(function () { return host.bpm(); }, 120); return b; },
+        set: isFn(host.setParam) ? function (v) { host.setParam('bpm', Math.round(v * 10) / 10); } : null,
+        hold: isFn(host.hold) ? function () { host.hold('bpm'); } : null,
+        home: safe(function () { var d = host.document(); return d && isNum(d.bpm) ? d.bpm : undefined; }, undefined) };
+    }
+    function transportToggle() {
+      var tr = host.transport || {};
+      if (isFn(tr.toggle)) safe(function () { tr.toggle(); });
+      else if (tr.playing && isFn(tr.stop)) safe(function () { tr.stop(); });
+      else if (isFn(tr.play)) safe(function () { tr.play(); });
+    }
+    function canTransport() { var tr = host.transport || {}; return isFn(tr.toggle) || isFn(tr.play); }
+    function playStep() {
+      if (!safe(function () { return host.transport.playing; }, false)) return -1;
+      var p = safe(function () { return host.transport.pos(); }, null);
+      return p && isNum(p.step) ? p.step % STEPS : -1;
+    }
+
     // ---- add a track for a voice type, the way the System Editor's kit menu does (one undo entry)
     function addVoice(type) {
       if (!canEdit(host)) return null;
@@ -417,6 +574,13 @@
       return { dev: dev, track: tr.name, section: sec.name, si: si, variant: vn, bar: bar, bars: v ? v.bars : 0, cells: cells, tr: tr };
     }
     function editStep(type, i, accent) {
+      return editCell(type, i, function (cell) {
+        if (accent) return (cell && cell.acc) ? { acc: null, vel: DEFAULT_VEL } : { acc: true, vel: 1 };
+        return cell ? null : { vel: DEFAULT_VEL };
+      });
+    }
+    // patchFn(cell) -> patch (null clears the step, undefined does nothing); one ed.group = one undo entry, then host.commit
+    function editCell(type, i, patchFn) {
       if (!canEdit(host)) return false;
       var vw = stepView(type); if (!vw) return false;
       var ed = safe(function () { return host.editor(); }, null); if (!ed) return false;
@@ -427,9 +591,8 @@
         start = has(vw.tr.variants, 'A') ? 'A' : ks[0];
         var v0 = vw.tr.variants[start]; cell = v0.cells[i] || null; bar = 0;
       }
-      var patch;
-      if (accent) patch = (cell && cell.acc) ? { acc: null, vel: DEFAULT_VEL } : { acc: true, vel: 1 };
-      else patch = cell ? null : { vel: DEFAULT_VEL };
+      var patch = patchFn(cell);
+      if (patch === undefined) return false;
       var run = function (e) {
         if (start) e.setPlay(vw.section, vw.track, start);
         return e.setStepInSection(vw.section, vw.track, bar * STEPS + i, patch);
@@ -448,7 +611,9 @@
         attrs(t, a); t.textContent = str; return t;
       },
       voice: voice, knob: knob, control: control, button: button, slide: slide, addVoice: addVoice,
-      stepView: stepView, editStep: editStep, canEdit: function () { return canEdit(host); },
+      choice: choice, toggle: toggle, radio: radio, fader: fader, pval: pval, pwrite: pwrite, options: optionsOf,
+      tempoValue: tempoValue, transportToggle: transportToggle, canTransport: canTransport, playStep: playStep,
+      stepView: stepView, editStep: editStep, editCell: editCell, canEdit: function () { return canEdit(host); },
       listen: listen, onUpdate: function (fn) { updaters.push(fn); }, onDispose: function (fn) { disposers.push(fn); },
       refresh: refreshDevices
     };

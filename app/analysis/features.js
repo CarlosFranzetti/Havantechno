@@ -93,6 +93,12 @@
     for (k = k0; k <= k1; k++) { lg += Math.log(acc[k] + 1e-30); ar += acc[k]; c++; }
     res.hfFlatness = Math.exp(lg / c) / (ar / c + 1e-30);
     res.hfShareDb = res.bands[2].shareDb;
+    // pitches per hit and the formant test (L2): only with 3 or more distinct semitones among clearly pitched hits
+    if (o.formant !== false) {
+      var hp = hitPitches(L, R, sr, { hits: h });
+      res.pitchedHits = hp.notes.length; res.distinctPitches = hp.distinct;
+      res.formantSlope = hp.distinct >= 3 ? formantSlope(hp.notes.slice(0, 16), sr) : NaN;
+    }
     return res;
   }
 
@@ -119,7 +125,11 @@
     for (i = 0; i < h.onsets.length && out.length < 40; i++) {
       var a = h.onsets[i] + skip; if (a + 2 * n > h.mono.length) continue;
       var seg = h.mono.subarray ? h.mono.subarray(a, a + 2 * n) : h.mono.slice(a, a + 2 * n), y = yin(seg, sr);
-      if (y.f0 === y.f0 && y.clarity > 0.8) { out.push({ x: seg.subarray ? seg.subarray(0, n) : seg.slice(0, n), f0: y.f0, at: h.onsets[i] / sr }); semis[Math.round(12 * Math.log(y.f0 / 440) / Math.LN2)] = 1; }
+      if (y.f0 === y.f0 && y.clarity > 0.8) {
+        var o0 = h.onsets[i], o1 = Math.min(h.mono.length, o0 + Math.round(0.5 * sr));
+        out.push({ x: seg.subarray ? seg.subarray(0, n) : seg.slice(0, n), f0: y.f0, at: o0 / sr, full: h.mono.subarray ? h.mono.subarray(o0, o1) : h.mono.slice(o0, o1) });
+        semis[Math.round(12 * Math.log(y.f0 / 440) / Math.LN2)] = 1;
+      }
     }
     return { notes: out, distinct: Object.keys(semis).length };
   }
@@ -138,9 +148,12 @@
       for (j = lo; j <= hi; j++) if (ms[j] > m) m = ms[j];
       out.push(20 * Math.log10(m + 1e-12));
     }
+    // harmonics more than 40 dB under the strongest are window leakage and noise: left out (NaN)
+    var mx = -Infinity; for (k = 0; k < out.length; k++) if (out[k] > mx) mx = out[k];
+    for (k = 0; k < out.length; k++) if (out[k] < mx - 40) out[k] = NaN;
     return out;
   }
-  function interpLog(H, f0, f) { var p = f / f0 - 1, i = Math.floor(p); if (p < 0 || i + 1 >= H.length) return NaN; return H[i] + (H[i + 1] - H[i]) * (p - i); }
+  function interpLog(H, f0, f) { var p = f / f0 - 1, i = Math.floor(p); if (p < 0 || i + 1 >= H.length) return NaN; return H[i] + (H[i + 1] - H[i]) * (p - i); }   // NaN-propagating
   function offsetRms(a, b) {
     var n = 0, m = 0, i, e = 0; for (i = 0; i < a.length; i++) if (a[i] === a[i] && b[i] === b[i]) { m += a[i] - b[i]; n++; }
     if (n < 4) return NaN; m /= n;
@@ -149,11 +162,21 @@
   }
   function formantSlope(notes, sr) {
     if (!notes || notes.length < 3) return NaN;
-    var H = notes.map(function (n) { return harmonicsDb(n.x, n.f0, sr); }), eh = 0, ez = 0, c = 0, i, j, k;
+    // Hz hypothesis: the same wall-clock window for every note (a synth's envelopes run in seconds). Harmonic hypothesis:
+    // the same window in the recording's own time, which a sampler scales by the transposition (a note r times higher
+    // plays its recording r times faster), so a decaying timbre is compared at the same point of the recording.
+    var lf = 0; notes.forEach(function (n) { lf += Math.log(n.f0); }); var fref = Math.exp(lf / notes.length);
+    function win(n, scale) {
+      if (!n.full) return n.x;
+      var a = Math.round(0.02 * sr * scale), b = a + Math.round(0.08 * sr * scale);
+      return b <= n.full.length ? (n.full.subarray ? n.full.subarray(a, b) : n.full.slice(a, b)) : n.x;
+    }
+    var Hz = notes.map(function (n) { return harmonicsDb(win(n, 1), n.f0, sr); });
+    var H = notes.map(function (n) { return harmonicsDb(win(n, fref / n.f0), n.f0, sr); }), eh = 0, ez = 0, c = 0, i, j, k;
     for (i = 0; i < notes.length; i++) for (j = i + 1; j < notes.length; j++) {
       var r = notes[i].f0 / notes[j].f0; if (Math.abs(Math.log(r)) < 0.04) continue;   // same pitch: no information
-      var lo = Math.max(notes[i].f0, notes[j].f0), hi = Math.min(notes[i].f0 * H[i].length, notes[j].f0 * H[j].length), A = [], B = [];
-      for (k = 0; k < 24; k++) { var f = lo * Math.pow(hi / lo, k / 23); A.push(interpLog(H[i], notes[i].f0, f)); B.push(interpLog(H[j], notes[j].f0, f)); }
+      var lo = Math.max(notes[i].f0, notes[j].f0), hi = Math.min(notes[i].f0 * Hz[i].length, notes[j].f0 * Hz[j].length), A = [], B = [];
+      for (k = 0; k < 24; k++) { var f = lo * Math.pow(hi / lo, k / 23); A.push(interpLog(Hz[i], notes[i].f0, f)); B.push(interpLog(Hz[j], notes[j].f0, f)); }
       var dz = offsetRms(A, B), dh = offsetRms(H[i].slice(0, Math.min(H[i].length, H[j].length)), H[j].slice(0, Math.min(H[i].length, H[j].length)));
       if (dz === dz && dh === dh) { ez += dz; eh += dh; c++; }
     }

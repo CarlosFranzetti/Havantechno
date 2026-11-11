@@ -23,6 +23,7 @@
   var T = { fresh: 0.5, same: 0.97, noiseFlat: 0.25, bandShare: -10 };
   function synthOrSample(id, o) {
     o = o || {};
+    if (o.formantSlope == null && id && id.formantSlope === id.formantSlope && id.formantSlope != null) o = { formantSlope: id.formantSlope, libraryMatch: o.libraryMatch };
     if (!id || id.nHits < 3) return out('unknown', 'none', 0.5, ['fewer than 3 hits']);
     var ev = ['hits ' + id.nHits, 'twin (300 Hz-16 kHz) ' + f2(id.twin), 'pitch-normalised twin ' + f2(id.pitchTwin), 'residual ' + (id.residualDb === id.residualDb ? id.residualDb.toFixed(1) + ' dB' : 'n/a')];
     var fresh = id.bands.filter(function (b) { return b.shareDb > T.bandShare && b.twin === b.twin && b.twin < T.fresh; });
@@ -31,9 +32,17 @@
     if (fresh.length && id.twin < 0.6) return out('synth', 'high', 0.95, ev.concat(['each hit is a new waveform: noise or free-running oscillators']), [{ value: 'sample', p: 0.05 }]);
     if (tw >= T.same) {
       var noisy = id.hfShareDb > -25 && id.hfFlatness > T.noiseFlat;
-      if (noisy) return out('sample', 'high', 0.95, ev.concat(['noise content (3-16 kHz flatness ' + f2(id.hfFlatness) + ') replays identically: frozen noise is a recording']), [{ value: 'synth', p: 0.05 }]);
+      // L2: high -> medium. A digital voice that restarts one stored noise table at every hit replays identically too:
+      // this engine's Drums do (drums.js noiseBuf, a 2 s seeded buffer started at offset 0), and every one of their noise
+      // voices read twin 1.00. Analogue noise never repeats, so "not analogue noise" stays certain; "a sample" is not.
+      var rrBand = id.bands.filter(function (b) { return b.shareDb > T.bandShare && b.pairs === b.pairs && b.pairs < 0.9 && b.twin >= T.same; });
+      if (noisy && rrBand.length) return out('sample', 'high', 0.95, ev.concat(['noise content replays identically, and from a small set of different recordings (pairs ' + f2(rrBand[0].pairs) + ', twin ' + f2(rrBand[0].twin) + ' in ' + rrBand[0].lo + '-' + rrBand[0].hi + ' Hz): round robins or velocity layers']), [{ value: 'synth', p: 0.05 }]);
+      if (noisy) return out('sample', 'medium', 0.85, ev.concat(['noise content (3-16 kHz flatness ' + f2(id.hfFlatness) + ') replays identically: a recording, or a digital voice restarting one noise table each hit; not free-running analogue noise']), [{ value: 'synth (digital, frozen noise)', p: 0.15 }]);
       var support = [];
-      if (o.formantSlope === o.formantSlope && o.formantSlope != null && o.formantSlope > 0.7) support.push('spectral envelope moves with pitch (slope ' + f2(o.formantSlope) + ')');
+      // L2: the formant score is features.formantSlope's alignment ratio. Above 0.9 the harmonic profile and its time
+      // course both scale with pitch, as a transposed recording's do; an FM synth's profile also scales but its
+      // envelopes run in seconds (the engine's fm read 0.74 over a fifth), so only > 0.9 counts as support.
+      if (o.formantSlope === o.formantSlope && o.formantSlope != null && o.formantSlope > 0.9) support.push('harmonic profile and its time course scale with pitch (formant score ' + f2(o.formantSlope) + '), as a transposed recording does');
       if (o.libraryMatch != null && o.libraryMatch >= 0.9) support.push('matches a library sample (NCC ' + f2(o.libraryMatch) + ')');
       if (o.formantSlope != null && o.formantSlope === o.formantSlope && o.formantSlope < 0.3) return out('synth', 'medium', 0.75, ev.concat(['identical replays but the spectral envelope stays put across pitches (slope ' + f2(o.formantSlope) + '): a fixed filter']), [{ value: 'sample', p: 0.25 }]);
       if (support.length) return out('sample', support.length > 1 ? 'high' : 'medium', support.length > 1 ? 0.9 : 0.8, ev.concat(support), [{ value: 'synth', p: support.length > 1 ? 0.1 : 0.2 }]);
