@@ -284,13 +284,16 @@
   }
   var FM_PAIRS = [[1, 1], [1, 2], [2, 1], [1, 3], [3, 1], [1, 4], [2, 3], [3, 2]];
   // harmonic amplitudes (linear) of a c:m FM pair at index row b, harmonics 1..NH of the fundamental gcd
-  // The modulator's phase matters where sidebands fold over zero: frequency modulation by a sine starting at phase 0
-  // (a Web Audio oscillator on a frequency AudioParam, a DX operator) is phase modulation by -cos, so sideband n carries
-  // phase -n*pi/2 and a folded sideband the conjugate. Both phases (0 and pi/2) are tried; the better fit is kept.
-  function fmHarm(c, m, b, phi) {
+  // Phases matter where sidebands fold over zero: a folded sideband arrives conjugated, so it adds to or cancels the
+  // direct one depending on the carrier's phase offset psi and the modulator's phase phi. Frequency modulation on a
+  // Web Audio frequency AudioParam starting at phase 0 gives phi = pi/2 and psi = the index itself (the phase integral
+  // of the deviation), so both are free in the fit: phi in {0, pi/2}, psi on 8 steps over [0, pi). (L2 check: an ideal
+  // 1:1 FM at index 4 has harmonics 1..5 at -4.8, -7.4, -7.4, -6.6, -11.1 dB; with psi fixed at 0 the model put
+  // harmonic 1 at -30 dB and every static-index note failed.)
+  function fmHarm(c, m, b, phi, psi) {
     var re = new Float64Array(NH + 1), im = new Float64Array(NH + 1), n;
     for (n = -24; n <= 24; n++) {
-      var k = c + n * m, cr = Math.cos(n * phi), ci = -Math.sin(n * phi);
+      var k = c + n * m, a = psi - n * phi, cr = Math.cos(a), ci = Math.sin(a);
       if (k > 0 && k <= NH) { re[k] += b[n] * cr; im[k] += b[n] * ci; }
       else if (k < 0 && -k <= NH) { re[-k] -= b[n] * cr; im[-k] += b[n] * ci; }
     }
@@ -336,12 +339,15 @@
     if (frames.length < 3) return res;
     // FM family
     var bestFm = null;
-    FM_PAIRS.forEach(function (pr) { [0, Math.PI / 2].forEach(function (phi) {
-      var models = B.map(function (b) { return toDbArr(fmHarm(pr[0], pr[1], b, phi)); }), errs = [], idx = [];
-      frames.forEach(function (f) { var be = Infinity, bi = 0; models.forEach(function (m, i) { var e = frameErr(f, m); if (e < be) { be = e; bi = i; } }); if (be < Infinity) { errs.push(be); idx.push(IGRID[bi]); } });
+    var PH = []; [0, Math.PI / 2].forEach(function (phi) { for (var q = 0; q < 8; q++) PH.push([phi, Math.PI * q / 8]); });
+    FM_PAIRS.forEach(function (pr) {
+      // per frame, the best index over every phase pair (the phases may drift as the index moves)
+      var models = []; PH.forEach(function (ph) { B.forEach(function (b, bi) { models.push({ h: toDbArr(fmHarm(pr[0], pr[1], b, ph[0], ph[1])), i: bi }); }); });
+      var errs = [], idx = [], phi = null;
+      frames.forEach(function (f) { var be = Infinity, bi = 0; models.forEach(function (m) { var e = frameErr(f, m.h); if (e < be) { be = e; bi = m.i; } }); if (be < Infinity) { errs.push(be); idx.push(IGRID[bi]); } });
       var med = D.median(errs);
-      if (med === med && (!bestFm || med < bestFm.err)) bestFm = { err: med, pair: pr, ratio: pr[1] / pr[0], phase: phi, indexStart: D.median(idx.slice(0, 3)), indexEnd: D.median(idx.slice(-3)) };
-    }); });
+      if (med === med && (!bestFm || med < bestFm.err)) bestFm = { err: med, pair: pr, ratio: pr[1] / pr[0], indexStart: D.median(idx.slice(0, 3)), indexEnd: D.median(idx.slice(-3)) };
+    });
     // subtractive family
     var bestSub = null, W0 = []; for (var g = 0; g < 48; g++) W0.push(Math.pow(2, -5.5 + 8.5 * g / 47));   // f0/cutoff from 1/45 to 2
     ['saw', 'square'].forEach(function (wave) { [0.7, 1.5, 3, 6, 12].forEach(function (q) {
