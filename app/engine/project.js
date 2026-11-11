@@ -12,6 +12,7 @@
  * Audio files (sampler) are referenced in doc.audio, never embedded: Project.open({shell, host}) loads the song into the
  * Host and waits while it reloads them (HavantechnoShell.readFile for paths, fetch for URLs); unreadable ones are missing.
  * Sampler programs (doc.programs) reload with their region samples; Project.missing(host) lists what is still missing.
+ * Project.importTrack({file, stems, shell, host, onProgress}) makes a project from an audio file (Dubplate Crew).
  */
 (function () {
   'use strict';
@@ -231,6 +232,85 @@
     return out;
   }
 
+  // ------------------------------------------------------------ import a track (Dubplate Crew, D1)
+  // o: {file, stems, shell, host, onProgress, name, model, matchLevel, maxSeconds (the classifier's excerpt, default 30)}. file: as host.loadAudio takes (a File, the
+  // shell's {name, path, bytes}, bytes, a URL). stems: [{name, source}] or [File] (names read from the file names:
+  // drums, bass, other, vocals). Without stems, Electron's HavantechnoShell.separate(path) splits the file when the
+  // shell has it; else the analysis reads the mix in bands. Then: a new document, the file as its reference (offset =
+  // the first downbeat), host.analyze, a level match over at most 32 bars (o.matchLevel !== false and the context can
+  // render), and Project.save at once. Resolves {doc, saved: {name, path?} | null (cancelled), analysis, level}.
+  var STEM_RE = /(drums|bass|other|vocals)/i;
+  function stemName(src, i) {
+    var n = String((src && (src.name || src.path)) || '').split(/[\\/]/).pop().toLowerCase(), m = n.match(STEM_RE);
+    return m ? m[1].toLowerCase() : (n.replace(/\.[a-z0-9]{1,5}$/, '').replace(/[^a-z0-9_-]+/g, '_') || 'stem' + (i + 1));
+  }
+  function importTrack(o) {
+    o = o || {};
+    var host = o.host, sh = shellOf(o), file = o.file;
+    if (!host || typeof host.analyze !== 'function' || typeof host.loadAudio !== 'function') return Promise.reject(new Error('Project.importTrack: a host is required'));
+    if (!file) return Promise.reject(new Error('Project.importTrack: no file'));
+    function prog(stage, done, total, note) { if (typeof o.onProgress === 'function') { try { o.onProgress({ stage: stage, done: done, total: total, note: note }); } catch (e) {} } }
+    var fname = String(file.name || (typeof file === 'string' ? file : '') || file.path || 'import').split(/[\\/]/).pop();
+    var name = o.name || fname.replace(/\.[A-Za-z0-9]{1,5}$/, '') || 'import';
+    var doc = { v: 1, name: name, bpm: 120, swing: 0, key: null, progression: [], sends: {}, tracks: [], sections: [{ name: 'import', bars: 1, play: {} }] };
+    var refId = null, separator = null, unverified = [], analysis = null, level = null;
+    try { host.loadDocument(doc); } catch (e) { return Promise.reject(e); }
+    prog('decode', 0, 1, fname);
+    return host.loadAudio(file, { analyze: false }).then(function (id) {
+      refId = id;
+      prog('decode', 1, 1, fname);
+      if (o.stems && o.stems.length) {
+        return o.stems.map(function (s, i) {
+          if (s && s.source != null) return { name: String(s.name || stemName(s.source, i)).toLowerCase(), source: s.source };
+          return { name: stemName(s, i), source: s };
+        });
+      }
+      var path = file && typeof file === 'object' ? (file.path || (sh && typeof sh.pathForFile === 'function' ? (function () { try { return sh.pathForFile(file); } catch (e) { return null; } })() : null)) : null;
+      if (!fn(sh, 'separate') || !path) {
+        if (fn(sh, 'separate') && !path) unverified.push('separation needs the file\'s path: the analysis read the mix');
+        return null;
+      }
+      prog('separate', 0, 1, 'separating ' + fname);
+      var off = null;
+      if (fn(sh, 'onSeparateProgress')) { try { off = sh.onSeparateProgress(function (p) { p = p || {}; prog('separate', p.done == null ? 0 : p.done, p.total == null ? 1 : p.total, p.note || p.message || ''); }); } catch (e) { off = null; } }
+      return asPromise(sh.separate(path, { model: o.model })).then(function (r) {
+        if (typeof off === 'function') { try { off(); } catch (e) {} }
+        var list = (r && r.stems) || [];
+        separator = { model: (r && r.model) || o.model || null, stems: list.map(function (s) { return s.name; }), log: String((r && r.log) || '').slice(-4000) };
+        prog('separate', 1, 1, list.length + ' stems');
+        return Promise.all(list.map(function (s, i) {
+          if (!fn(sh, 'readFile')) return null;
+          return asPromise(sh.readFile(s.path, {})).then(function (bytes) {
+            return bytes ? { name: String(s.name || stemName(s, i)).toLowerCase(), source: { name: String(s.path).split(/[\\/]/).pop(), path: s.path, bytes: bytes } } : null;
+          }, function () { return null; });
+        })).then(function (st) { return st.filter(Boolean); });
+      }, function (e) {
+        if (typeof off === 'function') { try { off(); } catch (x) {} }
+        separator = { error: String((e && e.message) || e) };
+        unverified.push('separation failed (' + separator.error + '): the analysis read the mix');
+        return null;
+      });
+    }).then(function (stems) {
+      var list = stems && stems.length ? stems : [{ name: 'mix', id: refId }];
+      var b = host.buffer(refId);
+      return host.analyze(list, { onProgress: o.onProgress, separator: separator, unverified: unverified, maxSeconds: o.maxSeconds,
+                                 source: { name: fname, duration: b ? b.duration : null, sampleRate: b ? b.sampleRate : null } });
+    }).then(function (an) {
+      analysis = an;
+      return host.setReference(refId, { gain: 1, offset: an.bpm.offset });
+    }).then(function () {
+      if (o.matchLevel === false || typeof host.matchLevel !== 'function') return null;
+      prog('build', 0, 1, 'level match');
+      return host.matchLevel({ maxBars: 32 }).then(function (r) { level = r; prog('build', 1, 1, r ? 'level match ' + r.gainDb + ' dB' : 'level match not available'); }, function (e) { warn('importTrack: level match failed: ' + (e && e.message)); });
+    }).then(function () {
+      prog('save', 0, 1, name);
+      return save(host.document(), { shell: sh, name: name });
+    }).then(function (saved) {
+      prog('save', 1, 1, saved ? saved.name : 'not saved');
+      return { doc: host.document(), saved: saved, analysis: analysis, level: level };
+    });
+  }
+
   // ------------------------------------------------------------ autosave
   // Synchronous to localStorage (web and Electron alike, so restore() can be synchronous); in Electron also mirrored
   // to the app-data folder when the shell offers writeAppData(fileName, text).
@@ -269,7 +349,7 @@
     try { return asPromise(sh.appDataPath()).then(function (p) { return p || null; }, function () { return null; }); } catch (e) { return Promise.resolve(null); }
   }
 
-  root.Project = { serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, pickFiles: pickFiles, importProgram: importProgram, missing: missing, autosave: autosave, restore: restore,
+  root.Project = { serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, pickFiles: pickFiles, importProgram: importProgram, importTrack: importTrack, missing: missing, autosave: autosave, restore: restore,
                    restoreAsync: restoreAsync, clearAutosave: clearAutosave, appDataPath: appDataPath, fileName: fileName,
                    EXT: EXT, AUTOSAVE_KEY: AUTOSAVE_KEY, FORMAT: FORMAT };
 })();

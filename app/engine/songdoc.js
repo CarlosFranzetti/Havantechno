@@ -18,6 +18,8 @@
  * Programs (batch 1): doc.programs = {id: {name, kind, source, global, regions}}, a sampler plays params.program;
  * audio entries may carry meta (file header) and analysis (pitch). ed.addProgram / removeProgram / setProgram /
  * setRegion / addRegions / removeRegion.
+ * Import (Dubplate Crew): doc.reference = {audio, gain, offset} (an audio id, linear gain, seconds of the reference at
+ * bar 1 beat 1) and doc.analysis (the import's report, plain JSON) ride along; removeTrack clears an element's track.
  */
 (function () {
   'use strict';
@@ -197,6 +199,18 @@
     for (id in m) if (has(m, id)) { var p = normProgram(m[id], id); if (p) out[id] = p; }
     return out;
   }
+  // doc.reference = {audio, gain, offset} (Dubplate Crew): the original audio an import or the owner set, for A/B.
+  // doc.analysis = the import's report (plain JSON, version 1); kept as it is, dropped when it is not an object.
+  function normReference(r) {
+    if (!r || typeof r !== 'object' || isArr(r) || r.audio == null || r.audio === '') return null;
+    var g = Number(r.gain), o = Number(r.offset);
+    return { audio: String(r.audio), gain: g === g && isFinite(g) && g >= 0 ? g : 1, offset: o === o && isFinite(o) ? o : 0 };
+  }
+  function normExtras(d) {
+    if (has(d, 'reference')) { var r = normReference(d.reference); if (r) d.reference = r; else delete d.reference; }
+    if (has(d, 'analysis') && (!d.analysis || typeof d.analysis !== 'object' || isArr(d.analysis))) delete d.analysis;
+    return d;
+  }
   function kindOf(t) {
     if (t.kind) return t.kind;
     if (t.chords) return 'chord';
@@ -251,6 +265,7 @@
     }
     if (d.audio != null) d.audio = normAudio(d.audio);
     if (d.programs != null) d.programs = normPrograms(d.programs);
+    normExtras(d);
     return JSON.stringify(d);
   }
   function load(json) {
@@ -268,6 +283,7 @@
     d.progression = d.progression || []; d.sends = d.sends || {};
     if (d.audio != null) d.audio = normAudio(d.audio);
     if (d.programs != null) d.programs = normPrograms(d.programs);
+    normExtras(d);
     return d;
   }
 
@@ -446,6 +462,8 @@
         if (s.set) for (k in s.set) if (has(s.set, k) && k.indexOf(pre) === 0) delete s.set[k];
         if (s.ramp) { var keep = []; for (j = 0; j < s.ramp.length; j++) if (String(s.ramp[j].param).indexOf(pre) !== 0) keep.push(s.ramp[j]); s.ramp = keep; }
       }
+      var an = ed.doc.analysis;                     // an imported element whose track goes keeps its report, no track
+      if (an && isArr(an.elements)) for (i = 0; i < an.elements.length; i++) if (an.elements[i] && an.elements[i].track === name) an.elements[i].track = null;
       return true;
     };
     ed.canUndo = function () { return ed._undo.length > 0; };

@@ -897,6 +897,11 @@
     function trackMenuItems() {
       var sel = S.sel;
       return [
+        // D2 (Dubplate Crew): import a whole track for analysis; App.importTrack wraps ImportView.importTrack with its toast
+        { label: 'Import track\u2026', disabled: !(root.ImportView || (root.App && isFn(root.App.importTrack))), run: function () {
+          if (root.App && isFn(root.App.importTrack)) root.App.importTrack();
+          else if (root.ImportView && isFn(root.ImportView.importTrack)) root.ImportView.importTrack(host, { toast: setStatus });
+        } },
         { label: 'Sampler track from file\u2026', run: pickSampler },
         { label: 'Sampler track from folder\u2026', run: function () { pickProgramSource({ directory: true }); } },
         { label: 'TR-808 kit', disabled: !drumTypes().length, run: function () { addKit('808'); } },
@@ -966,6 +971,10 @@
       inner.appendChild(buildOverview(d));
       inner.appendChild(buildRuler(d));
       inner.appendChild(buildTrackHeader());
+      // D2 (Dubplate Crew): the reference lane (ImportView.lane) at the top of the track list; hidden while there is no reference
+      if (S.refLane) safe(function () { S.refLane.dispose(); });
+      S.refLane = (root.ImportView && isFn(root.ImportView.lane)) ? safe(function () { return root.ImportView.lane(host); }, null) : null;
+      if (S.refLane && S.refLane.el) inner.appendChild(S.refLane.el);
       var bodyEl = buildBody(d); wireDrop(bodyEl); inner.appendChild(bodyEl);
       S.devRowEl = make('div', 'se-devrow'); attr(S.devRowEl, 'aria-label', 'Device row');
       inner.appendChild(S.devRowEl);
@@ -1001,6 +1010,7 @@
       var absBar = (typeof p.bar === 'number' ? p.bar : 0) + (p.step || 0) / STEPS;
       var f = Math.max(0, Math.min(1, absBar / S.total)), fs = pct(f);
 
+      if (S.refLane) S.refLane.update(fs);        // D2: reference lane playhead and waveform (redraws only on change)
       if (fs !== S.lastPh) {
         S.lastPh = fs;
         if (S.ovPh) S.ovPh.style.left = fs;
@@ -1099,6 +1109,7 @@
         if (disposed) return;
         disposed = true;
         closeMenu();
+        if (S.refLane) safe(function () { S.refLane.dispose(); });     // D2
         if (isFn(host.off)) safe(function () { host.off('document', onDocument); });
         for (var n in S.rows) if (has(S.rows, n) && S.rows[n].chip && isFn(S.rows[n].chip.dispose)) safe(function () { S.rows[n].chip.dispose(); });
         disposeDev();

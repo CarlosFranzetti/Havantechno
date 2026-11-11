@@ -84,6 +84,7 @@
     '.ap-meter-fb{width:120px;height:8px;background:var(--line,#2a2a3a);position:relative}',
     '.ap-meter-fb>i{position:absolute;left:0;top:0;bottom:0;background:var(--on,#75f97f);width:0}',
     '.ap-spacer{flex:1 1 0}',
+    '.ap-right{margin-left:auto;flex-wrap:nowrap;gap:6px}',
     '.ap-view{height:100%;position:relative;overflow:auto}',
     '.ap-note{padding:24px;color:var(--dim,#8a8aa0)}',
     '.ap-menu{position:fixed;z-index:900;min-width:200px;background:var(--panel-raised,#1b1b26);border:1px solid var(--line,#2a2a3a);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.6);padding:4px;color:var(--fg,#d8d8e6)}',
@@ -130,6 +131,10 @@
     redo: function () { return doUndo(true); },
     toast: toast,
     relinkMissing: relinkMissing,
+    importTrack: doImport,
+    showReport: function () { return openReport(); },
+    closeReport: function () { return closeReport(); },
+    toggleAB: function () { return toggleAB(); },
     boot: boot
   };
 
@@ -268,6 +273,46 @@
     function finish() { S.busy = false; if (b) { b.disabled = false; b.textContent = 'Export WAV'; } }
   }
 
+  // ---- import, report, A/B (Dubplate Crew D2; ui/import-view.js)
+  function IV() { return root.ImportView || null; }
+  function doImport() {
+    var h = S.host, iv = IV();
+    if (!h) return Promise.resolve(null);
+    if (!iv || typeof iv.importTrack !== 'function') { toast('Import is not available: ui/import-view.js did not load.'); return Promise.resolve(null); }
+    return iv.importTrack(h, { shell: shell, toast: toast, onDone: function () { openReport(); } });
+  }
+  function openReport() {
+    var h = S.host, iv = IV();
+    if (!h || !iv || typeof iv.mount !== 'function') return false;
+    if (S.report) { S.report.refresh(true); S.report.focus(); return true; }
+    var host_ = doc.getElementById('view');
+    try {
+      S.report = iv.mount(host_, h, { onClose: closeReport });
+      if (S.bar.report) S.bar.report.setAttribute('aria-pressed', 'true');
+      S.report.focus();
+    } catch (e) { report('report', e); S.report = null; return false; }
+    return true;
+  }
+  function closeReport() {
+    if (!S.report) return false;
+    try { S.report.dispose(); } catch (e) { report('report dispose', e); }
+    S.report = null;
+    if (S.bar.report) { S.bar.report.setAttribute('aria-pressed', 'false'); try { S.bar.report.focus(); } catch (e2) { /* ignore */ } }
+    return true;
+  }
+  function reportWhy() {
+    var h = S.host;
+    if (!IV()) return 'The report view did not load (ui/import-view.js).';
+    if (!h || typeof h.analysis !== 'function') return 'This engine keeps no analysis yet (host.analysis is missing).';
+    var a = null; try { a = h.analysis(); } catch (e) { a = null; }
+    return a ? '' : 'No analysis in this song: import a track first.';
+  }
+  function toggleAB() {
+    if (S.bar.abCtl) return S.bar.abCtl.toggle();
+    toast('A/B is not available: ui/import-view.js did not load.');
+    return null;
+  }
+
   // ---- views
   function viewAvailable(id) {
     for (var i = 0; i < VIEWS.length; i++) if (VIEWS[i].id === id) return !!(VIEWS[i].global && root[VIEWS[i].global] && typeof root[VIEWS[i].global].mount === 'function');
@@ -340,6 +385,7 @@
     if (k.key === ' ' || k.code === 'Space') { if (!k.repeat) { try { h.transport.toggle(); } catch (e) { report('toggle', e); } } return true; }
     if (k.key === 'Tab' && !k.shift) { if (!k.repeat) toggleView(); return true; }
     if (key === 'v' && !k.shift) { if (!k.repeat && root.Windows) root.Windows.toggleAll(); return true; }
+    if (key === 'a' && !k.shift) { if (!k.repeat) toggleAB(); return true; }        // D2: A/B (song or reference)
     return false;
   }
   function installKeys() {
@@ -421,9 +467,15 @@
     B.pos.title = 'bar · step · section';
     bar.appendChild(B.pos);
 
-    B.ab = button('', 'A/B', 'Compare with the reference (not available yet)');
-    B.ab.disabled = true;
-    bar.appendChild(B.ab);
+    // A/B, level match and reference gain (D2, ui/import-view.js); the placeholder stays if that file is missing
+    if (IV() && typeof IV().abControl === 'function') {
+      try { B.abCtl = IV().abControl(host, { toast: toast }); bar.appendChild(B.abCtl.el); } catch (e) { report('abControl', e); B.abCtl = null; }
+    }
+    if (!B.abCtl) {
+      B.ab = button('', 'A/B', 'A/B is not available: ui/import-view.js did not load');
+      B.ab.disabled = true;
+      bar.appendChild(B.ab);
+    }
 
     var mw = el('span', 'ap-meter');
     mw.title = 'Master level';
@@ -436,12 +488,15 @@
     }
     bar.appendChild(mw);
 
-    bar.appendChild(el('span', 'ap-spacer'));
+    // D2: the project actions are one right-aligned cluster; when the bar is too narrow for everything (1440 px with the
+    // A/B group) the cluster wraps to a second row as a unit instead of splitting mid-group
+    var right = el('div', 'ap-grp ap-right');
+    bar.appendChild(right);
 
     B.rel = button('', 'Re-enable arranged (0)', 'Hand held parameters back to the arrangement');
     B.rel.disabled = true;
     B.rel.addEventListener('click', function () { try { host.releaseAll(); } catch (e) { report('releaseAll', e); } });
-    bar.appendChild(B.rel);
+    right.appendChild(B.rel);
 
     var ur = el('div', 'ap-seg');
     B.undo = button('', '\u21B6', 'Undo (Ctrl/Cmd+Z)');
@@ -450,24 +505,35 @@
     B.undo.addEventListener('click', function () { doUndo(false); });
     B.redo.addEventListener('click', function () { doUndo(true); });
     ur.appendChild(B.undo); ur.appendChild(B.redo);
-    bar.appendChild(ur);
+    right.appendChild(ur);
 
     var sv = el('div', 'ap-seg');
     B.save = button('', 'Save', 'Save the song (Ctrl/Cmd+S)');
     B.open = button('', 'Open', 'Open a song (Ctrl/Cmd+O)');
     B.save.addEventListener('click', doSave);
     B.open.addEventListener('click', doOpen);
-    sv.appendChild(B.save); sv.appendChild(B.open);
-    bar.appendChild(sv);
+    B.imp = button('', 'Import\u2026', 'Import a track: analyse it, build a recreation beside it, save it as a project');
+    B.imp.addEventListener('click', doImport);
+    sv.appendChild(B.save); sv.appendChild(B.open); sv.appendChild(B.imp);
+    right.appendChild(sv);
+
+    B.report = button('', 'Report', 'Show the analysis report');
+    B.report.setAttribute('aria-pressed', 'false');
+    B.report.addEventListener('click', function () {
+      var why = reportWhy();
+      if (why) { toast(why); return; }
+      if (S.report) closeReport(); else openReport();
+    });
+    right.appendChild(B.report);
 
     B.export = button('', 'Export WAV', 'Render the whole song to a WAV file');
     B.export.addEventListener('click', doExport);
-    bar.appendChild(B.export);
+    right.appendChild(B.export);
 
     B.win = button('', 'Windows', 'Device windows: hide all, tile, cascade, link');
     B.win.setAttribute('aria-haspopup', 'menu'); B.win.setAttribute('aria-expanded', 'false');
     B.win.addEventListener('click', function () { toggleWinMenu(); });
-    bar.appendChild(B.win);
+    right.appendChild(B.win);
 
     frame.appendChild(bar);
   }
@@ -540,6 +606,7 @@
     if (doc.activeElement !== B.bpm) { var bv = h.bpm(); var bs = String(Math.round(bv * 100) / 100); if (B.bpm.value !== bs) B.bpm.value = bs; }
     if (doc.activeElement !== B.swing) { var sv = h.swing(); var ssv = (Math.round(sv * 100) / 100).toFixed(2); if (B.swing.value !== ssv) B.swing.value = ssv; }
     try { var m = h.meter('master'); B.meter.set(m && m.level ? m.level : 0); } catch (e3) { /* no meter yet */ }
+    if (B.abCtl && S.frame % 4 === 0) { try { B.abCtl.update(); } catch (e6) { report('abControl', e6); } }
     if (S.frame % 4 === 0) {
       var n = 0; try { n = h.heldCount(); } catch (e4) { n = 0; }
       if (B._held !== n) { B._held = n; B.rel.textContent = 'Re-enable arranged (' + n + ')'; B.rel.disabled = n === 0; }
@@ -549,6 +616,12 @@
       try { var ed = h.editor(); cu = !!ed.canUndo(); cr = !!ed.canRedo(); } catch (e5) { /* ignore */ }
       if (B.undo.disabled === cu) B.undo.disabled = !cu;
       if (B.redo.disabled === cr) B.redo.disabled = !cr;
+      var rw = reportWhy();
+      if (B._rw !== rw) {
+        B._rw = rw;
+        if (rw) { B.report.setAttribute('aria-disabled', 'true'); B.report.title = rw; }
+        else { B.report.removeAttribute('aria-disabled'); B.report.title = 'Show the analysis report'; }
+      }
       var wc = root.Windows ? root.Windows.count() : 0;
       var wt = 'Windows' + (wc ? ' (' + wc + ')' : '') + (wc && root.Windows.isHidden() ? ' hidden' : '');
       if (B.win.textContent !== wt) B.win.textContent = wt;

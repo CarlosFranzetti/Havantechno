@@ -256,6 +256,7 @@
       sendNow = {};
       var s = Sequencer.create(live ? ctx : null, { bpm: doc.bpm, swing: doc.swing, seed: st ? st.seed : (opts.seed || 1) });
       rawSet = wrap(s);
+      hookReference(s);
       buildSong(s, doc);
       seq = s;
       if (st && keepTransport !== null) restore(s, st, keepTransport);
@@ -295,6 +296,7 @@
       keepBuffers();
       if (seq) { try { seq.stop(); } catch (e) {} }
       rebuild(null);                                // fresh: stopped, bar 0, nothing held, no mute or solo
+      syncReference();
       emit('document', { reason: 'load', rebuilt: true });
       lastAudioOpts = o || opts;
       if (missingIds().length) host.reloadAudio(lastAudioOpts);
@@ -305,6 +307,7 @@
       var rebuilt = false;
       if (structKey(ed.doc) === builtKey) applyInPlace();
       else { rebuild(true); rebuilt = true; }
+      syncReference();
       emit('document', { reason: 'commit', rebuilt: rebuilt });
       programEvents();
       return rebuilt;
@@ -437,6 +440,7 @@
         var value = host.getParam(path);
         if (!mutePath(parts)) persist(path, parts, value === undefined ? v : value);
         if (has(seq._base, path)) seq._base[path] = value === undefined ? v : value;   // the pre-arrangement value is now this
+        if (path === 'bpm' && seq.playing) startRef(seq._step, seq._next);              // the reference follows the new tempo
         emit('param', { path: path, value: value === undefined ? v : value, source: 'ui' });
         return true;
       } catch (e) { return false; }
@@ -520,6 +524,9 @@
     function usedBy(id) {
       var out = [], t = ed.doc.tracks, m = ed.doc.programs, pid, j;
       for (var i = 0; i < t.length; i++) if (isSamplerDef(t[i]) && t[i].params && t[i].params.buffer === id) out.push(t[i].name);
+      if (ed.doc.reference && ed.doc.reference.audio === id) out.push('reference');
+      var an = ed.doc.analysis;
+      if (an && isArr(an.stems)) for (j = 0; j < an.stems.length; j++) if (an.stems[j] && an.stems[j].audio === id) { out.push('analysis'); break; }
       if (m) for (pid in m) if (has(m, pid) && m[pid] && m[pid].regions) {
         for (j = 0; j < m[pid].regions.length; j++) if (m[pid].regions[j] && m[pid].regions[j].buffer === id) { out.push('program:' + pid); break; }
       }
@@ -1044,6 +1051,353 @@
       });
     };
 
+    // ---------------------------------------------------------- reference track and A/B (Dubplate Crew, D1)
+    // doc.reference = {audio: <doc.audio id>, gain, offset}: the original, played in sync with the transport straight to
+    // the destination (never through the master chain; host.render builds its own engine, so exports never hold it).
+    // Graph on a live context: seq.out -> abSong -> destination; source -> per-source fade gain -> ref.gain
+    // (doc.reference.gain) -> abRef -> destination. Reference time at song step s is offset + s * stepSec.
+    var XFADE = 0.01, SRC_FADE = 0.004;
+    var ref = { state: 'song', abSong: null, abRef: null, gain: null, cur: null, nodeCtx: null };
+    function refDoc() { var r = ed && ed.doc.reference; return (r && typeof r === 'object' && r.audio) ? r : null; }
+    function num(v, d) { v = Number(v); return v === v && isFinite(v) ? v : d; }
+    function rampTo(p, v, now, dur) {
+      try {
+        if (typeof p.cancelScheduledValues === 'function') p.cancelScheduledValues(now);
+        if (typeof p.setValueAtTime === 'function') p.setValueAtTime(p.value, now);
+        if (typeof p.linearRampToValueAtTime === 'function') p.linearRampToValueAtTime(v, now + dur); else p.value = v;
+      } catch (e) { try { p.value = v; } catch (e2) {} }
+    }
+    function ensureRefNodes() {
+      if (!live || !ctx) return false;
+      if (ref.nodeCtx === ctx && ref.abSong) return true;
+      try {
+        ref.abSong = ctx.createGain(); ref.abRef = ctx.createGain(); ref.gain = ctx.createGain();
+        ref.abSong.gain.value = ref.state === 'song' ? 1 : 0;
+        ref.abRef.gain.value = ref.state === 'reference' ? 1 : 0;
+        var r = refDoc(); ref.gain.gain.value = r ? num(r.gain, 1) : 1;
+        ref.abSong.connect(ctx.destination); ref.gain.connect(ref.abRef); ref.abRef.connect(ctx.destination);
+        ref.nodeCtx = ctx; ref.cur = null;
+        return true;
+      } catch (e) { ref.abSong = ref.abRef = ref.gain = null; warn('reference nodes failed: ' + (e && e.message)); return false; }
+    }
+    // the song's output goes through abSong instead of straight to the destination (the analyser stays on seq.out)
+    function routeSong(s) {
+      if (!live || !s.out || !ensureRefNodes()) return;
+      try { s.out.disconnect(); if (s.analyser) s.out.connect(s.analyser); s.out.connect(ref.abSong); } catch (e) { warn('A/B routing failed: ' + (e && e.message)); }
+    }
+    function fadeOutRef(c, t) {
+      if (!c) return;
+      try {
+        c.g.gain.cancelScheduledValues(t); c.g.gain.setValueAtTime(t >= c.on ? 1 : 0, t); c.g.gain.linearRampToValueAtTime(0, t + SRC_FADE);
+        c.src.stop(t + SRC_FADE + 0.002);
+      } catch (e) { try { c.src.stop(); } catch (e2) {} }
+    }
+    function stopRef() { if (ref.cur && ctx) fadeOutRef(ref.cur, ctx.currentTime); ref.cur = null; }
+    // (re)start the reference so that song step `step` sounds at audio time t; the previous source fades out at t
+    function startRef(step, t) {
+      var r = refDoc(), buf = r ? getBuffer(r.audio) : null;
+      if (!live || !ctx || !seq) return;
+      var now = ctx.currentTime;
+      if (!(t >= now)) t = now;
+      fadeOutRef(ref.cur, t); ref.cur = null;
+      if (!buf || !ensureRefNodes()) return;
+      var pos = num(r.offset, 0) + step * seq.stepSec(), dur = typeof buf.duration === 'number' ? buf.duration : buf.length / buf.sampleRate;
+      if (pos >= dur) return;
+      try {
+        var src = ctx.createBufferSource(), g = ctx.createGain(), on = pos >= 0 ? t : t - pos;
+        src.buffer = buf; src.connect(g); g.connect(ref.gain);
+        g.gain.setValueAtTime(0, on); g.gain.linearRampToValueAtTime(1, on + SRC_FADE);
+        if (pos >= 0) src.start(t, pos); else src.start(on, 0);
+        var c = { src: src, g: g, on: on, pos: pos, step: step, t: t, buffer: r.audio };
+        src.onended = function () { try { g.disconnect(); } catch (e) {} if (ref.cur === c) ref.cur = null; };
+        ref.cur = c;
+      } catch (e) { warn('reference start failed: ' + (e && e.message)); }
+    }
+    // per sequencer: play starts the reference at the first scheduled step, every jump or loop wrap while playing
+    // (seq.chase with a time) re-seeks it at that time, stop and pause fade it out
+    function hookReference(s) {
+      var rawChase = s.chase;
+      s.chase = function (absStep, t) {
+        var r = rawChase.apply(s, arguments);
+        if (s === seq && s.playing && typeof t === 'number') startRef(absStep, t);
+        return r;
+      };
+      s.on('play', function () { if (s === seq || !seq) startRef(s._step, s._next); });
+      s.on('stop', function () { if (s === seq) stopRef(); });
+      if (live && s.out) routeSong(s);
+    }
+    // after the document changed (commit, load, undo, setReference): gain, and the source when the file changed
+    function syncReference() {
+      var r = refDoc();
+      if (!r && ref.state === 'reference') { ref.state = 'song'; applyAB(); emit('ab', { state: 'song' }); }
+      if (!live || !ctx || !ref.gain) return;
+      rampTo(ref.gain.gain, r ? num(r.gain, 1) : 1, ctx.currentTime, XFADE);
+      var playing = seq && seq.playing;
+      if (!r || !getBuffer(r.audio)) { if (ref.cur) stopRef(); return; }
+      if (playing && (!ref.cur || ref.cur.buffer !== r.audio)) startRef(seq._step, seq._next);
+    }
+    function applyAB() {
+      if (!live || !ctx || !ref.abSong) return;
+      var now = ctx.currentTime;
+      rampTo(ref.abSong.gain, ref.state === 'song' ? 1 : 0, now, XFADE);
+      rampTo(ref.abRef.gain, ref.state === 'reference' ? 1 : 0, now, XFADE);
+    }
+    host.reference = function () {
+      var r = refDoc(); if (!r) return null;
+      var a = audioMap()[r.audio] || {}, b = getBuffer(r.audio);
+      return { id: r.audio, name: a.name || r.audio, duration: b ? b.duration : (a.duration == null ? null : a.duration), gain: num(r.gain, 1), offset: num(r.offset, 0), ready: !!b };
+    };
+    // source: as host.loadAudio takes, or the id of an entry already in doc.audio; null removes the reference.
+    // One undo step. Resolves true when the document changed.
+    host.setReference = function (source, o) {
+      o = o || {};
+      if (source == null) {
+        var cur = refDoc();
+        if (!cur) return Promise.resolve(false);
+        snapshot(ed);
+        delete ed.doc.reference;
+        if (!usedBy(cur.audio).length) { delete buffers[cur.audio]; if (ed.doc.audio) delete ed.doc.audio[cur.audio]; }
+        syncReference();
+        emit('reference', { status: 'removed', id: cur.audio });
+        return Promise.resolve(true);
+      }
+      var p = (typeof source === 'string' && has(audioMap(), source)) ? Promise.resolve(source) : host.loadAudio(source, { name: o.name, src: o.src, analyze: false });
+      return p.then(function (id) {
+        var prev = refDoc();
+        snapshot(ed);
+        ed.doc.reference = { audio: id, gain: Math.max(0, num(o.gain, prev ? num(prev.gain, 1) : 1)), offset: num(o.offset, prev ? num(prev.offset, 0) : 0) };
+        syncReference();
+        if (seq && seq.playing) startRef(seq._step, seq._next);
+        emit('reference', { status: 'set', id: id });
+        return true;
+      });
+    };
+    // live and stored in the document (no undo step of its own: a knob gesture takes one through host.hold)
+    host.setReferenceParam = function (name, v) {
+      var r = refDoc(); if (!r) return false;
+      v = Number(v); if (v !== v || !isFinite(v)) return false;
+      if (name === 'gain') { r.gain = clamp(v, 0, 16); if (live && ctx && ref.gain) rampTo(ref.gain.gain, r.gain, ctx.currentTime, XFADE); }
+      else if (name === 'offset') { r.offset = clamp(v, -3600, 3600); if (seq && seq.playing) startRef(seq._step, seq._next); }
+      else return false;
+      emit('reference', { status: 'param', name: name, value: r[name] });
+      return true;
+    };
+    // 'song' or 'reference': what is heard. Switching crossfades over 10 ms and never moves the playhead.
+    host.ab = function (v) {
+      if (v === undefined) return ref.state;
+      var next = v === 'toggle' ? (ref.state === 'song' ? 'reference' : 'song') : v;
+      if (next !== 'song' && next !== 'reference') return ref.state;
+      if (next === 'reference' && !refDoc()) next = 'song';
+      if (next === ref.state) return ref.state;
+      ref.state = next;
+      applyAB();
+      emit('ab', { state: next });
+      return next;
+    };
+    // level match: render the song (o.section, or bars o.from..o.to, at most o.maxBars), measure it and the same span of
+    // the reference with BS.1770-4 integrated loudness, set doc.reference.gain so both read the same (one undo step)
+    host.matchLevel = function (o) {
+      o = o || {};
+      var r = refDoc(), buf = r ? getBuffer(r.audio) : null, I = root.Importer;
+      if (!r || !buf || !I || typeof I.loudness !== 'function') return Promise.resolve(null);
+      var from, to, s;
+      if (o.section != null) { s = seq.section(o.section); if (!s) return Promise.resolve(null); from = s.start; to = s.start + s.bars; }
+      else { from = Math.max(0, o.from | 0); to = o.to == null ? seq.totalBars : Math.min(seq.totalBars, o.to | 0); }
+      if (o.maxBars > 0) to = Math.min(to, from + (o.maxBars | 0));
+      if (!(to > from)) return Promise.resolve(null);
+      var bs = seq.barSec(), off = num(r.offset, 0), rs = off + from * bs, re = off + to * bs, dur = buf.duration;
+      var a = Math.max(rs, 0), b = Math.min(re, dur);
+      if (b - a < 0.5) return Promise.resolve(null);
+      var g = gen;
+      return host.render({ from: from, to: to, tail: 0 }).then(function (song) {
+        var t0 = 0.05, sl = I.loudness(song, { start: t0 + (a - rs), end: t0 + (b - rs) }), rl = I.loudness(buf, { start: a, end: b });
+        if (g !== gen || !isFinite(sl.lufs) || !isFinite(rl.lufs) || refDoc() !== r) return null;
+        var gainDb = clamp(sl.lufs - rl.lufs, -60, 24), lin = Math.pow(10, gainDb / 20);
+        snapshot(ed);
+        r.gain = Math.round(lin * 10000) / 10000;
+        if (live && ctx && ref.gain) rampTo(ref.gain.gain, r.gain, ctx.currentTime, XFADE);
+        emit('reference', { status: 'param', name: 'gain', value: r.gain });
+        return { gainDb: Math.round(gainDb * 100) / 100, songLufs: sl.lufs, referenceLufs: rl.lufs, measure: sl.measure, from: from, to: to, seconds: Math.round((b - a) * 100) / 100 };
+      });
+    };
+
+    // ---------------------------------------------------------- analysis and import (Dubplate Crew, D1)
+    host.analysis = function () { return ed.doc.analysis || null; };
+    var ROLES = { drums: 1, bass: 1, other: 1, vocals: 1 };
+    var BANDS = [['kick', 0, 150], ['snare', 150, 5000], ['hats', 6000, null]];
+    function later(v) { return new Promise(function (res) { setTimeout(function () { res(v); }, 0); }); }
+    function cleanJson(o) { return JSON.parse(JSON.stringify(o, function (k, v) { if (k === '_tail' || k === 'frames') return undefined; if (typeof v === 'number' && !isFinite(v)) return null; return v; })); }
+    function chans(b) { return { L: b.getChannelData(0), R: b.numberOfChannels > 1 ? b.getChannelData(1) : null, sr: b.sampleRate }; }
+    // the loudest stretch of at most `secs` seconds (the classifier reads an excerpt; the patterns read the whole stem)
+    function excerpt(c, secs) {
+      var n = c.L.length, w = Math.round(secs * c.sr);
+      if (n <= w) return { L: c.L, R: c.R, sr: c.sr, start: 0, end: n / c.sr };
+      var hop = Math.round(c.sr), best = 0, bi = 0, e = [], i, k;
+      for (i = 0; i + hop <= n; i += hop) { var s = 0; for (k = i; k < i + hop; k += 4) s += c.L[k] * c.L[k]; e.push(s); }
+      var span = Math.floor(w / hop), run = 0;
+      for (i = 0; i < e.length; i++) { run += e[i]; if (i >= span) run -= e[i - span]; if (i >= span - 1 && run > best) { best = run; bi = i - span + 1; } }
+      var a = bi * hop;
+      return { L: c.L.subarray(a, a + w), R: c.R ? c.R.subarray(a, a + w) : null, sr: c.sr, start: a / c.sr, end: (a + w) / c.sr };
+    }
+    function stemBuffer(st) {
+      if (st.buffer && typeof st.buffer.getChannelData === 'function') {
+        var id = newId(st.name || 'stem'), b = st.buffer;
+        buffers[id] = { buffer: b, name: st.name || id, src: st.name || id };
+        var doc = ed.doc; doc.audio = doc.audio || {};
+        doc.audio[id] = { name: String(st.name || id), src: String(st.src || st.name || id), duration: b.duration, sampleRate: b.sampleRate, channels: b.numberOfChannels };
+        return Promise.resolve(id);
+      }
+      if (typeof st.id === 'string' && getBuffer(st.id)) return Promise.resolve(st.id);
+      if (st.source == null) return Promise.reject(new Error('Host.analyze: stem ' + st.name + ' has no source'));
+      if (typeof st.source === 'string' && getBuffer(st.source)) return Promise.resolve(st.source);
+      return host.loadAudio(st.source, { name: st.fileName || undefined, analyze: false });
+    }
+    // stems: [{name, source | id | buffer}] (names drums, bass, other, vocals, or mix for a file with no stems).
+    // Loads, reads the tempo, runs Analysis.report on each stem (a drums stem or a lone mix in three bands), builds
+    // tracks with Importer.build, stores doc.analysis and commits (one undo step). o: {onProgress, source, separator,
+    // unverified, tempo, maxSeconds}. A document with no tracks takes the analysis's tempo and its one section;
+    // otherwise the tracks are added and the section appended. Tracks an earlier analysis built are replaced.
+    host.analyze = function (stems, o) {
+      o = o || {};
+      var A = root.Analysis, I = root.Importer;
+      if (!A || !A.report || !A.dsp || !I) return Promise.reject(new Error('Host.analyze: load app/analysis/ (dsp, features, decide, drumlib, report) and engine/importer.js'));
+      if (!isArr(stems) || !stems.length) return Promise.reject(new Error('Host.analyze: no stems'));
+      function prog(stage, done, total, note) { if (typeof o.onProgress === 'function') { try { o.onProgress({ stage: stage, done: done, total: total, note: note }); } catch (e) {} } }
+      var g = gen, list = stems.map(function (s) { return { name: String(s.name || 'mix').toLowerCase(), raw: s }; }), ids = [];
+      prog('decode', 0, list.length, 'loading stems');
+      return list.reduce(function (p, st, i) {
+        return p.then(function () { return stemBuffer(st.raw); }).then(function (id) { st.id = id; st.buf = getBuffer(id); prog('decode', i + 1, list.length, st.name); });
+      }, Promise.resolve()).then(function () {
+        if (g !== gen) throw new Error('Host.analyze: the document changed during the analysis');
+        prog('tempo', 0, 1, '');
+        return later();
+      }).then(function () {
+        var pick = null, k;
+        for (k = 0; k < list.length; k++) if (list[k].name === 'drums') pick = list[k];
+        if (!pick) for (k = 0; k < list.length; k++) if (list[k].name === 'mix') pick = list[k];
+        var tp = o.tempo || I.tempo(pick ? pick.buf : sumOf(list.map(function (x) { return x.buf; })));
+        prog('tempo', 1, 1, tp.bpm + ' BPM (confidence ' + tp.confidence + ')');
+        var unver = (o.unverified || []).slice(), elements = [], reps = [], bufs = {}, alone = list.length === 1;
+        var src = o.source || null;
+        if (!src) { var sb = (list.filter(function (x) { return x.name === 'mix'; })[0] || list[0]).buf; src = { name: (audioMap()[list[0].id] || {}).name || list[0].name, duration: sb.duration, sampleRate: sb.sampleRate }; }
+        var chain = later();
+        list.forEach(function (st, si) {
+          chain = chain.then(function () {
+            prog('analyse', si, list.length, st.name);
+            var c = chans(st.buf), role = ROLES[st.name] ? st.name : (st.name === 'mix' && alone ? 'drums' : 'auto');
+            var ex = excerpt(c, o.maxSeconds || 30), res = A.report.stem(ex.L, ex.R, ex.sr, { name: st.name, role: role });
+            res.elements.forEach(function (rep, ei) {
+              var band = role === 'drums' ? BANDS[ei] : null, id = st.name + (band ? '-' + band[0] : '');
+              var lohi = band ? [band[1], band[2] == null ? c.sr / 2 : band[2]] : null;
+              bufs[id] = band ? { L: A.dsp.band(c.L, lohi[0], lohi[1], c.sr, 4), R: c.R ? A.dsp.band(c.R, lohi[0], lohi[1], c.sr, 4) : null, sr: c.sr } : c;
+              reps.push(rep);
+              elements.push({ id: id, name: rep.name, stem: st.name, band: lohi, bandKey: band ? band[0] : null, role: rep.role, hits: rep.hits, decisions: rep.decisions, recreation: rep.recreation,
+                              unverified: (rep.unverified || []).concat(['decisions read from ' + Math.round(ex.end - ex.start) + ' s of the stem (' + Math.round(ex.start) + ' to ' + Math.round(ex.end) + ' s)']),
+                              source: { audio: st.id, band: lohi }, excerpt: [Math.round(ex.start * 100) / 100, Math.round(ex.end * 100) / 100], track: null });
+            });
+            prog('analyse', si + 1, list.length, st.name);
+            return later();
+          });
+        });
+        return chain.then(function () {
+          try { A.report.shared(reps); } catch (e) { unver.push('shared-or-specific reverb decision failed: ' + (e && e.message)); }
+          elements.forEach(function (el, i) { el.decisions = reps[i].decisions; });
+          if (alone && list[0].name === 'mix') unver.push('no stems: each element is a frequency band of the full mix; pitched parts are not separated and are not read');
+          unver.push('tempo, steps and notes are a first pass read from audio; see track.analysis for each pattern\'s confidence');
+          if (tp.downbeatConfidence < 0.3) unver.push('the downbeat (bar 1) is a guess (downbeat confidence ' + tp.downbeatConfidence + ')');
+          var analysis = cleanJson({ version: 1, source: src, bpm: { value: tp.bpm, confidence: tp.confidence, offset: tp.offset, downbeatConfidence: tp.downbeatConfidence, peakRatio: tp.peakRatio },
+            elements: elements, separator: o.separator || null, stems: list.map(function (x) { return { name: x.name, audio: x.id }; }), unverified: unver });
+          prog('build', 0, 1, '');
+          if (g !== gen) throw new Error('Host.analyze: the document changed during the analysis');
+          var old = ed.doc.analysis, oldTracks = {};
+          if (old && isArr(old.elements)) old.elements.forEach(function (e) { if (e && e.track) oldTracks[e.track] = true; });
+          var existing = ed.doc.tracks.map(function (t) { return t.name; }).filter(function (n) { return !oldTracks[n]; });
+          var fresh = !existing.length;
+          var built = I.build(analysis, { buffers: bufs, existing: existing, section: fresh ? 'import' : uniqueSection('import') });
+          ed.group(function () {
+            snapshot(ed);
+            Object.keys(oldTracks).forEach(function (n) { if (ed.track(n)) ed.removeTrack(n); });
+            if (fresh) {
+              ed.doc.bpm = tp.bpm;
+              ed.doc.sections = [];
+            }
+            built.tracks.forEach(function (t, i) { var tr = ed.addTrack(t); analysis.elements[i].track = tr ? tr.name : null; });
+            ed.doc.sections.push(built.sections[0]);
+            analysis.section = built.sections[0].name;
+            analysis.elements.forEach(function (e) { delete e.bandKey; });
+            ed.doc.analysis = analysis;
+          });
+          host.commit();
+          prog('build', 1, 1, built.tracks.length + ' tracks');
+          emit('analysis', { status: 'done', elements: analysis.elements.length });
+          return analysis;
+        });
+      });
+    };
+    function uniqueSection(base) { var n = base, k = 2; while (ed.section(n)) n = base + '_' + (k++); return n; }
+    function sumOf(bs) {
+      var b0 = bs[0], n = 0, i, j; bs.forEach(function (b) { n = Math.max(n, b.length); });
+      var x = new Float32Array(n);
+      bs.forEach(function (b) { for (var c = 0; c < b.numberOfChannels; c++) { var d = b.getChannelData(c), w = 1 / b.numberOfChannels; for (j = 0; j < d.length; j++) x[j] += d[j] * w; } });
+      return { data: x, sampleRate: b0.sampleRate };
+    }
+    // swap the track built for an element (recreation {type, params}), or remove it (null). One undo step, commits.
+    // The pattern is read again from the element's audio when it is loaded; otherwise the old pattern is kept (and
+    // converted between steps and notes when the kind changes).
+    host.applyRecreation = function (elementId, rec) {
+      var an = ed.doc.analysis, I = root.Importer, A = root.Analysis;
+      if (!an || !isArr(an.elements) || !I) return false;
+      var el = null, i;
+      for (i = 0; i < an.elements.length; i++) if (an.elements[i] && an.elements[i].id === elementId) el = an.elements[i];
+      if (!el) return false;
+      var old = el.track ? ed.track(el.track) : null;
+      if (rec === null) {
+        if (!old) return false;
+        ed.group(function () { snapshot(ed); ed.removeTrack(old.name); var e2 = elementOf(elementId); if (e2) { e2.track = null; e2.loaded = null; } });
+        host.commit();
+        return true;
+      }
+      if (!rec || typeof rec !== 'object' || !rec.type || !I.knownType(rec.type)) return false;
+      var b = el.source && el.source.audio ? getBuffer(el.source.audio) : null, audio = null;
+      if (b) {
+        var c = chans(b);
+        audio = el.band && A && A.dsp ? { L: A.dsp.band(c.L, el.band[0], el.band[1], c.sr, 4), R: c.R ? A.dsp.band(c.R, el.band[0], el.band[1], c.sr, 4) : null, sr: c.sr } : c;
+      }
+      var sec = an.section ? ed.section(an.section) : null, bars = sec ? sec.bars : undefined;
+      var el2 = clone(el); el2.recreation = { type: rec.type, params: rec.params || {}, confidence: 'chosen', why: ['chosen by the user'] };
+      var others = ed.doc.tracks.map(function (t) { return t.name; }).filter(function (n) { return !old || n !== old.name; });
+      var def = I.build({ version: 1, bpm: an.bpm, source: an.source, elements: [el2] }, { buffers: audio ? (function () { var m = {}; m[el.id] = audio; return m; })() : {}, existing: others, bars: bars }).tracks[0];
+      if (!audio && old) {                                        // no audio: keep the pattern, converted if needed
+        var v = clone(old.variants), k;
+        if (old.kind !== def.kind) for (k in v) if (has(v, k)) v[k].cells = v[k].cells.map(function (cl) {
+          if (!cl) return null;
+          return def.kind === 'melody' ? { note: (rec.params && rec.params.root) || 36, len: 1, vel: cl.vel == null ? 0.85 : cl.vel } : { vel: cl.vel == null ? 0.85 : cl.vel };
+        });
+        def.variants = v;
+        def.analysis.pattern.method = 'kept from the previous track';
+        def.analysis.unverified.push('the element\'s audio is not loaded: the previous pattern was kept');
+      }
+      ed.group(function () {
+        snapshot(ed);
+        var e2 = elementOf(elementId);
+        if (old) {
+          var t = ed.track(old.name);
+          ['inst', 'type', 'kind', 'params', 'variants', 'analysis', 'gate', 'family'].forEach(function (key) { if (has(def, key)) t[key] = clone(def[key]); else delete t[key]; });
+          if (def.type !== 'sampler') { delete t.type; }
+          e2.track = t.name;
+        } else {
+          var tr = ed.addTrack(def);
+          e2.track = tr ? tr.name : null;
+          var s2 = an.section ? ed.section(an.section) : ed.doc.sections[0];
+          if (tr && s2) { s2.play = s2.play || {}; s2.play[tr.name] = 'A'; }
+        }
+        e2.loaded = { type: rec.type, params: clone(rec.params || {}), by: 'user' };
+      });
+      host.commit();
+      return true;
+    };
+    function elementOf(id) { var an = ed.doc.analysis; if (!an || !isArr(an.elements)) return null; for (var i = 0; i < an.elements.length; i++) if (an.elements[i] && an.elements[i].id === id) return an.elements[i]; return null; }
+
     // ---------------------------------------------------------- devices
     function device(id, type, kind, track, name, spec, prefix, ref, fam) {
       return { id: id, type: type, kind: kind, track: track, name: name, family: fam || family(type), spec: spec, pathPrefix: prefix, ref: ref };
@@ -1093,6 +1447,7 @@
     // ---------------------------------------------------------- meters
     function outputOf(id) {
       if (id === 'master') return { out: seq.out, dev: null, corr: true };
+      if (id === 'reference') return ref.gain ? { out: ref.gain, dev: null, corr: true } : null;
       var d = host.device(id); if (!d) return null;
       return { out: d.kind === 'instrument' ? d.ref.out : d.ref.output, dev: d, corr: d.kind === 'master' };
     }
