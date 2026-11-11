@@ -193,6 +193,7 @@
   function voice(ctx, inst) {
     var v = { ctx: ctx, nodes: [], pending: 0, done: false, srcs: [], group: null, chokeG: null };
     if (inst && inst._live) inst._live.push(v);
+    if (inst) { inst._noiseHit = inst._noiseHit == null ? 0 : inst._noiseHit + 1; v.noiseOffset = (inst._noiseHit * 0.3819660113) % 1.9; }
     v.track = function (n) { if (n) v.nodes.push(n); return n; };
     v.src = function (src, t0, t1) {
       v.pending++;
@@ -216,12 +217,21 @@
       setV(o.frequency, f, t0);
       return v.src(o, t0, t1);
     };
+    // The buffer is the same for every hit, so each hit of an instrument starts it at a different place: a real machine never
+    // repeats its noise, and identical replays read as samples to the analysis module (L2). The first hit starts at 0 (the scoring
+    // tool's single hits are unchanged); later hits step through the buffer by a fixed irrational-ish stride, so a render is still
+    // the same twice.
     v.noise = function (t0, t1) {
       var buf = noiseBuf(ctx);
       if (!buf) return null;
       var s = ctx.createBufferSource();
       s.buffer = buf; s.loop = true;
-      return v.src(s, t0, t1);
+      v.pending++;
+      s.onended = function () { v.pending--; if (v.pending <= 0) v.dispose(); };
+      v.nodes.push(s); v.srcs.push(s);
+      try { s.start(t0, v.noiseOffset || 0); } catch (e) { try { s.start(t0); } catch (e2) {} }
+      if (t1 != null) { try { s.stop(t1); } catch (e3) {} }
+      return s;
     };
     v.buf = function (buf, t0, t1, rate) {
       if (!buf) return null;

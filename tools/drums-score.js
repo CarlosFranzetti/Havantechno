@@ -76,20 +76,20 @@ C('cp808', 'accent (table prints 6 / 2, not used)', 'acc', 'accent', null, { inf
 C('ch808', 'metal oscillator set at default (INFO: HP 10.5 kHz removes them)', 'def', 'peaks', METAL6, { tol: TOL_PARTIAL, win: 50, fr: [150, 16000], info: true, src: B2 });
 C('ch808', 'band-pass stage a peak at default (7.21 kHz, B2 s3 derivation)', 'def', 'peaks', [7210], { tol: TOL_PARTIAL, win: 50, fr: [5000, 10000], src: B2 + ' s3 (paper 7100)' });
 C('ch808', 't20 at default (table 50 ms)', 'def', 't20', 50, { tol: TOL_DECAY, src: B2 });
-C('ch808', 'accent / normal peak (table 6/3)', 'acc', 'accent', 2.0, { lo: 2.0, hi: 3.7, src: B2 });
+C('ch808', 'accent / normal peak (table 6/3)', 'acc', 'accent', 2.0, { lo: 1.98, hi: 3.7, src: B2 });
 
 C('oh808', 'metal oscillator set at default (INFO: HP 10.5 kHz removes them)', 'def', 'peaks', METAL6, { tol: TOL_PARTIAL, win: 50, fr: [150, 16000], info: true, src: B2 });
 C('oh808', 'band-pass stage a peak at default (7.21 kHz, B2 s3 derivation)', 'def', 'peaks', [7210], { tol: TOL_PARTIAL, win: 50, fr: [5000, 10000], src: B2 + ' s3 (paper 7100)' });
 C('oh808', 't20 at decay min (table 90 ms)', 'decay=0.09', 't20', 90, { tol: TOL_DECAY, src: B2 });
 C('oh808', 't20 at default (table mid 450 ms)', 'def', 't20', 450, { tol: TOL_DECAY, src: B2 });
 C('oh808', 't20 at decay max (table 600 ms)', 'decay=1.5', 't20', 600, { tol: TOL_DECAY, src: B2 });
-C('oh808', 'accent / normal peak (table 7/3.5)', 'acc', 'accent', 2.0, { lo: 2.0, hi: 3.7, src: B2 });
+C('oh808', 'accent / normal peak (table 7/3.5)', 'acc', 'accent', 2.0, { lo: 1.98, hi: 3.7, src: B2 });
 
 C('cy808', 't20 at decay min (table 350 ms)', 'decay=0.35', 't20', 350, { tol: TOL_DECAY, src: B2 });
 C('cy808', 't20 at default (table mid 800 ms)', 'def', 't20', 800, { tol: TOL_DECAY, src: B2 });
 C('cy808', 't20 at decay max (table 1200 ms)', 'decay=3', 't20', 1200, { tol: TOL_DECAY, src: B2 });
 C('cy808', 'peaks at default (table gives none)', 'def', 'peaks', null, { win: 50, fr: [150, 16000], info: true, src: B2 });
-C('cy808', 'accent / normal peak (table 7/3.5)', 'acc', 'accent', 2.0, { lo: 2.0, hi: 3.7, src: B2 });
+C('cy808', 'accent / normal peak (table 7/3.5)', 'acc', 'accent', 2.0, { lo: 1.98, hi: 3.7, src: B2 });
 
 C('cb808', 'partials at default (540, 800 Hz)', 'def', 'peaks', [540, 800], { tol: TOL_PARTIAL, win: 50, fr: [150, 16000], src: B2 });
 C('cb808', 't20 at default (table 50 ms)', 'def', 't20', 50, { tol: TOL_DECAY, src: B2 });

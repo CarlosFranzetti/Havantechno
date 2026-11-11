@@ -251,7 +251,8 @@
   // own colouring wherever the source has energy; decide.sameReverb compares only bands both sources excite),
   // and the tail's L/R correlation.
   function tailSignature(L, R, sr) {
-    var fd = freeDecay(L, R, sr), a = Math.round(fd.lastOnset * sr), sig = { rt: fd.bands.map(function (b) { return b.late; }), colour: [], headDb: [], lrCorr: NaN, late: fd.late };
+    var fd = freeDecay(L, R, sr), a = Math.round(fd.lastOnset * sr), sig = { rt: fd.bands.map(function (b) { return b.late; }), colour: [], headDb: [], lrCorr: NaN, late: fd.late,
+      stereo: fd.stereo, tailCorr: fd.tailCorr, wideBands: fd.bands.filter(function (b) { return b.late >= 0.3; }).length };
     if (!(a >= 0)) return sig;
     var end = Math.min(L.length, a + sr), Ls = L.slice(a, end), Rs = R ? R.slice(a, end) : null, i;
     var t4 = Math.round(0.4 * sr), h5 = Math.round(0.05 * sr);

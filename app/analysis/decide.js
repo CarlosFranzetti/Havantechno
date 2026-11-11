@@ -107,7 +107,14 @@
     return { colourDb: dc, bandsCompared: idx.length, rtLogRatio: dr, same: dr < 0.25 && (dc !== dc || dc < 4) };
   }
   function sharedOrSpecific(items) {
-    var wet = items.filter(function (it) { return it.sig && it.sig.late >= 0.5; }), parent = {}, i, j, pairs = [];
+    // L2: the same gate as reverb(): a mono tail in a stereo file, or a narrow-band decay in a mono file, is the element's
+    // own decay and takes no part (an 808 kick's ring was grouped as a reverb before).
+    var wet = items.filter(function (it) {
+      var g = it.sig; if (!g || !(g.late >= 0.5)) return false;
+      if (g.stereo && g.tailCorr === g.tailCorr && g.tailCorr > 0.99) return false;
+      if (g.stereo === false && g.wideBands != null && g.wideBands < 2) return false;
+      return true;
+    }), parent = {}, i, j, pairs = [];
     function find(x) { while (parent[x] !== x) x = parent[x] = parent[parent[x]]; return x; }
     wet.forEach(function (it) { parent[it.name] = it.name; });
     for (i = 0; i < wet.length; i++) for (j = i + 1; j < wet.length; j++) {
