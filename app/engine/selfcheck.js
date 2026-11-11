@@ -571,8 +571,18 @@ function section6() {
       return Promise.resolve({ ok: true, status: 200, arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(960)); } });
     };
     var view = new Uint8Array(4800), raw = new ArrayBuffer(480);
+    var preStart = lh.audition(lh.document().tracks[0].name, { midi: 50 });
     return lh.start().then(function (started) {
       ok(started === true && lh.started(), 'the fake-context Host starts');
+      // host.audition (P5, for the panels' keyboards): one note on the live instrument now, no document change
+      var aName = lh.document().tracks[0].name, aTr = lh.engine().tracks[aName], aSeen = [], aOrig = aTr.inst.trigger;
+      aTr.inst.trigger = function (t, e) { aSeen.push([t, e]); return aOrig.apply(this, arguments); };
+      var aDoc = JSON.stringify(lh.document()), aUndo = lh.editor().canUndo();
+      var aOk = lh.audition(aName, { midi: 50, vel: 0.7, dur: 0.3 });
+      aTr.inst.trigger = aOrig;
+      ok(aOk === true && aSeen.length === 1 && aSeen[0][0] === ctx.currentTime && aSeen[0][1].midi === 50 && aSeen[0][1].vel === 0.7 && aSeen[0][1].dur === 0.3, 'audition triggers the track instrument once at currentTime with midi, vel, dur');
+      ok(JSON.stringify(lh.document()) === aDoc && lh.editor().canUndo() === aUndo, 'audition changes neither the document nor the undo history');
+      ok(lh.audition('no-such-track', { midi: 50 }) === false && preStart === false, 'audition is false for an unknown track and before audio starts');
       return lh.loadAudio(view.subarray(0, 4800), { name: 'Vox Chop.wav', src: '/samples/Vox Chop.wav' });
     }).then(function (id) {
       var a = lh.document().audio[id], g = lastGetBuffer();
