@@ -809,6 +809,28 @@
       if (!disposed) select(added[0]);
       return added;
     }
+    // ---- classic synths (Classics, engine/classics.js): one mono track with an empty pattern; the panel edits its steps
+    var CLASSIC_LABELS = { tb303: 'Bass line synth (HVT-303)', modeld: 'Mono synth (HVT-D)', juno: 'Poly synth (HVT-106)' };
+    function classicTypes() { var C = root.Classics; return C && isFn(C.types) ? C.types() : []; }
+    function addClassicTrack(type) {
+      var ed = host.editor();
+      if (!ed || !isFn(ed.addTrack)) { setStatus('This host cannot add tracks.'); return null; }
+      if (classicTypes().indexOf(type) < 0) { setStatus('That synth is not available.'); return null; }
+      var name = type, n = 2, ok = false;
+      var run = function (e) {
+        while (e.track(name) || name === 'send' || name === 'master') name = type + '_' + (n++);
+        ok = !!e.addTrack({ name: name, type: type, inst: type, family: type === 'juno' ? 'keys' : 'bass', gain: 0.8, variants: { A: EMPTY_PATTERN } });
+      };
+      if (isFn(ed.group)) ed.group(run); else run(ed);
+      if (!ok) return null;
+      host.commit();
+      setStatus('Added ' + (CLASSIC_LABELS[type] || type) + ' as track ' + name + '. Open its window to edit the steps.');
+      if (!disposed) select(name);
+      return name;
+    }
+    function classicMenuItems() {
+      return classicTypes().map(function (t) { return { label: CLASSIC_LABELS[t] || t, run: function () { addClassicTrack(t); } }; });
+    }
     function addKit(which) { return addDrumTracks(KITS[which].map(function (v) { return v + which; }), 'TR-' + which + ' kit'); }
     function voiceMenuItems() {
       return drumTypes().map(function (t) { return { label: voiceLabel(t), run: function () { addDrumTracks([t], t); } }; });
@@ -873,10 +895,11 @@
         { label: 'Sampler track from folder\u2026', run: function () { pickProgramSource({ directory: true }); } },
         { label: 'TR-808 kit', disabled: !drumTypes().length, run: function () { addKit('808'); } },
         { label: 'TR-909 kit', disabled: !drumTypes().length, run: function () { addKit('909'); } },
-        { label: 'Drum voice\u2026', disabled: !drumTypes().length, keepOpen: true },
+        { label: 'Drum voice\u2026', disabled: !drumTypes().length, keepOpen: true }
+      ].concat(classicMenuItems()).concat([
         { label: 'Import SFZ\u2026', run: function () { pickProgramSource({ accept: '.sfz,audio/*,' + ['wav', 'mp3', 'ogg', 'flac', 'aif', 'aiff'].map(function (e) { return '.' + e; }).join(',') }); } },
         { label: sel && isSampler(sel) ? 'Remove track \u201c' + sel + '\u201d' : 'Remove track (select a sampler row)', disabled: !(sel && isSampler(sel)), run: function () { removeSampler(sel); } }
-      ];
+      ]);
     }
     function buildTrackHeader() {
       var band = make('div', 'se-thead'), l = make('div', 'se-thl'), r = make('div', 'se-thr', 'Drop audio files, a folder or an .sfz on the track list to add sampler tracks');
