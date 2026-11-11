@@ -18,8 +18,12 @@ Attribution to show wherever the stems are used: "Separation: KUIELab-MDX-Net (K
 CC BY 4.0, Zenodo 10.5281/zenodo.5717356; files mirrored by Ultimate Vocal Remover (UVR)." Demucs (--model htdemucs)
 is MIT (Meta Platforms); its weight files carry no separate licence statement that L2 could find.
 
+Default (L2, 2026-11-11): --model auto runs HT-Demucs when the demucs package and its weights work, else MDX-Net.
+On exact stems (16 bars of the V3 render, the twelve solos summed) HT-Demucs scored drums 24.0, bass 17.7, other
+19.4 dB SDR against MDX-Net's 9.7, 7.5, 15.9; MDX-Net stays as the fallback (ONNX, smaller, CC BY 4.0 weights).
+
 Usage:
-  python3 tools/separate.py <audio> [--out DIR] [--stems drums,bass,other] [--model mdx|htdemucs] [--models DIR]
+  python3 tools/separate.py <audio> [--out DIR] [--stems drums,bass,other] [--model auto|mdx|htdemucs] [--models DIR]
 Writes <out>/<name>-<stem>.wav (float32, 44.1 kHz stereo) and <out>/<name>-stems.json (model, settings, timings).
 Default out: tools/out/stems/ (git-ignored with the rest of tools/out). Exit 0 on success.
 numpy, scipy, torch (STFT) and onnxruntime; ffmpeg only for non-WAV input.
@@ -130,10 +134,13 @@ def mdx(x, stem, mdir):
     return (out / np.maximum(wsum, 1e-6))[:, L:L + N] * comp
 
 
-def htdemucs(src, out_dir, name):
+def htdemucs(src, out_dir, name, fallback=False):
     tmp = os.path.join(out_dir, '_demucs')
     r = subprocess.run([sys.executable, '-m', 'demucs', '-n', 'htdemucs', '-o', tmp, src])
     if r.returncode != 0:
+        if fallback:
+            print('separate.py: demucs failed (exit %d); falling back to MDX-Net' % r.returncode, file=sys.stderr)
+            return None
         die('demucs failed (exit %d); are its weights reachable (dl.fbaipublicfiles.com)?' % r.returncode, 3)
     base = os.path.join(tmp, 'htdemucs', os.path.splitext(os.path.basename(src))[0])
     files = {}
@@ -150,7 +157,8 @@ def main():
     ap.add_argument('audio')
     ap.add_argument('--out', default=os.path.join(HERE, 'out', 'stems'))
     ap.add_argument('--stems', default='drums,bass,other', help='MDX-Net stems to compute (default all three)')
-    ap.add_argument('--model', choices=['mdx', 'htdemucs'], default='mdx')
+    ap.add_argument('--model', choices=['auto', 'mdx', 'htdemucs'], default='auto',
+                    help='auto (default): HT-Demucs when the demucs package runs, else MDX-Net (L2 comparison, log-L2.md)')
     ap.add_argument('--models', default=os.environ.get('HAVANTECHNO_MODELS', os.path.join(os.path.expanduser('~'), '.cache', 'havantechno', 'models')),
                     help='where the ONNX files are cached (never the repository)')
     a = ap.parse_args()
@@ -161,8 +169,23 @@ def main():
     info = {'input': a.audio, 'model': a.model, 'sampleRate': SR, 'stems': {}, 'seconds': {},
             'attribution': ATTRIBUTION if a.model == 'mdx' else 'Separation: Demucs v4 htdemucs (Meta Platforms), MIT.'}
     t0 = time.time()
-    if a.model == 'htdemucs':
+    if a.model == 'auto':
+        try:
+            import demucs  # noqa: F401
+            a.model = 'htdemucs'
+        except Exception:
+            a.model = 'mdx'
+        if a.model == 'htdemucs':
+            got = htdemucs(a.audio, a.out, name, fallback=True)
+            if got is None:
+                a.model = 'mdx'
+            else:
+                info['stems'] = got
+        info['model'] = a.model
+        info['attribution'] = ATTRIBUTION if a.model == 'mdx' else 'Separation: Demucs v4 htdemucs (Meta Platforms), MIT.'
+    elif a.model == 'htdemucs':
         info['stems'] = htdemucs(a.audio, a.out, name)
+    if a.model == 'htdemucs':
         info['seconds']['all'] = round(time.time() - t0, 1)
     else:
         x = load(a.audio)

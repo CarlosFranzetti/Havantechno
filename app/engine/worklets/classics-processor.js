@@ -289,6 +289,7 @@ var MD = {
   drive: 0.6,                                 // ladder input scale: one osc at mark 4 linear within 0.5 dB, three at 10 saturate (P5)
   outScale: 2.2,                              // output calibration (P5, measured)
   tuneFix: 5.1,                               // ladder tuning correction for the one-sample feedback delay (P5, measured)
+  tuneGain: 1.025,                            // the ladder sings 2.5 % flat at emphasis 10 (k 4.5): raise the tuning (P5, measured)
   seedNoise: 1e-6,                            // thermal noise at the ladder input, so it can sing with no source (P5)
   rFilter: 9.3 / 4.49, rLoud: 9.3 / 5.28,     // attack: RC toward 9.3 V cut at 4.49 V (filter) / 5.28 V (loudness) (CA-72 board2)
   dump: 0.00243,                              // s, release RC with the decay switch off: -6 to -40 dB in 9.5 ms (CA-72)
@@ -372,7 +373,7 @@ class ModelDProcessor extends AudioWorkletProcessor {
     var kt1 = k0(P.keyTrack1) >= 0.5, kt2 = k0(P.keyTrack2) >= 0.5;
     var track = kt1 && kt2 ? MD.trackBoth : (kt1 ? 1 / 3 : 0) + (kt2 ? 2 / 3 : 0);
     var fA = k0(P.fAttack), fD = k0(P.fDecay), fS = k0(P.fSustain), aA = k0(P.attack), aD = k0(P.decay), aS = k0(P.sustain);
-    var dsw = k0(P.decaySwitch) >= 0.5, fmax = Math.min(20000 * 1.6, 0.45 * fo / 2);
+    var dsw = k0(P.decaySwitch) >= 0.5, fmax = Math.min(20000, 0.45 * fs);
     var free3 = MD.free3 * Math.pow(2, r3 + MD.free3Wide * d3 / 12);
     var pP = P.pitch, pG = P.gate, pT = P.trig, pS = P.slide, pV = P.vel, pC = P.cutoff, pE = P.emphasis, pK = P.contour;
     var dt1 = this.dt1, dt2 = this.dt2, dt3 = this.dt3, g = this.g, src = this.src, kres = 0;
@@ -417,8 +418,8 @@ class ModelDProcessor extends AudioWorkletProcessor {
         // cutoff CV in octaves: knob, keyboard (pivot C2), contour, modulation, drift
         var oct = track * (nt - MD.pivot) / 12 + pv(pK, i) * this.eF + (filtMod ? src * mAmt * MD.modCutOct : 0) + this.drift[3] * MD.cutDriftOct;
         var fc = clamp(pv(pC, i) * Math.pow(2, oct), 5, fmax);
-        fc = fc / (1 - MD.tuneFix * fc / fo);
-        var x = Math.PI * fc / fo;
+        fc = MD.tuneGain * fc / Math.max(0.5, 1 - MD.tuneFix * fc / fo);
+        var x = Math.min(Math.PI * fc / fo, 0.45 * Math.PI);
         g = 4 * Math.PI * 0.312 * fc * (1 - x) / (1 + x);
       }
       var y = 0;

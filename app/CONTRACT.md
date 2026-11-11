@@ -13,7 +13,7 @@ Views: the **System Editor** (the voted layout) and the **Step View** (same fram
 ## Load order (app/index.html)
 
 ```
-engine/core.js  engine/programs.js  engine/synths.js  engine/drums.js  engine/processors.js  engine/songdoc.js  engine/sequencer.js  engine/song.js
+engine/core.js  engine/programs.js  engine/synths.js  engine/drums.js  engine/worklets.js  engine/classics.js  engine/processors.js  engine/songdoc.js  engine/sequencer.js  engine/song.js
 engine/host.js  engine/project.js
 ui/theme.css   ui/widgets.js  ui/faces.js  ui/facedefs.js  ui/windows.js  ui/system-editor.js  ui/step-view.js  ui/app.js
 ```
@@ -210,3 +210,11 @@ Sample-based elements of a provided track stay samples. The sampler is an instru
 
 **Editor operations** (`songdoc.js`, each one undo step, a refused one takes none): `addProgram(id, program)`, `removeProgram(id)` (refused while a track plays it), `setProgram(id, {name, kind, source, global})` (global merges; null removes a key), `setRegion(id, index, patch)`, `addRegions(id, regions) -> first index`, `removeRegion(id, index)`, `program(id)`, `programUsage(id)`. After an edit, `host.commit()` applies it in place (`rebuilt: false`) and emits `'program'` `{id, status: 'changed'}`.
 
+## Classics (Patch Crew, P5): AudioWorklet synths
+
+- `Worklets` (`engine/worklets.js`): `load(ctx) -> Promise<boolean>` adds `engine/worklets/classics-processor.js` to a context once (resolved from the script's own URL); `ready(ctx)`; `node(ctx, name, opts)` returns an `AudioWorkletNode` or null. `Host.start` and `Sequencer.render` (so `Host.render`) await `load` before building on a context. No `audioWorklet` (the Node checks' fake context) or a failed load: false, one console warning, and the instruments build their plain-node FALLBACK.
+- `Classics` (`engine/classics.js`): `has`, `create(ctx, type, opts)`, `spec(type)`, `types()` (`tb303`, `modeld`), `values(type, name, v)` (the processor values a spec value maps to). `Synths.create` falls back to it as it does to `Drums`. Same instrument API as `Synths`; `inst.engine` is `'worklet'`, `'fallback'` or `'none'`.
+- One AudioWorkletNode per instrument runs the whole mono voice. Notes are AudioParam automation at the event time (`pitch`, `gate`, `trig` counter, `slide` legato flag, `acc`, `vel`) and the knobs are AudioParams, so offline renders are sample-identical. Nothing that shapes the sound goes over the MessagePort.
+- Events: `ev.midi`, `dur`, `vel`, `accent`, `slide`, `step`. 303: a note is gated for its length less half a step; `ev.slide` holds the gate to the next note, which glides and does not retrigger (safety release two steps after a one-step slide). Model D: an overlapping note (by `dur`) or one after `ev.slide` is legato; last-note priority with return to a held note (the hardware is low-note priority).
+- Spec rows carry `basis` and `label`; enumerations carry `options`. `modeld` knobs are panel marks (`cutoff` -5..+5, the others 0..10) mapped inside `classics.js`.
+- Check: `node tools/classics-check.js`. Design and measurements: `docs/research/2026-11-11-patch-crew/transcripts/log-P5.md`.
