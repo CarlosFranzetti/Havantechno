@@ -332,13 +332,26 @@
             }
           }
           sv('circle', { r: r + 1.5, fill: 'rgba(0,0,0,.45)', cy: 1.5 }, art);                                   // shadow
+          if (o.numbers) o.numbers.forEach(function (t, i) {
+            var q = pt(0, 0, r + (st.numR || 17), a0 + sw * i / (o.numbers.length - 1));
+            P.text(art, q[0], q[1] + 3, t, { fill: st.tick || '#d8d8d0', 'font-size': st.numSize || 8 });
+          });
           sv('circle', { r: r, fill: st.skirt || '#1b1b1b', stroke: st.edge || '#000', 'stroke-width': 1 }, art);  // skirt
+          if (st.flutes) for (var fi = 0; fi < st.flutes; fi++) {
+            var fa = 360 * fi / st.flutes, f0 = pt(0, 0, r * (st.fluteIn || 0.74), fa), f1 = pt(0, 0, r - 1, fa);
+            sv('line', { x1: f2(f0[0]), y1: f2(f0[1]), x2: f2(f1[0]), y2: f2(f1[1]), stroke: st.flute || 'rgba(255,255,255,.12)', 'stroke-width': 1.6 }, art);
+          }
           if (st.cap) sv('circle', { r: r * (st.capR || 0.72), fill: st.cap, stroke: st.capEdge || 'rgba(0,0,0,.35)', 'stroke-width': 1 }, art);
+          if (st.capShine) sv('circle', { r: r * (st.capR || 0.72) * 0.6, cx: -r * 0.08, cy: -r * 0.1, fill: st.capShine }, art);
           if (st.shine !== false) sv('ellipse', { rx: r * 0.42, ry: r * 0.22, cx: -r * 0.2, cy: -r * 0.42, fill: 'rgba(255,255,255,.16)' }, art);
-          c.ptr = sv('line', { stroke: st.pointer || '#f4f1e8', 'stroke-width': st.pointerW || 2.4, 'stroke-linecap': 'round' }, art);
+          c.rot = sv('g', null, art);
+          if (st.wedge) {                 // a wedge pointer knob (range and waveform selectors): pointing along +x, rotated
+            sv('path', { d: 'M' + f2(r * 1.18) + ' 0 L' + f2(-r * 0.55) + ' ' + f2(-r * 0.62) + ' Q' + f2(-r * 0.9) + ' 0 ' + f2(-r * 0.55) + ' ' + f2(r * 0.62) + ' Z', fill: st.wedge, stroke: '#000', 'stroke-width': 1 }, c.rot);
+            sv('line', { x1: 0, y1: 0, x2: f2(r * 1.05), y2: 0, stroke: st.pointer || '#efe6c8', 'stroke-width': st.pointerW || 2.4, 'stroke-linecap': 'round' }, c.rot);
+          } else if (st.dot) sv('circle', { cx: f2(r * (st.dotR || 0.62)), cy: 0, r: st.dotSize || 2.2, fill: st.pointer || '#fff' }, c.rot);
+          else sv('line', { x1: f2(st.slot ? -r * 0.8 : r * 0.12), y1: 0, x2: f2(r * (st.slot ? 0.8 : 0.92)), y2: 0, stroke: st.pointer || '#f4f1e8', 'stroke-width': st.pointerW || 2.4, 'stroke-linecap': 'round' }, c.rot);
         }
-        var a = a0 + sw * pos, q0 = pt(0, 0, st.slot ? -r * 0.8 : r * 0.12, a), q1 = pt(0, 0, r * (st.slot ? 0.8 : 0.92), a);
-        c.ptr.setAttribute('x1', f2(q0[0])); c.ptr.setAttribute('y1', f2(q0[1])); c.ptr.setAttribute('x2', f2(q1[0])); c.ptr.setAttribute('y2', f2(q1[1]));
+        c.rot.setAttribute('transform', 'rotate(' + f2(a0 + sw * pos) + ')');
       };
       var c = control(parent, o);
       if (o.caption) {
@@ -444,12 +457,14 @@
       var w = o.w || 22, h = o.h || 34, t = { g: g, on: null, art: sv('g', null, g) };
       sv('rect', { 'class': 'pn-focus', x: -w / 2 - 4, y: -h / 2 - 4, width: w + 8, height: h + 8, rx: 4 }, g);
       sv('rect', { x: -w / 2 - 4, y: -h / 2 - 4, width: w + 8, height: h + 8, fill: 'transparent' }, g);
-      function isOn(v) { return v === true || (isNum(v) && v >= 0.5) || v === 'on'; }
+      var two = o.values || null;            // a string param with two settings: [off, on]
+      if (!two) { var e0 = voice(o.voice || null).entry(o.param); if (e0 && typeof e0.value === 'string') two = optionsOf(o.voice || null, o.param, ['off', 'on']).slice(0, 2); }
+      function isOn(v) { if (two) return same(v, two[1]); return v === true || (isNum(v) && v >= 0.5) || v === 'on'; }
       function flip() {
         var vo = voice(o.voice || null), e = vo.entry(o.param);
         if (!vo.dev || !e) return;
         var on = !isOn(pval(o.voice || null, o.param));
-        pwrite(o.voice || null, o.param, typeof e.value === 'boolean' ? on : (on ? 1 : 0), true);
+        pwrite(o.voice || null, o.param, two ? two[on ? 1 : 0] : typeof e.value === 'boolean' ? on : (on ? 1 : 0), true);
         t.update();
       }
       listen(g, 'click', flip);
@@ -1154,6 +1169,365 @@
         var b = tempo.v, t = isNum(b) ? String(Math.round(b)) : '--';
         if (bpmTxt.textContent !== t) bpmTxt.textContent = t;
       });
+      return {};
+    }
+  });
+
+  // ==================================================================== synth panels (HVT-303, HVT-D, HVT-106)
+  var NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  function noteName(m) { return isNum(m) ? NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1) : '—'; }
+  function rocker(colour) {          // a two-position rocker in a black opening; the pressed half is darker
+    return function (art, on, b) {
+      var w = b.w, h = b.h;
+      sv('rect', { x: -w / 2 - 2, y: -h / 2 - 2, width: w + 4, height: h + 4, rx: 3, fill: '#050505' }, art);
+      sv('rect', { x: -w / 2, y: -h / 2, width: w, height: h, rx: 2, fill: colour, stroke: '#000', 'stroke-width': 0.8 }, art);
+      sv('rect', { x: -w / 2, y: on ? 0 : -h / 2, width: w, height: h / 2, rx: 2, fill: 'rgba(0,0,0,.38)' }, art);
+      sv('line', { x1: -w / 2 + 3, x2: w / 2 - 3, y1: on ? -h / 2 + 4 : h / 2 - 4, y2: on ? -h / 2 + 4 : h / 2 - 4, stroke: 'rgba(255,255,255,.55)', 'stroke-width': 1.4 }, art);
+    };
+  }
+  function lampButton(fill, ink, label, led) {   // a push button with a lamp, lit when on
+    return function (art, on, b) {
+      sv('rect', { x: -b.w / 2, y: -b.h / 2, width: b.w, height: b.h, rx: 2, fill: fill, stroke: '#111' }, art);
+      var t = sv('text', { x: 0, y: 4, 'text-anchor': 'middle', fill: ink, 'font-size': 10, 'font-weight': 700 }, art); t.textContent = label;
+      sv('circle', { cx: 0, cy: -b.h / 2 - 7, r: 3.4, fill: on ? (led || '#ff3b22') : '#3a1510' }, art);
+    };
+  }
+
+  // ------------------------------------------------------------------ HVT-303
+  var C303 = { cheek: '#121212', panel: '#c7cace', panelLo: '#b4b7bc', ink: '#161616', orange: '#e8671a', led: '#ff4a1a', ledOff: '#55301c',
+    key: '#2a2a2c', keyInk: '#ecebe6', white: '#e9e9e4', black: '#1c1c1e', btn: '#3a3a3d' };
+  Panels.define('hvt303', {
+    label: 'HVT-303 bass line synthesizer', size: { w: 1200, h: 640 }, win: { w: 1040 },
+    match: function (d) { return d.kind === 'instrument' && d.type === 'tb303'; },
+    build: function (P) {
+      var svg = P.svg, C = C303, host = P.host;
+      P.el('rect', { x: 0, y: 0, width: 1200, height: 640, rx: 14, fill: C.cheek }, svg);
+      P.el('rect', { x: 34, y: 12, width: 1132, height: 616, rx: 4, fill: C.panel }, svg);
+      P.el('rect', { x: 34, y: 262, width: 1132, height: 366, fill: C.panelLo }, svg);
+      for (var gy = 20; gy < 628; gy += 4) P.el('line', { x1: 34, x2: 1166, y1: gy, y2: gy, stroke: 'rgba(255,255,255,.07)', 'stroke-width': 1 }, svg);   // brushed metal
+      P.text(svg, 60, 58, 'HVT-303', { 'text-anchor': 'start', fill: C.ink, 'font-size': 32, 'font-weight': 800, 'font-style': 'italic' });
+      P.text(svg, 1140, 56, 'HAVANTECHNO', { 'text-anchor': 'end', fill: '#c8336f', 'font-size': 22, 'font-weight': 800, 'letter-spacing': 4 });
+      P.el('rect', { x: 210, y: 42, width: 560, height: 4, fill: C.orange }, svg);
+
+      // knob band: waveform switch, the six knobs, slide time trimmer, volume
+      var ks = { skirt: '#161616', cap: '#2e2e30', capR: 0.7, pointer: '#f4f4f0', pointerW: 2.8, ticks: 11, tick: C.ink, label: C.ink, edge: '#000', numSize: 8.5 };
+      var N10 = ['0', '2', '4', '6', '8', '10'];
+      P.text(svg, 100, 120, 'WAVEFORM', { fill: C.ink, 'font-size': 10.5, 'font-weight': 700 });
+      var waves = P.options(null, 'wave', ['saw', 'square']);
+      P.text(svg, 82, 152, 'SAW', { 'text-anchor': 'end', fill: C.ink, 'font-size': 9.5, 'font-weight': 600 });
+      P.text(svg, 82, 186, 'SQR', { 'text-anchor': 'end', fill: C.ink, 'font-size': 9.5, 'font-weight': 600 });
+      P.toggle(svg, { x: 104, y: 168, w: 14, h: 40, param: 'wave', values: [waves[0], waves[1]], label: 'Waveform saw / square',
+        draw: function (art, on, b) {
+          sv('rect', { x: -9, y: -24, width: 18, height: 48, rx: 3, fill: '#0b0b0b', stroke: '#555' }, art);
+          sv('rect', { x: -7, y: on ? 2 : -22, width: 14, height: 20, rx: 2, fill: '#d9d9d4', stroke: '#222' }, art);
+        } });
+      var row = [['TUNING', 'tune'], ['CUT OFF FREQ', 'cutoff'], ['RESONANCE', 'resonance'], ['ENV MOD', 'envMod'], ['DECAY', 'decay'], ['ACCENT', 'accent']];
+      row.forEach(function (k, i) {
+        P.knob(svg, { x: 210 + i * 125, y: 170, r: 30, param: k[1], label: k[0].charAt(0) + k[0].slice(1).toLowerCase(), caption: k[0], captionY: -58, captionSize: 11, style: ks, numbers: N10 });
+      });
+      P.knob(svg, { x: 960, y: 170, r: 16, param: 'slideTime', label: 'Slide time', caption: 'SLIDE TIME', captionY: -40, captionSize: 9.5, kind: 'trim',
+        style: { skirt: '#9a9a96', edge: '#3a3a38', ticks: 0, slot: true, pointer: '#2a2a28', label: C.ink } });
+      P.knob(svg, { x: 1080, y: 170, r: 30, param: 'level', label: 'Volume', caption: 'VOLUME', captionY: -58, captionSize: 11, style: ks, numbers: N10 });
+      P.el('line', { x1: 50, x2: 1150, y1: 258, y2: 258, stroke: C.ink, 'stroke-width': 1.2 }, svg);
+
+      // step band
+      var st = { sel: 0, oct: 36, sig: '', vw: null, cur: -2, playing: null };
+      P.el('rect', { x: 60, y: 272, width: 1080, height: 30, rx: 2, fill: '#2b2b2d' }, svg);
+      var info = P.text(svg, 72, 292, '', { 'text-anchor': 'start', fill: '#f0efe9', 'font-size': 12.5, 'font-weight': 600, 'class': 'pn-info' });
+      var ss = P.button(svg, { x: 60, y: 344, w: 84, h: 46, rx: 4, label: 'RUN / STOP', size: 10.5, fill: C.btn, ink: C.keyInk, aria: 'Start or stop the song', onClick: P.transportToggle });
+      ss.setDisabled(!P.canTransport());
+      var runLed = P.el('circle', { cx: 102, cy: 330, r: 4.5, fill: C.ledOff }, svg);
+      var kw = 980 / 16, keys = [];
+      for (var i = 0; i < STEPS; i++) (function (i) {
+        var kx = 160 + kw * i + (kw - 50) / 2;
+        var nm = P.text(svg, kx + 25, 318, '', { fill: C.ink, 'font-size': 10.5, 'font-weight': 700 });
+        var led = P.el('circle', { cx: kx + 25, cy: 332, r: 4, fill: C.ledOff }, svg);
+        var b = P.button(svg, { x: kx, y: 342, w: 50, h: 48, rx: 4, fill: C.key, cls: 'pn-key', label: String(i + 1), size: 12, ink: C.keyInk, aria: 'Step ' + (i + 1),
+          onClick: function (e) {
+            st.sel = i; st.sig = '';
+            if (e && e.shiftKey) cmd('accent'); else if (e && e.altKey) cmd('slide');
+          } });
+        var sel = P.el('rect', { x: kx - 3, y: 339, width: 56, height: 54, rx: 6, fill: 'none', stroke: C.orange, 'stroke-width': 2.6, display: 'none', 'pointer-events': 'none' }, svg);
+        var cur = P.el('rect', { x: kx + 4, y: 394, width: 42, height: 3, fill: '#ffffff', display: 'none' }, svg);
+        var ma = P.text(svg, kx + 15, 410, 'A', { fill: '#7a7c80', 'font-size': 10, 'font-weight': 800 });
+        var ms = P.text(svg, kx + 35, 410, 'S', { fill: '#7a7c80', 'font-size': 10, 'font-weight': 800 });
+        keys.push({ b: b, nm: nm, led: led, sel: sel, cur: cur, ma: ma, ms: ms });
+      })(i);
+
+      // lower band: the one-octave note keys, octave and step functions, tempo
+      var lowY = 432, wk = 56, wx0 = 160, whites = [0, 2, 4, 5, 7, 9, 11, 12], blacks = [[1, 0], [3, 1], [6, 3], [8, 4], [10, 5]];
+      var noteKeys = [];
+      P.text(svg, wx0 - 14, lowY + 70, 'NOTE', { 'text-anchor': 'end', fill: C.ink, 'font-size': 10, 'font-weight': 700 });
+      whites.forEach(function (semi, j) {
+        var b = P.button(svg, { x: wx0 + j * wk, y: lowY, w: wk - 4, h: 150, rx: 3, fill: C.white, aria: 'Note ' + NOTE_NAMES[semi % 12] + (semi === 12 ? ' (octave up)' : ''), cls: 'pn-note',
+          onClick: function () { setNote(semi); } });
+        P.text(b.g, (wk - 4) / 2, 140, NOTE_NAMES[semi % 12], { fill: C.ink, 'font-size': 11, 'font-weight': 700 });
+        noteKeys.push({ semi: semi, b: b, fill: C.white });
+      });
+      blacks.forEach(function (bk) {
+        var b = P.button(svg, { x: wx0 + (bk[1] + 1) * wk - 19, y: lowY, w: 34, h: 92, rx: 3, fill: C.black, aria: 'Note ' + NOTE_NAMES[bk[0]], cls: 'pn-note',
+          onClick: function () { setNote(bk[0]); } });
+        noteKeys.push({ semi: bk[0], b: b, fill: C.black });
+      });
+      var fx = 640, fns = [['DOWN', 'down', 'Octave down'], ['UP', 'up', 'Octave up'], ['ACCENT', 'accent', 'Accent on the selected step'], ['SLIDE', 'slide', 'Slide from the selected step'], ['REST', 'rest', 'Make the selected step a rest']];
+      var fbtn = {};
+      fns.forEach(function (f, j) {
+        var b = P.button(svg, { x: fx + j * 82, y: lowY + 40, w: 70, h: 46, rx: 4, label: f[0], size: 11, fill: C.btn, ink: C.keyInk, aria: f[2], onClick: function () { cmd(f[1]); } });
+        b.led = P.el('circle', { cx: fx + j * 82 + 35, cy: lowY + 26, r: 4, fill: C.ledOff }, svg);
+        fbtn[f[1]] = b;
+      });
+      var octTxt = P.text(svg, fx + 76, lowY + 112, '', { fill: C.ink, 'font-size': 11, 'font-weight': 700 });
+      P.text(svg, fx + 205, lowY + 112, 'shift-click a step: accent  ·  alt-click: slide', { fill: '#3c3e42', 'font-size': 10 });
+      P.text(svg, 1080, lowY + 6, 'TEMPO', { fill: C.ink, 'font-size': 10.5, 'font-weight': 700 });
+      var tempo = P.knob(svg, { x: 1080, y: lowY + 58, r: 26, label: 'Tempo', value: P.tempoValue([40, 300]), kind: 'tempo', style: ks });
+      var bpm = P.text(svg, 1080, lowY + 118, '', { fill: C.ink, 'font-size': 12, 'font-weight': 700, 'class': 'pn-bpm' });
+
+      function cellAt(i) { return st.vw ? st.vw.cells[i] : null; }
+      function setNote(semi) {
+        var c = cellAt(st.sel), base = c && isNum(c.note) ? Math.floor(c.note / 12) * 12 : st.oct, n = clamp(base + semi, 0, 127);
+        st.oct = base;
+        P.editCell(null, st.sel, function (cell) { return cell ? { note: n } : { note: n, vel: DEFAULT_VEL, len: 1 }; });
+        st.sig = '';
+      }
+      function cmd(k) {
+        var c = cellAt(st.sel);
+        if (k === 'down' || k === 'up') {
+          var d = k === 'up' ? 12 : -12;
+          if (c && isNum(c.note)) P.editCell(null, st.sel, function (cell) { return cell && isNum(cell.note) ? { note: clamp(cell.note + d, 0, 127) } : undefined; });
+          else st.oct = clamp(st.oct + d, 0, 120);
+        } else if (k === 'accent' || k === 'slide') {
+          var f = k === 'accent' ? 'acc' : 'slide';
+          P.editCell(null, st.sel, function (cell) { if (!cell) return undefined; var o = {}; o[f] = cell[f] ? null : true; return o; });
+        } else if (k === 'rest') P.editCell(null, st.sel, function (cell) { return cell ? null : undefined; });
+        st.sig = '';
+      }
+      P.onUpdate(function () {
+        if (P.state.frame % 4 === 0 || st.sig === '') st.vw = P.stepView(null);
+        var vw = st.vw, edit = P.canEdit() && !!vw;
+        var sig = (vw ? vw.si + ':' + vw.variant + ':' + vw.bar + ':' + JSON.stringify(vw.cells) : 'none') + '|' + st.sel + '|' + st.oct + '|' + edit;
+        if (sig !== st.sig) {
+          st.sig = sig;
+          keys.forEach(function (k, i) {
+            var c = vw ? vw.cells[i] : null, note = c && isNum(c.note) ? c.note : null;
+            k.nm.textContent = c ? noteName(note != null ? note : st.oct) : '';
+            k.led.setAttribute('fill', c ? C.led : C.ledOff);
+            k.sel.setAttribute('display', i === st.sel ? 'inline' : 'none');
+            k.ma.setAttribute('fill', c && c.acc ? C.orange : '#8a8c90');
+            k.ms.setAttribute('fill', c && c.slide ? C.orange : '#8a8c90');
+            k.b.g.setAttribute('aria-pressed', i === st.sel ? 'true' : 'false');
+            k.b.g.setAttribute('aria-label', 'Step ' + (i + 1) + ': ' + (c ? noteName(note) + (c.acc ? ', accent' : '') + (c.slide ? ', slide' : '') : 'rest') + (i === st.sel ? ' (selected)' : ''));
+          });
+          var c = cellAt(st.sel), selNote = c && isNum(c.note) ? c.note : null;
+          noteKeys.forEach(function (nk) {
+            var lit = selNote != null && ((selNote % 12) === (nk.semi % 12)) && (nk.semi === 12 ? false : true);
+            nk.b.rect.setAttribute('fill', lit ? '#f09a5c' : nk.fill);
+            nk.b.setDisabled(!edit);
+          });
+          fbtn.accent.led.setAttribute('fill', c && c.acc ? C.led : C.ledOff);
+          fbtn.slide.led.setAttribute('fill', c && c.slide ? C.led : C.ledOff);
+          ['down', 'up', 'accent', 'slide', 'rest'].forEach(function (k) { fbtn[k].setDisabled(!edit); });
+          octTxt.textContent = 'OCTAVE ' + (Math.floor((selNote != null ? selNote : st.oct) / 12) - 1);
+          var t = 'STEP ' + (st.sel + 1) + '  ·  ' + (c ? noteName(selNote) + (c.acc ? '  ·  accent' : '') + (c.slide ? '  ·  slide' : '') : 'rest') + '   —   ';
+          if (!vw) t += P.canEdit() ? 'no pattern' : 'step editing is in the main window';
+          else t += 'section ' + vw.section + (vw.variant ? '  ·  pattern ' + vw.variant + (vw.bars > 1 ? '  ·  bar ' + (vw.bar + 1) + '/' + vw.bars : '') : '  ·  not playing here yet');
+          info.textContent = t;
+        }
+        var step = P.playStep();
+        if (step !== st.cur) { st.cur = step; keys.forEach(function (k, i) { k.cur.setAttribute('display', i === step ? 'inline' : 'none'); k.led.setAttribute('stroke', i === step ? '#fff' : 'none'); }); }
+        var pl = step >= 0 || !!safe(function () { return host.transport.playing; }, false);
+        if (pl !== st.playing) { st.playing = pl; runLed.setAttribute('fill', pl ? C.led : C.ledOff); }
+        var bt = isNum(tempo.v) ? (Math.round(tempo.v * 10) / 10).toFixed(1) + ' BPM' : '';
+        if (bpm.textContent !== bt) bpm.textContent = bt;
+      });
+      return {};
+    }
+  });
+
+  // ------------------------------------------------------------------ HVT-D
+  var CD = { wood: '#5a3520', woodHi: '#7a4a2c', woodLo: '#3e2414', face: '#141414', ink: '#ecebe4', line: '#bdbbb2', blue: '#3a6fc4', orange: '#e2742a', ivory: '#e9e1c8' };
+  Panels.define('hvtd', {
+    label: 'HVT-D mono synthesizer', size: { w: 1400, h: 700 }, win: { w: 1120 },
+    match: function (d) { return d.kind === 'instrument' && d.type === 'modeld'; },
+    build: function (P) {
+      var svg = P.svg, C = CD, host = P.host;
+      function cheek(x) {
+        P.el('rect', { x: x, y: 0, width: 56, height: 700, rx: 8, fill: C.wood }, svg);
+        for (var k = 0; k < 9; k++) P.el('path', { d: 'M' + (x + 6 + k * 5.5) + ' 0 Q' + (x + 12 + k * 5) + ' 350 ' + (x + 4 + k * 6) + ' 700', stroke: k % 2 ? C.woodHi : C.woodLo, 'stroke-width': 1.4, fill: 'none', opacity: 0.7 }, svg);
+      }
+      P.el('rect', { x: 40, y: 0, width: 1320, height: 700, fill: '#0c0a09' }, svg);
+      cheek(0); cheek(1344);
+      var defs = P.el('defs', null, svg), pat = P.el('pattern', { id: 'pn-tex-' + Math.floor(Math.random() * 1e9), width: 6, height: 6, patternUnits: 'userSpaceOnUse' }, defs);
+      P.el('rect', { width: 6, height: 6, fill: C.face }, pat);
+      P.el('circle', { cx: 1.5, cy: 1.5, r: 0.7, fill: '#1e1e1e' }, pat); P.el('circle', { cx: 4.5, cy: 4, r: 0.6, fill: '#0a0a0a' }, pat);
+      P.el('rect', { x: 62, y: 14, width: 1276, height: 452, rx: 3, fill: 'url(#' + pat.getAttribute('id') + ')', stroke: '#2a2a2a' }, svg);
+      P.el('rect', { x: 62, y: 430, width: 1276, height: 36, fill: 'rgba(255,255,255,.03)' }, svg);
+      var ks = { skirt: '#1a1a1a', cap: '#c3c6ca', capR: 0.5, capShine: 'rgba(255,255,255,.35)', flutes: 18, dot: true, dotR: 0.38, dotSize: 2.1, pointer: '#ffffff', sweep: 300, ticks: 11, tick: C.line, label: C.ink, numSize: 8, numR: 16 };
+      var big = Object.assign({}, ks, { capR: 0.58 }), N10 = ['0', '2', '4', '6', '8', '10'], N5 = ['-5', '-3', '-1', '+1', '+3', '+5'];
+      var wedgeSt = { skirt: '#151515', wedge: '#1d1d1d', pointer: C.ivory, ticks: 6, tick: C.line, label: C.ink, shine: false };
+      var K = function (x, y, p, cap, o) { o = o || {}; return P.knob(svg, Object.assign({ x: x, y: y, r: o.r || 22, param: p, label: cap.toLowerCase(), caption: cap, captionY: -(o.r || 22) - 24, captionSize: 9.5, style: o.st || ks, numbers: o.numbers || N10 }, o.extra || {})); };
+      var R = function (x, y, p, cap, colour, values) {
+        var t = P.toggle(svg, { x: x, y: y, w: 18, h: 30, param: p, label: cap.toLowerCase(), values: values, draw: rocker(colour) });
+        P.text(svg, x, y + 30, cap, { fill: C.ink, 'font-size': 8.5, 'font-weight': 700 });
+        return t;
+      };
+      function section(x0, x1, title) {
+        P.el('line', { x1: x0 + 8, x2: x1 - 8, y1: 444, y2: 444, stroke: C.line, 'stroke-width': 1 }, svg);
+        P.el('line', { x1: x0 + 8, x2: x0 + 8, y1: 436, y2: 444, stroke: C.line, 'stroke-width': 1 }, svg);
+        P.el('line', { x1: x1 - 8, x2: x1 - 8, y1: 436, y2: 444, stroke: C.line, 'stroke-width': 1 }, svg);
+        var t = P.text(svg, (x0 + x1) / 2, 448, title, { fill: C.ink, 'font-size': 10.5, 'font-weight': 700, 'letter-spacing': 2 });
+        P.el('rect', { x: (x0 + x1) / 2 - title.length * 4.6 - 8, y: 436, width: title.length * 9.2 + 16, height: 18, fill: C.face }, svg);
+        svg.appendChild(t);
+        if (x0 > 62) P.el('line', { x1: x0, x2: x0, y1: 28, y2: 420, stroke: '#3a3a3a', 'stroke-width': 1 }, svg);
+      }
+      // CONTROLLERS
+      section(62, 236, 'CONTROLLERS');
+      K(120, 92, 'tune', 'TUNE', { numbers: N5 });
+      K(120, 212, 'glide', 'GLIDE');
+      K(120, 332, 'modMix', 'MOD MIX', { numbers: ['OSC3', '', '', '', '', 'NOISE'] });
+      R(198, 120, 'oscMod', 'OSC MOD', C.orange);
+      R(198, 240, 'filterMod', 'FILT MOD', C.orange);
+      // OSCILLATOR BANK
+      section(236, 600, 'OSCILLATOR BANK');
+      var RL = { lo: 'LO', 32: "32'", 16: "16'", 8: "8'", 4: "4'", 2: "2'" };
+      var WL = { tri: 'TRI', shark: 'SHK', revsaw: 'RSAW', saw: 'SAW', square: 'SQR', wide: 'WIDE', narrow: 'NAR' };
+      [1, 2, 3].forEach(function (n, j) {
+        var y = 96 + j * 118;
+        P.text(svg, 248, y - 44, 'OSC ' + n, { 'text-anchor': 'start', fill: C.ink, 'font-size': 9.5, 'font-weight': 700 });
+        P.choice(svg, { x: 300, y: y, r: 20, param: 'osc' + n + 'Range', options: ['lo', '32', '16', '8', '4', '2'], labels: RL, label: 'oscillator ' + n + ' range', style: wedgeSt, sweep: 200, legendR: 15, legendSize: 8 });
+        if (n > 1) K(418, y, 'osc' + n + 'Detune', 'FREQUENCY', { r: 25, st: big, numbers: ['-7', '', '', '0', '', '', '+7'], extra: { label: 'oscillator ' + n + ' frequency' } });
+        else R(418, y, 'osc3Keys', 'OSC 3 CTRL', C.blue);
+        P.choice(svg, { x: 536, y: y, r: 20, param: 'osc' + n + 'Wave', options: n === 3 ? ['tri', 'revsaw', 'saw', 'square', 'wide', 'narrow'] : ['tri', 'shark', 'saw', 'square', 'wide', 'narrow'], labels: WL, label: 'oscillator ' + n + ' waveform', style: wedgeSt, sweep: 200, legendR: 15, legendSize: 8 });
+      });
+      // MIXER
+      section(600, 850, 'MIXER');
+      [['mixOsc1', 'OSC 1'], ['mixFeedback', 'EXT IN'], ['mixOsc2', 'OSC 2'], ['mixNoise', 'NOISE'], ['mixOsc3', 'OSC 3']].forEach(function (m, j) {
+        var y = 62 + j * 78;
+        K(680, y + 8, m[0], '', { r: 18, numbers: [] });
+        P.text(svg, 725, y + 12, m[1], { 'text-anchor': 'start', fill: C.ink, 'font-size': 9.5, 'font-weight': 700 });
+      });
+      R(806, 296, 'noiseType', 'WHITE/PINK', C.ivory, P.options(null, 'noiseType', ['white', 'pink']).slice(0, 2));
+      // MODIFIERS
+      section(850, 1214, 'MODIFIERS');
+      P.text(svg, 1032, 40, 'FILTER', { fill: C.ink, 'font-size': 10, 'font-weight': 700, 'letter-spacing': 1 });
+      K(930, 104, 'cutoff', 'CUTOFF', { r: 26, st: big, numbers: N5 });
+      K(1040, 104, 'emphasis', 'EMPHASIS', { r: 22 });
+      K(1150, 104, 'contour', 'CONTOUR AMT', { r: 22 });
+      R(868, 186, 'keyTrack1', 'KBD 1', C.blue); R(902, 186, 'keyTrack2', 'KBD 2', C.blue);
+      P.text(svg, 1032, 196, 'FILTER CONTOUR', { fill: C.ink, 'font-size': 9.5, 'font-weight': 700, 'letter-spacing': 1 });
+      K(960, 252, 'fAttack', 'ATTACK'); K(1060, 252, 'fDecay', 'DECAY'); K(1160, 252, 'fSustain', 'SUSTAIN');
+      P.text(svg, 1032, 316, 'LOUDNESS CONTOUR', { fill: C.ink, 'font-size': 9.5, 'font-weight': 700, 'letter-spacing': 1 });
+      K(960, 372, 'attack', 'ATTACK'); K(1060, 372, 'decay', 'DECAY'); K(1160, 372, 'sustain', 'SUSTAIN');
+      // OUTPUT
+      section(1214, 1338, 'OUTPUT');
+      K(1276, 104, 'level', 'VOLUME', { r: 26, st: big });
+      P.text(svg, 1276, 300, 'HVT-D', { fill: C.ink, 'font-size': 30, 'font-weight': 300, 'letter-spacing': 2 });
+
+      // keyboard bed: wheels block (decay and glide rockers, mod wheel = modAmount), the 44 keys
+      P.el('rect', { x: 56, y: 476, width: 1288, height: 224, fill: '#0f0d0c' }, svg);
+      P.el('rect', { x: 62, y: 478, width: 1276, height: 26, fill: '#1a1715' }, svg);
+      P.text(svg, 80, 497, 'HAVANTECHNO', { 'text-anchor': 'start', fill: '#ff5fa2', 'font-size': 15, 'font-weight': 800, 'letter-spacing': 3 });
+      R(98, 548, 'decaySwitch', 'DECAY', C.ivory); R(150, 548, 'glideOn', 'GLIDE', C.ivory);
+      P.el('rect', { x: 78, y: 596, width: 34, height: 96, rx: 4, fill: '#050505' }, svg);
+      P.el('rect', { x: 84, y: 602, width: 22, height: 84, rx: 6, fill: '#2a2a2a' }, svg);
+      for (var wl = 0; wl < 8; wl++) P.el('line', { x1: 86, x2: 104, y1: 610 + wl * 10, y2: 610 + wl * 10, stroke: '#444', 'stroke-width': 1.2 }, svg);
+      P.text(svg, 95, 600, '', { fill: C.ink });
+      P.text(svg, 95, 592, 'PITCH', { fill: '#8a8880', 'font-size': 8 });
+      var modWheel = P.control(svg, { x: 152, y: 644, r: 42, hit: { w: 34, h: 96 }, param: 'modAmount', label: 'Mod wheel (modulation amount)', kind: 'wheel',
+        draw: function (art, pos, c) {
+          if (!c.built) {
+            c.built = true;
+            sv('rect', { x: -17, y: -48, width: 34, height: 96, rx: 4, fill: '#050505' }, art);
+            sv('rect', { x: -11, y: -42, width: 22, height: 84, rx: 6, fill: '#2f2f2f' }, art);
+            c.ridges = sv('g', null, art);
+          }
+          while (c.ridges.firstChild) c.ridges.removeChild(c.ridges.firstChild);
+          for (var k = 0; k < 9; k++) { var yy = -40 + ((k * 10 + (1 - pos) * 40) % 80); sv('line', { x1: -9, x2: 9, y1: f2(yy), y2: f2(yy), stroke: '#555', 'stroke-width': 1.2 }, c.ridges); }
+          sv('rect', { x: -11, y: f2(-42 + 84 * (1 - pos) - 2), width: 22, height: 4, fill: '#e8e3d0' }, c.ridges);
+        } });
+      P.text(svg, 152, 592, 'MOD', { fill: C.ink, 'font-size': 8, 'font-weight': 700 });
+      var aud = typeof host.audition === 'function';
+      var kx0 = 200, kx1 = 1330, whitesN = 26, ww = (kx1 - kx0) / whitesN, kb = P.g(svg, { 'class': 'pn-keys', 'aria-hidden': aud ? 'false' : 'true' });
+      var WHITE = [0, 2, 4, 5, 7, 9, 11], m = 41, wi = 0, blacksD = [];
+      for (; m <= 84; m++) {
+        var pc = m % 12, isW = WHITE.indexOf(pc) >= 0;
+        if (isW) {
+          (function (mm, x) {
+            var r = P.el('rect', { x: f2(x), y: 512, width: f2(ww - 1.5), height: 180, rx: 2, fill: '#ece8dc', stroke: '#222' }, kb);
+            if (aud) P.listen(r, 'pointerdown', function () { safe(function () { host.audition(P.device.track, { midi: mm, vel: 0.85, dur: 0.3 }); }); });
+          })(m, kx0 + wi * ww);
+          wi++;
+        } else blacksD.push([m, kx0 + wi * ww - ww * 0.3]);
+      }
+      blacksD.forEach(function (bk) {
+        var r = P.el('rect', { x: f2(bk[1]), y: 512, width: f2(ww * 0.6), height: 112, rx: 2, fill: '#151515', stroke: '#000' }, kb);
+        if (aud) P.listen(r, 'pointerdown', function () { safe(function () { host.audition(P.device.track, { midi: bk[0], vel: 0.85, dur: 0.3 }); }); });
+      });
+      if (!aud) kb.setAttribute('opacity', '0.92');
+      return {};
+    }
+  });
+
+  // ------------------------------------------------------------------ HVT-106
+  var CJ = { body: '#29292b', strip: '#d9d6cc', ink: '#ecebe6', dark: '#151515', blue: '#3b7bd6', orange: '#e8781e', yellow: '#e2c21c', red: '#d63a2c', green: '#3aa35b',
+    teal: '#2aa7a0', purple: '#8f62c8', btn: '#c9c7c0' };
+  Panels.define('hvt106', {
+    label: 'HVT-106 polyphonic synthesizer', size: { w: 1600, h: 470 }, win: { w: 1200 },
+    match: function (d) { return d.kind === 'instrument' && d.type === 'juno'; },
+    build: function (P) {
+      var svg = P.svg, C = CJ;
+      P.el('rect', { x: 0, y: 0, width: 1600, height: 470, rx: 10, fill: '#111' }, svg);
+      P.el('rect', { x: 10, y: 10, width: 1580, height: 368, rx: 4, fill: C.body }, svg);
+      P.el('rect', { x: 10, y: 386, width: 1580, height: 74, rx: 4, fill: '#1c1c1e' }, svg);
+      P.text(svg, 40, 434, 'HAVANTECHNO', { 'text-anchor': 'start', fill: '#ff5fa2', 'font-size': 22, 'font-weight': 800, 'letter-spacing': 4 });
+      P.text(svg, 1560, 438, 'HVT-106', { 'text-anchor': 'end', fill: C.ink, 'font-size': 30, 'font-weight': 300, 'letter-spacing': 2 });
+      P.text(svg, 800, 432, 'POLYPHONIC SYNTHESIZER', { fill: '#8a8a8a', 'font-size': 11, 'letter-spacing': 6 });
+      function section(x0, x1, title, colour) {
+        P.el('rect', { x: x0 + 4, y: 20, width: x1 - x0 - 8, height: 20, fill: C.strip }, svg);
+        P.text(svg, (x0 + x1) / 2, 35, title, { fill: C.dark, 'font-size': 11, 'font-weight': 800, 'letter-spacing': 2 });
+        P.el('rect', { x: x0 + 4, y: 42, width: x1 - x0 - 8, height: 5, fill: colour }, svg);
+      }
+      var FL = 150, FY = 190;
+      function F(x, p, cap, o) { o = o || {}; return P.fader(svg, Object.assign({ x: x, y: FY, len: FL, param: p, label: cap.toLowerCase(), caption: cap, captionSize: 9.5, cap: o.cap || '#c4c3bd', labelInk: C.ink, tick: '#8a8a8a' }, o)); }
+      function radio(x, y, p, opts, labels, o) { o = o || {}; return P.radio(svg, Object.assign({ x: x, y: y, w: 46, h: 22, gap: 16, vertical: true, param: p, options: opts, labels: labels, size: 9.5, fill: C.btn, ink: C.dark, ledY: -6 }, o)); }
+      function lamp(x, y, p, lbl) {
+        return P.toggle(svg, { x: x, y: y, w: 46, h: 22, param: p, label: lbl.toLowerCase(), draw: lampButton(C.btn, C.dark, lbl) });
+      }
+      // performance
+      section(10, 250, 'CONTROL', C.purple);
+      P.knob(svg, { x: 60, y: 110, r: 20, param: 'tune', label: 'tune', caption: 'TUNE', captionY: -34, captionSize: 9.5, style: { skirt: '#111', cap: '#3a3a3c', pointer: '#fff', ticks: 11, tick: '#8a8a8a', label: C.ink } });
+      F(130, 'bend', 'BEND'); F(190, 'portamento', 'PORTA');
+      radio(36, 196, 'voiceMode', ['poly', 'unison'], { poly: 'POLY', poly1: 'POLY 1', poly2: 'POLY 2', unison: 'UNI' }, { gap: 18 });
+      // LFO
+      section(250, 380, 'LFO', C.blue);
+      F(285, 'lfoRate', 'RATE'); F(345, 'lfoDelay', 'DELAY');
+      lamp(315, 330, 'lfoAuto', 'AUTO');
+      // DCO
+      section(380, 770, 'DCO', C.orange);
+      F(410, 'dcoLfo', 'LFO'); F(460, 'pwm', 'PWM');
+      P.text(svg, 520, 90, 'PWM', { fill: C.ink, 'font-size': 9.5, 'font-weight': 700 });
+      radio(497, 112, 'pwmMode', ['lfo', 'manual', 'env'], { lfo: 'LFO', man: 'MAN', manual: 'MAN', env: 'ENV' });
+      P.text(svg, 582, 90, 'RANGE', { fill: C.ink, 'font-size': 9.5, 'font-weight': 700 });
+      radio(559, 112, 'range', [16, 8, 4], { 16: "16'", 8: "8'", 4: "4'" });
+      lamp(645, 136, 'pulse', 'PULSE'); lamp(645, 196, 'saw', 'SAW');
+      F(700, 'sub', 'SUB'); F(745, 'noise', 'NOISE');
+      // HPF
+      section(770, 850, 'HPF', C.yellow);
+      F(810, 'hpf', 'FREQ', { step: 1 });
+      // VCF
+      section(850, 1120, 'VCF', C.red);
+      F(880, 'cutoff', 'FREQ'); F(930, 'resonance', 'RES'); F(980, 'envAmt', 'ENV'); F(1030, 'vcfLfo', 'LFO'); F(1080, 'vcfKey', 'KYBD');
+      // VCA
+      section(1120, 1230, 'VCA', C.green);
+      radio(1132, 112, 'vcaMode', ['env', 'gate'], { env: 'ENV', gate: 'GATE' });
+      F(1205, 'level', 'LEVEL');
+      // ENV
+      section(1230, 1440, 'ENV', C.teal);
+      F(1265, 'attack', 'A'); F(1312, 'decay', 'D'); F(1359, 'sustain', 'S'); F(1406, 'release', 'R');
+      // CHORUS
+      section(1440, 1590, 'CHORUS', C.blue);
+      radio(1468, 112, 'chorus', [0, 1, 2], { 0: 'OFF', 1: 'I', 2: 'II' }, { w: 56, h: 26 });
+      if (P.voice(null).entry('chorusNoise')) P.knob(svg, { x: 1560, y: 290, r: 13, param: 'chorusNoise', label: 'chorus noise', caption: 'HISS', captionY: -22, captionSize: 8.5, kind: 'trim',
+        style: { skirt: '#9a9a96', edge: '#3a3a38', ticks: 0, slot: true, pointer: '#2a2a28', label: C.ink } });
       return {};
     }
   });

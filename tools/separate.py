@@ -6,10 +6,17 @@ repository (GitHub release TRvlvr/model_repo, tag all_public_uvr_models). Settin
 mdx_model_data/model_data.json, keyed by the MD5 of the file's last 10,000 KiB (UVR's own scheme):
   drums  n_fft 4096,  bass n_fft 16384,  other n_fft 8192;  dim_f 2048, dim_t 2^9, hop 1024, compensate 1.035.
 Input tensor [1, 4, 2048, 512] = (L re, L im, R re, R im) of the first 2048 STFT bins. 523,264-sample chunks with
-50 % Hann-weighted overlap. Licences: KUIELab's mdx-net code is MIT (Copyright (c) 2020 KINoAI); UVR's code is MIT
-and its README asks third parties using its models to credit UVR (see log-L1.md for the quotes and the open point
-on the weights). Alternative: --model htdemucs runs Demucs v4 (MIT, Meta) through `python3 -m demucs` when its weights
-are reachable; it also gives a 'vocals' stem.
+50 % Hann-weighted overlap.
+
+Licences (read by L2 on 2026-11-11 through curl; quotes in docs/research/2026-11-09-lab-crew/transcripts/log-L2.md):
+the weights are the KUIELab authors' own upload to Zenodo, record 5717356 ("Uploaded files are trained parameters for
+KUIELab-MDX-Net", Kim, Choi, Chung, Lee, Jung), licence CC BY 4.0. UVR's release files kuielab_a_{drums,bass,other}.onnx
+are byte-identical to onnx_A/{drums,bass,other}.onnx in that record (full-file MD5 below), so the CC BY 4.0 terms
+apply: use, redistribution and commercial use are allowed with attribution. The kuielab/mdx-net and
+mdx-net-submission code is MIT; UVR's README asks third parties using its models to credit UVR and its developers.
+Attribution to show wherever the stems are used: "Separation: KUIELab-MDX-Net (Kim, Choi, Chung, Lee, Jung), weights
+CC BY 4.0, Zenodo 10.5281/zenodo.5717356; files mirrored by Ultimate Vocal Remover (UVR)." Demucs (--model htdemucs)
+is MIT (Meta Platforms); its weight files carry no separate licence statement that L2 could find.
 
 Usage:
   python3 tools/separate.py <audio> [--out DIR] [--stems drums,bass,other] [--model mdx|htdemucs] [--models DIR]
@@ -26,11 +33,13 @@ from scipy.signal import resample_poly
 HERE = os.path.dirname(os.path.abspath(__file__))
 SR = 44100
 RELEASE = 'https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/'
-MODELS = {   # file, UVR model_data hash, n_fft, compensate
-    'drums': ('kuielab_a_drums.onnx', 'dc41ede5961d50f277eb846db17f5319', 4096, 1.035),
-    'bass': ('kuielab_a_bass.onnx', '6703e39f36f18aa7855ee1047765621d', 16384, 1.035),
-    'other': ('kuielab_a_other.onnx', '26d308f91f3423a67dc69a6d12a8793d', 8192, 1.035),
+MODELS = {   # file, UVR model_data hash, n_fft, compensate, full-file MD5 of the Zenodo original (onnx_A/<stem>.onnx)
+    'drums': ('kuielab_a_drums.onnx', 'dc41ede5961d50f277eb846db17f5319', 4096, 1.035, 'bfc170e3b60a700dc388dadf4a62d5b0'),
+    'bass': ('kuielab_a_bass.onnx', '6703e39f36f18aa7855ee1047765621d', 16384, 1.035, '949791e2b24c41c03b6d90c770f03f62'),
+    'other': ('kuielab_a_other.onnx', '26d308f91f3423a67dc69a6d12a8793d', 8192, 1.035, 'c2fa07e67d5a58ddd97d72c29bbe955b'),
 }
+ATTRIBUTION = ('Separation: KUIELab-MDX-Net (Kim, Choi, Chung, Lee, Jung), weights CC BY 4.0, Zenodo 10.5281/zenodo.5717356; '
+               'files mirrored by Ultimate Vocal Remover (UVR).')
 DIM_F, DIM_T, HOP = 2048, 512, 1024
 
 
@@ -49,7 +58,7 @@ def uvr_hash(path):
 
 
 def fetch_model(stem, mdir):
-    name, h, _, _ = MODELS[stem]
+    name, h, _, _, full = MODELS[stem]
     path = os.path.join(mdir, name)
     if not os.path.exists(path):
         os.makedirs(mdir, exist_ok=True)
@@ -60,6 +69,10 @@ def fetch_model(stem, mdir):
     got = uvr_hash(path)
     if got != h:
         die('%s: hash %s does not match UVR model_data %s; settings would be wrong' % (name, got, h))
+    with open(path, 'rb') as f:
+        whole = hashlib.md5(f.read()).hexdigest()
+    if whole != full:
+        die('%s: MD5 %s is not the Zenodo original %s; its licence is unknown' % (name, whole, full))
     return path
 
 
@@ -88,7 +101,7 @@ def load(path):
 def mdx(x, stem, mdir):
     import torch, onnxruntime as ort
     path = fetch_model(stem, mdir)
-    _, _, n_fft, comp = MODELS[stem]
+    _, _, n_fft, comp, _ = MODELS[stem]
     sess = ort.InferenceSession(path, providers=['CPUExecutionProvider'])
     win = torch.hann_window(n_fft)
 
@@ -145,7 +158,8 @@ def main():
         die('no such file: ' + a.audio)
     os.makedirs(a.out, exist_ok=True)
     name = os.path.splitext(os.path.basename(a.audio))[0]
-    info = {'input': a.audio, 'model': a.model, 'sampleRate': SR, 'stems': {}, 'seconds': {}}
+    info = {'input': a.audio, 'model': a.model, 'sampleRate': SR, 'stems': {}, 'seconds': {},
+            'attribution': ATTRIBUTION if a.model == 'mdx' else 'Separation: Demucs v4 htdemucs (Meta Platforms), MIT.'}
     t0 = time.time()
     if a.model == 'htdemucs':
         info['stems'] = htdemucs(a.audio, a.out, name)

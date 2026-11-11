@@ -54,42 +54,85 @@
   var RANGES = ['lo', '32', '16', '8', '4', '2'];
   var WAVES = ['tri', 'shark', 'saw', 'square', 'wide', 'narrow'];
   var WAVES3 = ['tri', 'revsaw', 'saw', 'square', 'wide', 'narrow'];
+  // Model D: P2 second pass (transcripts/P2-modeld.md section 14.7, laws measured on a hardware reference by the CA-72
+  // project, GPL-3.0-or-later, data only). cutoff is in panel marks -5..+5; glide, emphasis, contour, the contour knobs
+  // and the five mixer rows are panel marks 0..10 (BRIEF amendment); MAP below turns marks into the processor's values.
   SPEC.modeld = {
-    tune: P(-100, 100, 0, 'ct', 'prior', 'master tune, all oscillators (P2)'),
-    glide: P(0, 2, 0.08, 's', 'prior', 'glide RC time constant on the pitch CV (P2)'),
-    glideOn: P(0, 1, 0, '', 'prior', 'glide switch (P2)'),
-    modMix: P(0, 1, 0, '', 'prior', 'modulation source: 0 = oscillator 3, 1 = noise (P2)'),
-    oscMod: P(0, 1, 0, '', 'prior', 'modulation to oscillators 1 and 2 pitch; fixed depth 1 st peak, no wheel (P5)'),
-    filterMod: P(0, 1, 0, '', 'prior', 'modulation to the cutoff; fixed depth 1 oct peak, no wheel (P5)'),
-    osc1Range: E('8', RANGES, 'prior', 'footage: lo, 32, 16, 8, 4, 2 (one octave per step; lo = -7 oct) (P2)'),
-    osc1Wave: E('saw', WAVES, 'prior', 'triangle, shark-fin, saw, square, wide 33 %, narrow 20 % (P2)'),
-    osc2Range: E('8', RANGES, 'prior', 'as oscillator 1 (P2)'),
-    osc2Wave: E('saw', WAVES, 'prior', 'as oscillator 1 (P2)'),
-    osc2Detune: P(-7, 7, 0.06, 'st', 'prior', 'frequency knob around the key (P2)'),
-    osc3Range: E('8', RANGES, 'prior', 'with osc3Keys off, lo is the LFO band (P2)'),
-    osc3Wave: E('saw', WAVES3, 'prior', 'reverse saw replaces the shark-fin (P2)'),
-    osc3Detune: P(-7, 7, -0.06, 'st', 'prior', 'with osc3Keys off in lo: 3 x 2^(5 d / 7) Hz (P2)'),
-    osc3Keys: P(0, 1, 1, '', 'prior', '1 = follows the keyboard, 0 = free-running (P2)'),
-    mixOsc1: P(0, 1, 0.7, '', 'prior', 'mixer, gain v^1.5 (P2)'),
-    mixOsc2: P(0, 1, 0.7, '', 'prior', 'mixer, gain v^1.5 (P2)'),
-    mixOsc3: P(0, 1, 0.5, '', 'prior', 'mixer, gain v^1.5 (P2)'),
-    mixNoise: P(0, 1, 0, '', 'prior', 'mixer, gain v^1.5 (P2)'),
-    noiseType: E('white', ['white', 'pink'], 'prior', 'pink: three-pole filtered white (P2)'),
-    mixFeedback: P(0, 1.5, 0, '', 'prior', 'output fed back into the mixer through a 4 kHz low-pass, gain 1.2 v (P2)'),
-    cutoff: P(10, 20000, 1200, 'Hz', 'prior', 'cutoff at the pivot key C4 (reissue range 10 Hz to 20 kHz, P2)'),
-    emphasis: P(0, 1, 0.15, '', 'prior', 'ladder feedback k = 4 e; self-oscillation at 1 (P2)'),
-    contour: P(0, 1, 0.5, '', 'prior', 'filter contour amount, 4 oct x v (reissue 0 to 4 oct, P2)'),
-    keyTrack1: P(0, 1, 1, '', 'prior', 'keyboard control 1: 1/3 oct per oct (P2)'),
-    keyTrack2: P(0, 1, 0, '', 'prior', 'keyboard control 2: another 1/3 (P2)'),
-    fAttack: P(0.001, 10, 0.005, 's', 'prior', 'filter contour attack (reissue range, P2)'),
-    fDecay: P(0.004, 35, 0.35, 's', 'prior', 'filter contour decay, time to -60 dB (P2)'),
-    fSustain: P(0, 1, 0.25, '', 'prior', 'filter contour sustain (P2)'),
-    attack: P(0.001, 10, 0.003, 's', 'prior', 'loudness contour attack (P2)'),
-    decay: P(0.004, 35, 0.5, 's', 'prior', 'loudness contour decay, time to -60 dB (P2)'),
-    sustain: P(0, 1, 0.8, '', 'prior', 'loudness contour sustain (P2)'),
-    decaySwitch: P(0, 1, 1, '', 'prior', '1: release = the decay times; 0: release 4 ms (P2)'),
+    tune: P(-100, 100, 0, 'ct', 'prior', 'master tune, all oscillators (P2 14.3: not measured)'),
+    glide: P(0, 10, 3, 'mark', 'source', 'constant-rate slide: 58 / 29 / 3.9 / 1.65 oct/s up, 23 / 13 / 2.05 / 0.86 down at 2.5 / 5 / 7.5 / 10 (CA-72)'),
+    glideOn: P(0, 1, 0, '', 'source', 'glide switch; glide acts between held (overlapping or slid) notes only (CA-72)'),
+    modMix: P(0, 1, 0, '', 'source', 'osc 3 (0) to noise (1): pot with a grounded wiper, gains min(1, 2(1-m)) and min(1, 2m), x 0.838 (CA-72 board4)'),
+    modAmount: P(0, 1, 0.5, '', 'source', 'mod wheel: at 1 a full square swings osc 1 and 2 by 13.5 st and the cutoff by 4 oct peak to peak (CA-72)'),
+    oscMod: P(0, 1, 0, '', 'source', 'modulation to oscillators 1 and 2 (CA-72)'),
+    filterMod: P(0, 1, 0, '', 'source', 'modulation to the cutoff (CA-72)'),
+    osc1Range: E('8', RANGES, 'source', 'lo, 32, 16, 8, 4, 2: octave steps, 8 = concert pitch, lo 4.74 oct under 32 (CA-72)'),
+    osc1Wave: E('saw', WAVES, 'source', 'triangle (0.895), shark-fin (tri-saw mix, prior), saw, square 50 %, wide 30 %, narrow 18 % (1.057) (CA-72 light.rs)'),
+    osc2Range: E('8', RANGES, 'source', 'as oscillator 1'),
+    osc2Wave: E('saw', WAVES, 'source', 'as oscillator 1'),
+    osc2Detune: P(-8.35, 8.35, 0.06, 'st', 'source', 'frequency knob, 16.7 st of travel (service manual 5.35 via CA-72)'),
+    osc3Range: E('8', RANGES, 'source', 'as oscillator 1; with osc3Keys off, lo is the LFO band'),
+    osc3Wave: E('saw', WAVES3, 'source', 'reverse saw replaces the shark-fin (CA-72 board1)'),
+    osc3Detune: P(-8.35, 8.35, -0.06, 'st', 'source', 'keys off: 198.8 Hz x 2^(range oct) x 2^(4.12 d / 12), lo about 0.25 to 13.6 Hz (CA-72)'),
+    osc3Keys: P(0, 1, 1, '', 'source', '1 = follows the keyboard, 0 = free-running (CA-72)'),
+    mixOsc1: P(0, 10, 7, 'mark', 'source', 'volume law -16.51 / -9.42 / -5.19 / -2.10 / 0 dB at 2 / 4 / 6 / 8 / 10 (CA-72)'),
+    mixOsc2: P(0, 10, 7, 'mark', 'source', 'as mixOsc1'),
+    mixOsc3: P(0, 10, 5, 'mark', 'source', 'as mixOsc1'),
+    mixNoise: P(0, 10, 0, 'mark', 'source', 'as mixOsc1; noise at -6 dB re the triangle (service manual 5.8 via CA-72)'),
+    noiseType: E('white', ['white', 'pink'], 'source', 'white or pink to the mixer; the modulation gets pink or red (CA-72)'),
+    mixFeedback: P(0, 10, 0, 'mark', 'source', 'external input row fed from the output: -39.5 / -33.1 / -29.9 / -16.9 / 0 dB at 2 / 4 / 6 / 8 / 10 (CA-72)'),
+    cutoff: P(-5, 5, 0, 'mark', 'source', 'corner at C2: 70 / 131 / 299 / 680 / 1485 / 3288 Hz at -3..+2, 19 kHz at +5; sings at 1.578 x (CA-72)'),
+    emphasis: P(0, 10, 2, 'mark', 'source', 'k through 0 / 0.30 / 2.0 / 2.3 / 2.9 / 3.2 / 4.0 / 4.4 at 0 / 2.5 / 5 / 6 / 7 / 7.5 / 8 / 10; sings from 8 (CA-72, derived)'),
+    contour: P(0, 10, 4, 'mark', 'source', 'filter contour amount: 9.7 oct x 0 / 0.197 / 0.489 / 0.775 / 1 at 0 / 2.5 / 5 / 7.5 / 10 (CA-72, derived)'),
+    keyTrack1: P(0, 1, 1, '', 'source', 'keyboard control 1: 1/3 oct per oct about C2 (CA-72)'),
+    keyTrack2: P(0, 1, 0, '', 'source', 'keyboard control 2: 2/3; both 0.967 (CA-72)'),
+    fAttack: P(0, 10, 0.5, 'mark', 'source', 'filter attack, 10-90 %: 294 ms / 4.18 s / 5.92 s at 6 / 8.5 / 10; lower marks from the dial labels (prior)'),
+    fDecay: P(0, 10, 4, 'mark', 'source', 'filter decay, 90-50 %: 343 ms / 4.33 s / 5.82 s at 6 / 8.5 / 10; also the release with decaySwitch'),
+    fSustain: P(0, 10, 3, 'mark', 'source', 'filter sustain, level (v / 10)^1.5 (one point, CA-72)'),
+    attack: P(0, 10, 0.3, 'mark', 'source', 'loudness attack, 10-90 %: 457 ms / 6.78 s / 9.47 s at 6 / 8.5 / 10; lower marks from the dial labels (prior)'),
+    decay: P(0, 10, 5, 'mark', 'source', 'loudness decay, 90-50 %: 293 ms / 4.02 s / 5.53 s at 6 / 8.5 / 10; also the release with decaySwitch'),
+    sustain: P(0, 10, 7, 'mark', 'source', 'loudness sustain, level (v / 10)^1.5'),
+    decaySwitch: P(0, 1, 1, '', 'source', 'one switch, both contours: release = decay, or a 10 ms dump (CA-72)'),
     level: P(0, 1.5, 1, '', 'prior', 'output gain')
   };
+  // panel marks -> processor values (P2 14.2 to 14.5; points are CA-72 measurements unless marked)
+  function lerp(pts, x) {
+    if (x <= pts[0][0]) return pts[0][1];
+    for (var i = 1; i < pts.length; i++) if (x <= pts[i][0]) { var a = pts[i - 1], b = pts[i]; return a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0]); }
+    return pts[pts.length - 1][1];
+  }
+  function loglerp(pts, x) { return Math.exp(lerp(pts.map(function (p) { return [p[0], Math.log(p[1])]; }), x)); }
+  // the dial's printed labels (0.1: 10 ms, 0.2: 200 ms, 0.4: 600 ms of travel) scaled to the measured time at the 1 s mark
+  function timePts(m6, m85, m10) { return [[0, 0.00075], [1, 0.010 * m6], [2, 0.2 * m6], [4, 0.6 * m6], [6, m6], [8.5, m85], [10, m10]]; }
+  var LAW = {
+    corner: [[-5, 18.6], [-4, 35], [-3, 70], [-2, 131], [-1, 299], [0, 680], [1, 1485], [2, 3288], [3, 7000], [4, 13000], [5, 19000]],
+    sing: 1.578,
+    k: [[0, 0], [2.5, 0.30], [5, 2.0], [6, 2.3], [7, 2.9], [7.5, 3.2], [8, 4.0], [10, 4.4]],
+    kCal: 1.025,                    // P5: the ported ladder needs k 4.1 to sing reliably, so mark 8 maps to 4.1
+    contour: [[0, 0], [2.5, 0.197], [5, 0.489], [7.5, 0.775], [10, 1]], contourOct: 9.7,
+    glideUp: [[0, 116], [2.5, 58], [5, 29], [7.5, 3.9], [10, 1.65]], glideDown: [[0, 46], [2.5, 23], [5, 13], [7.5, 2.05], [10, 0.86]],
+    vol: [[2, -16.51], [4, -9.42], [6, -5.19], [8, -2.10], [10, 0]], ext: [[2, -39.5], [4, -33.1], [5, -31.3], [6, -29.9], [8, -16.9], [10, 0]],
+    fA: timePts(0.294, 4.18, 5.92), fD: timePts(0.343, 4.33, 5.82), lA: timePts(0.457, 6.78, 9.47), lD: timePts(0.293, 4.02, 5.53),
+    rFilter: 9.3 / 4.49, rLoud: 9.3 / 5.28
+  };
+  function volGain(pts, v) { if (!(v > 0)) return 0; if (v < 2) return Math.pow(10, pts[0][1] / 20) * v / 2; return Math.pow(10, lerp(pts, v) / 20); }
+  function attackTau(t1090, R) { return t1090 / Math.log((R - 0.1) / (R - 0.9)); }
+  var MAP = { modeld: {
+    cutoff: function (v) { return [['cutoff', loglerp(LAW.corner, v) * LAW.sing]]; },
+    emphasis: function (v) { return [['emphasis', lerp(LAW.k, v) * LAW.kCal]]; },
+    contour: function (v) { return [['contour', LAW.contourOct * lerp(LAW.contour, v)]]; },
+    glide: function (v) { return v <= 0.05 ? [['glide', 1e4], ['glideDown', 1e4]] : [['glide', loglerp(LAW.glideUp, v)], ['glideDown', loglerp(LAW.glideDown, v)]]; },
+    mixOsc1: function (v) { return [['mixOsc1', volGain(LAW.vol, v)]]; },
+    mixOsc2: function (v) { return [['mixOsc2', volGain(LAW.vol, v)]]; },
+    mixOsc3: function (v) { return [['mixOsc3', volGain(LAW.vol, v)]]; },
+    mixNoise: function (v) { return [['mixNoise', volGain(LAW.vol, v)]]; },
+    mixFeedback: function (v) { return [['mixFeedback', volGain(LAW.ext, v)]]; },
+    fAttack: function (v) { return [['fAttack', attackTau(loglerp(LAW.fA, v), LAW.rFilter)]]; },
+    attack: function (v) { return [['attack', attackTau(loglerp(LAW.lA, v), LAW.rLoud)]]; },
+    fDecay: function (v) { return [['fDecay', loglerp(LAW.fD, v) / Math.log(1.8)]]; },
+    decay: function (v) { return [['decay', loglerp(LAW.lD, v) / Math.log(1.8)]]; },
+    fSustain: function (v) { return [['fSustain', Math.pow(clamp(v, 0, 10) / 10, 1.5)]]; },
+    sustain: function (v) { return [['sustain', Math.pow(clamp(v, 0, 10) / 10, 1.5)]]; }
+  }, tb303: {} };
   var ENUMS = {
     tb303: { wave: ['saw', 'square'] },
     modeld: { osc1Range: RANGES, osc2Range: RANGES, osc3Range: RANGES, osc1Wave: WAVES, osc2Wave: WAVES, osc3Wave: WAVES3,
@@ -105,6 +148,9 @@
     var i = en.indexOf(String(v));
     return i >= 0 ? i : en.indexOf(SPEC[type][name].value);
   }
+  // the processor writes for a spec value: [[param, value], ...] (panel marks mapped by MAP)
+  function wvals(type, name, v) { var f = MAP[type] && MAP[type][name]; return f ? f(Number(v)) : [[name, numeric(type, name, v)]]; }
+  function phys(type, name, v) { return wvals(type, name, v)[0][1]; }
 
   // ------------------------------------------------------------------ instrument base (as drums.js, no drive stage)
   function makeInst(ctx, type, spec, opts, build) {
@@ -183,9 +229,10 @@
   // write the knobs that a lock changed for this trigger (and restore the ones locked last time)
   function applyLocks(inst, pl, W, t) {
     var P = inst.params, base = inst._base, k;
-    for (k in pl.locked) if (pl.locked.hasOwnProperty(k) && P[k] === base[k] && W[k]) setV(W[k], numeric(inst.type, k, base[k]), t);
+    var put = function (name, v) { wvals(inst.type, name, v).forEach(function (pv) { if (W[pv[0]]) setV(W[pv[0]], pv[1], t); }); };
+    for (k in pl.locked) if (pl.locked.hasOwnProperty(k) && P[k] === base[k]) put(k, base[k]);
     pl.locked = {};
-    for (k in base) if (base.hasOwnProperty(k) && k !== 'level' && P[k] !== base[k] && W[k]) { setV(W[k], numeric(inst.type, k, P[k]), t); pl.locked[k] = true; }
+    for (k in base) if (base.hasOwnProperty(k) && k !== 'level' && P[k] !== base[k]) { put(k, P[k]); pl.locked[k] = true; }
   }
   function buildWorklet(inst, node) {
     var ctx = inst.ctx, W = wparams(node), type = inst.type, k;
@@ -194,16 +241,18 @@
     inst._base = {};
     for (k in inst.params) if (inst.params.hasOwnProperty(k)) {
       inst._base[k] = inst.params[k];
-      if (W[k]) val(W[k], numeric(type, k, inst.params[k]));
+      if (k !== 'level') wvals(type, k, inst.params[k]).forEach(function (pv) { if (W[pv[0]]) val(W[pv[0]], pv[1]); });
     }
     node.connect(inst.pre);
     inst.onParam = function (name, v, o, at) {
       inst._base[name] = v;
-      var p = W[name];
-      if (!p) return;
-      var x = numeric(type, name, v);
-      if (ENUMS[type][name] || (o && typeof o.at === 'number')) setV(p, x, at);
-      else target(p, x, at, 0.01);
+      if (name === 'level') return;
+      wvals(type, name, v).forEach(function (pv) {
+        var p = W[pv[0]];
+        if (!p) return;
+        if (ENUMS[type][name] || (o && typeof o.at === 'number')) setV(p, pv[1], at);
+        else target(p, pv[1], at, 0.01);
+      });
     };
     inst.onDispose = function () { try { node.port.postMessage('stop'); } catch (e) {} disc(node); };
     return W;
@@ -306,7 +355,7 @@
   }
 
   var FWAVE = { tri: 'triangle', shark: 'sawtooth', saw: 'sawtooth', revsaw: 'sawtooth', square: 'square', wide: 'square', narrow: 'square' };
-  var ROCT = { lo: -7, '32': -2, '16': -1, '8': 0, '4': 1, '2': 2 };
+  var ROCT = { lo: -6.74, '32': -2, '16': -1, '8': 0, '4': 1, '2': 2 };
 
   BUILD.modeld = function (inst) {
     var ctx = inst.ctx, pl = planner(), node = root.Worklets ? root.Worklets.node(ctx, PROC.modeld, { processorOptions: { seed: 22051 } }) : null;
@@ -322,20 +371,22 @@
         for (var i = 0; i < e.returns.length; i++) setV(W.pitch, e.returns[i][1], e.returns[i][0]);
         setV(W.gate, 0, e.off);
         var P = inst.params;
-        liveNote(inst, t, e.off + (P.decaySwitch >= 0.5 ? Math.max(P.decay, P.fDecay) : 0.01) + 0.05);
+        liveNote(inst, t, e.off + (P.decaySwitch >= 0.5 ? 8 * Math.max(phys('modeld', 'decay', P.decay), phys('modeld', 'fDecay', P.fDecay)) : 0.03) + 0.05);
       };
       inst.onPanic = function (now) { cancel(W.gate, now); cancel(W.pitch, now); setV(W.gate, 0, now); pl.prev = null; pl.held = []; };
       return;
     }
-    // FALLBACK (no worklet): three native oscillators, two biquads, contours as ramps; legato glides the running voice
+    // FALLBACK (no worklet): three native oscillators, two biquads, contours as ramps; legato glides the running voice.
+    // Marks are mapped as for the worklet (phys), but the shapes are approximate.
     inst.trigger = function (t, ev) {
       var e = planD(pl, t, ev), P = inst.params, v = pl.fv, i;
-      var tun = P.tune / 100, gl = P.glideOn >= 0.5 ? Math.max(0.001, P.glide) : 0.001;
+      var X = function (n) { return phys('modeld', n, P[n]); };
+      var tun = P.tune / 100, gl = P.glideOn >= 0.5 ? Math.max(0.001, 1 / X('glide')) : 0.001;
       var fr = function (m) {
         return [mtof(m + tun + 12 * (ROCT[P.osc1Range] || 0)), mtof(m + tun + 12 * (ROCT[P.osc2Range] || 0) + P.osc2Detune),
-                P.osc3Keys >= 0.5 ? mtof(m + tun + 12 * (ROCT[P.osc3Range] || 0) + P.osc3Detune) : 3 * Math.pow(2, 5 * P.osc3Detune / 7)];
+                P.osc3Keys >= 0.5 ? mtof(m + tun + 12 * (ROCT[P.osc3Range] || 0) + P.osc3Detune) : 198.8 * Math.pow(2, (ROCT[P.osc3Range] || 0) + 4.12 * P.osc3Detune / 12)];
       };
-      var relT = P.decaySwitch >= 0.5 ? P.decay / 6.9 : 0.004 / 6.9;
+      var relT = P.decaySwitch >= 0.5 ? X('decay') : 0.00243;
       if (e.legato && v && !v.done) {
         var fs = fr(e.midi);
         for (i = 0; i < 3; i++) target(v.os[i].frequency, fs[i], t, gl);
@@ -345,27 +396,28 @@
         v.rec.end = e.off + relT * 8;
         return;
       }
-      var f = fr(e.midi), os = [], mix = [P.mixOsc1, P.mixOsc2, P.mixOsc3], wv = [P.osc1Wave, P.osc2Wave, P.osc3Wave];
+      var f = fr(e.midi), os = [], mix = [X('mixOsc1'), X('mixOsc2'), X('mixOsc3')], wv = [P.osc1Wave, P.osc2Wave, P.osc3Wave];
       var b1 = ctx.createBiquadFilter(), b2 = ctx.createBiquadFilter(), g = ctx.createGain(), stop = e.off + relT * 8 + 0.05;
-      var kt = (P.keyTrack1 >= 0.5 ? 1 / 3 : 0) + (P.keyTrack2 >= 0.5 ? 1 / 3 : 0);
-      var base = clamp(P.cutoff * Math.pow(2, kt * (e.midi - 60) / 12), 10, 18000), peak = clamp(base * Math.pow(2, 4 * P.contour), 10, 18000);
-      var sus = clamp(base * Math.pow(2, 4 * P.contour * P.fSustain), 10, 18000);
+      var kt = P.keyTrack1 >= 0.5 && P.keyTrack2 >= 0.5 ? 0.967 : (P.keyTrack1 >= 0.5 ? 1 / 3 : 0) + (P.keyTrack2 >= 0.5 ? 2 / 3 : 0);
+      var corner = X('cutoff') / LAW.sing, oct = X('contour'), fsus = X('fSustain'), fa = X('fAttack'), fd = X('fDecay');
+      var base = clamp(corner * Math.pow(2, kt * (e.midi - 36) / 12), 10, 18000), peak = clamp(base * Math.pow(2, oct), 10, 18000);
+      var sus = clamp(base * Math.pow(2, oct * fsus), 10, 18000);
       [b1, b2].forEach(function (b, k) {
         try { b.type = 'lowpass'; } catch (x) {}
-        val(b.Q, k ? 0.5 + 12 * P.emphasis : 0.5);
-        setV(b.frequency, base, t); lin(b.frequency, peak, t + P.fAttack); target(b.frequency, sus, t + P.fAttack, P.fDecay / 6.9);
-        target(b.frequency, base, e.off, relT);
+        val(b.Q, k ? 0.5 + 3 * X('emphasis') : 0.5);
+        setV(b.frequency, base, t); lin(b.frequency, peak, t + fa); target(b.frequency, sus, t + fa, fd);
+        target(b.frequency, base, e.off, P.decaySwitch >= 0.5 ? fd : 0.00243);
       });
       for (i = 0; i < 3; i++) {
         var o = ctx.createOscillator(), og = ctx.createGain();
         try { o.type = FWAVE[wv[i]] || 'sawtooth'; } catch (x) {}
         setV(o.frequency, f[i], t);
-        val(og.gain, Math.pow(mix[i], 1.5) * 0.35);
+        val(og.gain, mix[i] * 0.3);
         o.connect(og); og.connect(b1);
         os.push(o);
       }
       var amp = e.vel * 0.6;
-      setV(g.gain, 0, t); lin(g.gain, amp, t + P.attack); target(g.gain, amp * P.sustain, t + P.attack, P.decay / 6.9);
+      setV(g.gain, 0, t); lin(g.gain, amp, t + X('attack')); target(g.gain, amp * X('sustain'), t + X('attack'), X('decay'));
       target(g.gain, 0, e.off, relT);
       b1.connect(b2); b2.connect(g); g.connect(inst.pre);
       var nv = { os: os, g: g, done: false, left: 3 };
@@ -405,6 +457,6 @@
     types: function () { return TYPES.slice(); },
     spec: function (t) { return SPEC[t] || null; },
     processor: function (t) { return PROC[t] || null; },
-    numeric: numeric
+    numeric: numeric, values: wvals, LAW: LAW
   };
 })();

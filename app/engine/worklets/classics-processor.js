@@ -267,25 +267,35 @@ class Tb303Processor extends AudioWorkletProcessor {
 registerProcessor('hvt-tb303', Tb303Processor);
 
 // ================================================================== Model D
-// Block list after P2 (transcripts/P2-modeld.md section 10). Constants marked (P2) carry P2's basis (mostly prior).
+// Block list after P2 (transcripts/P2-modeld.md sections 10 and 14, the CA-72 measurements). The processor's params are
+// PHYSICAL values; classics.js maps the panel marks of the spec (cutoff -5..+5, the 0..10 knobs) to them:
+//   cutoff = the ladder's tuning frequency in Hz (where it sings: 1.578 x the panel corner, CA-72), emphasis = k,
+//   contour = octaves at full contour, glide / glideDown = slide rates in octaves per second, mix* = linear gains,
+//   fAttack / attack = attack RC time constants, fDecay / decay = decay RC time constants, fSustain / sustain = levels,
+//   osc*Detune = semitones (osc3 free: the knob is widened x4.12 in the processor), tune = cents.
 var MD = {
-  rangeOct: [-7, -2, -1, 0, 1, 2],          // 'lo', '32', '16', '8', '4', '2' (P2: one octave per step; lo sub-audio, prior)
-  wide: 0.33, narrow: 0.2,                   // pulse duties (P2, prior)
-  mixDrive: 1.4,                             // mixer soft clip tanh(1.4 m) / tanh(1.4) (P2, prior)
-  noiseGain: 0.5,                            // white noise RMS about 0.3 of a full saw (P2)
-  oscModSt: 1, filtModOct: 1,                // modulation depths with no mod wheel: 1 st and 1 oct peak (P5, prior)
-  lfoBase: 3,                                // osc 3 free in 'lo': 3 x 2^(5 detune / 7) Hz (P2, prior)
-  inScale: 0.5, outScale: 2,                 // ladder input / output scale (P5 calibration: onset of stage saturation)
-  makeup: 0.25,                              // passband makeup = 1 + 0.25 k (P2)
-  fastRelease: 0.004,                        // s, release with the decay switch off (P2)
-  drift: 0.8,                                // ct, slow per-oscillator drift (P2 suggests up to 2 ct; prior)
-  outGain: 0.6,                              // calibration (P5)
-  tuneFix: 5.1,                              // ladder tuning correction, see the cutoff (P5, measured)
-  kMax: 4.1,                                 // feedback at emphasis 1 (k = 4.1 e): sings from e = 0.976 (P5; P2: k = 4 e)
-  seedNoise: 1e-6                            // thermal noise at the ladder input, so it can sing with no source (P5)
+  rangeOct: [-6.74, -2, -1, 0, 1, 2],        // 'lo' (4.74 oct under 32'), '32', '16', '8', '4', '2' (CA-72, source)
+  duty: [0.5, 0.3, 0.18],                     // square, wide, narrow (CA-72 light.rs, source)
+  wTri: 0.895, wPulse: 1.057,                 // level weights against a saw of 1.0 (CA-72 light.rs, source)
+  noiseGain: 0.447,                           // white RMS 0.258 = half the RMS of osc 1's triangle (-6 dB, service manual 5.8 via CA-72)
+  pinkGain: 0.149, redGain: 5.12,             // pink and red scaled to the white noise's RMS 0.258 (P5, computed in Node)
+  redPole: 106,                               // Hz, the red noise of the modulation path (CA-72)
+  modInv: 0.838,                              // modulation mix amplifier gain (CA-72 board4, source)
+  modPitchSt: 6.75 / 0.838,                   // modAmount 1, a full-level square: 13.5 st p-p on osc 1 and 2 (CA-72, source)
+  modCutOct: 2 / 0.838,                       // ... and 4 oct p-p of cutoff (CA-72, source)
+  free3: 198.8, free3Wide: 68.8 / 16.7,       // osc 3 free-running: 198.8 Hz at 8' centred; knob span x4.12 (CA-72, source)
+  pivot: 36,                                  // keyboard tracking pivot C2 (CA-72 change 11)
+  trackBoth: 0.967,                           // both keyboard switches (CA-72, source)
+  drive: 0.6,                                 // ladder input scale: one osc at mark 4 linear within 0.5 dB, three at 10 saturate (P5)
+  outScale: 2.2,                              // output calibration (P5, measured)
+  tuneFix: 5.1,                               // ladder tuning correction for the one-sample feedback delay (P5, measured)
+  seedNoise: 1e-6,                            // thermal noise at the ladder input, so it can sing with no source (P5)
+  rFilter: 9.3 / 4.49, rLoud: 9.3 / 5.28,     // attack: RC toward 9.3 V cut at 4.49 V (filter) / 5.28 V (loudness) (CA-72 board2)
+  dump: 0.00243,                              // s, release RC with the decay switch off: -6 to -40 dB in 9.5 ms (CA-72)
+  offsetCt: 2, driftCt: 1.5, driftTau: 4,     // static offset, drift walk and its time constant per oscillator (P2 14.3, prior)
+  cutDriftOct: 0.01,
+  outGain: 1
 };
-var LN1000 = Math.log(1000);                // decay / release knobs are the time to -60 dB
-var LN3 = Math.log(3);                       // attack: RC toward 1.5, cut at 1.0 after `attack` seconds
 
 class ModelDProcessor extends AudioWorkletProcessor {
   static get parameterDescriptors() {
@@ -293,75 +303,80 @@ class ModelDProcessor extends AudioWorkletProcessor {
     var d = function (name, def, min, max) { return { name: name, defaultValue: def, minValue: min, maxValue: max, automationRate: AR[name] ? 'a-rate' : 'k-rate' }; };
     return [
       d('pitch', 48, 0, 127), d('gate', 0, 0, 1), d('trig', 0, 0, 1e9), d('slide', 0, 0, 1), d('vel', 0.85, 0, 2),
-      d('tune', 0, -100, 100), d('glide', 0.08, 0, 10), d('glideOn', 0, 0, 1), d('modMix', 0, 0, 1),
-      d('oscMod', 0, 0, 1), d('filterMod', 0, 0, 1),
+      d('tune', 0, -100, 100), d('glide', 10, 0.01, 1e4), d('glideDown', 5, 0.01, 1e4), d('glideOn', 0, 0, 1),
+      d('modMix', 0, 0, 1), d('modAmount', 0.5, 0, 1), d('oscMod', 0, 0, 1), d('filterMod', 0, 0, 1),
       d('osc1Range', 3, 0, 5), d('osc1Wave', 2, 0, 5), d('osc2Range', 3, 0, 5), d('osc2Wave', 2, 0, 5),
-      d('osc2Detune', 0, -7, 7), d('osc3Range', 3, 0, 5), d('osc3Wave', 2, 0, 5), d('osc3Detune', 0, -7, 7),
-      d('osc3Keys', 1, 0, 1), d('mixOsc1', 0.7, 0, 1), d('mixOsc2', 0.7, 0, 1), d('mixOsc3', 0.5, 0, 1),
-      d('mixNoise', 0, 0, 1), d('noiseType', 0, 0, 1), d('mixFeedback', 0, 0, 1.5),
-      d('cutoff', 1200, 10, 20000), d('emphasis', 0.15, 0, 1), d('contour', 0.5, 0, 1),
+      d('osc2Detune', 0, -9, 9), d('osc3Range', 3, 0, 5), d('osc3Wave', 2, 0, 5), d('osc3Detune', 0, -9, 9),
+      d('osc3Keys', 1, 0, 1), d('mixOsc1', 0.7, 0, 2), d('mixOsc2', 0.7, 0, 2), d('mixOsc3', 0.5, 0, 2),
+      d('mixNoise', 0, 0, 2), d('noiseType', 0, 0, 1), d('mixFeedback', 0, 0, 2),
+      d('cutoff', 1073, 5, 40000), d('emphasis', 0.3, 0, 6), d('contour', 4, 0, 12),
       d('keyTrack1', 1, 0, 1), d('keyTrack2', 0, 0, 1),
-      d('fAttack', 0.005, 0.001, 10), d('fDecay', 0.35, 0.004, 35), d('fSustain', 0.25, 0, 1),
-      d('attack', 0.003, 0.001, 10), d('decay', 0.5, 0.004, 35), d('sustain', 0.8, 0, 1), d('decaySwitch', 1, 0, 1)
+      d('fAttack', 0.005, 0.0001, 30), d('fDecay', 0.5, 0.0001, 30), d('fSustain', 0.16, 0, 1),
+      d('attack', 0.003, 0.0001, 30), d('decay', 0.5, 0.0001, 30), d('sustain', 0.58, 0, 1), d('decaySwitch', 1, 0, 1)
     ];
   }
   constructor(options) {
     super();
-    var seed = (options && options.processorOptions && options.processorOptions.seed) || 22051;
+    var seed = (options && options.processorOptions && options.processorOptions.seed) || 22051, j;
     this.alive = true;
     this.port.onmessage = (e) => { if (e.data === 'stop') this.alive = false; };
     this.rng = new Lcg(seed); this.drng = new Lcg(seed ^ 0x5bd1e995);
-    this.lastTrig = 0; this.gateOn = false; this.started = false; this.idle = true; this.quiet = 0;
-    this.note = 48; this.ph = [0, 0, 0]; this.lfoPh = 0;
-    this.drift = [0, 0, 0]; this.driftV = [0, 0, 0];
+    this.lastTrig = 0; this.gateOn = false; this.started = false; this.idle = true; this.quiet = 0; this.glideNow = false;
+    this.note = 48; this.ph = [0, 0, 0];
+    this.offset = []; this.drift = [0, 0, 0, 0];
+    for (j = 0; j < 3; j++) this.offset.push(this.drng.next() * MD.offsetCt / 100);
     this.eF = 0; this.eA = 0; this.stF = 0; this.stA = 0;   // levels; stage 0 off, 1 attack, 2 decay/sustain, 3 release
-    this.pk = [0, 0, 0]; this.white = 0; this.pink = [0, 0, 0];
+    this.pk = [0, 0, 0]; this.red = 0;
     this.fbLp = 0; this.prevOut = 0; this.ctl = 0;
     this.V = [0, 0, 0, 0]; this.dV = [0, 0, 0, 0]; this.tV = [0, 0, 0, 0];
     this.dec = new Elliptic();
-    this.glC = new Coef(1); this.cC = [new Coef(LN3), new Coef(LN1000), new Coef(LN1000), new Coef(LN3), new Coef(LN1000), new Coef(LN1000)];
-    this.fbC = 1 - Math.exp(-TWO_PI * 4000 / sampleRate); this.tn = Math.tanh(MD.mixDrive);
+    this.cC = [new Coef(1), new Coef(1), new Coef(1), new Coef(1), new Coef(1), new Coef(1)];
+    this.fbC = 1 - Math.exp(-TWO_PI * 4000 / sampleRate); this.redC = 1 - Math.exp(-TWO_PI * MD.redPole / sampleRate);
+    this.dC = Math.exp(-64 / (MD.driftTau * sampleRate));
+    this.dt1 = this.dt2 = this.dt3 = 0; this.g = 0; this.src = 0;
   }
-  osc(j, t, dt, w, three) {
+  osc(t, dt, w, three) {
     switch (w) {
-      case 0: return tri(t, dt);
-      case 1: return three ? -saw(t, dt) : 0.5 * (tri(t, dt) + saw(t, dt));   // osc 3: reverse saw; 1 and 2: shark-fin (P2: tri-saw blend, prior)
+      case 0: return MD.wTri * tri(t, dt);
+      case 1: return three ? -saw(t, dt) : 0.5 * (MD.wTri * tri(t, dt) + saw(t, dt));   // osc 3: reverse saw; 1, 2: shark-fin (tri-saw mix, prior)
       case 2: return saw(t, dt);
-      case 3: return pulse(t, dt, 0.5);
-      case 4: return pulse(t, dt, MD.wide);
-      default: return pulse(t, dt, MD.narrow);
+      case 3: return MD.wPulse * pulse(t, dt, MD.duty[0]);
+      case 4: return MD.wPulse * pulse(t, dt, MD.duty[1]);
+      default: return MD.wPulse * pulse(t, dt, MD.duty[2]);
     }
   }
-  naive(t, w, three) {                                       // modulation copy of osc 3, not band-limited (P2 block 2)
+  naive(t, w) {                                              // modulation copy of osc 3, not band-limited (P2 block 2)
     switch (w) {
       case 0: return t < 0.5 ? 4 * t - 1 : 3 - 4 * t;
-      case 1: return three ? 1 - 2 * t : 2 * t - 1;
+      case 1: return 1 - 2 * t;
       case 2: return 2 * t - 1;
-      case 3: return t < 0.5 ? 1 : -1;
-      case 4: return t < MD.wide ? 1 : -1;
-      default: return t < MD.narrow ? 1 : -1;
+      case 3: return t < MD.duty[0] ? 1 : -1;
+      case 4: return t < MD.duty[1] ? 1 : -1;
+      default: return t < MD.duty[2] ? 1 : -1;
     }
   }
   process(inputs, outputs, P) {
     var out = outputs[0] && outputs[0][0];
     if (!out) return this.alive;
     var n = out.length, fs = sampleRate, fo = fs * OS, i, k, j;
-    var VT2 = 2 * 0.312, h = 1 / (2 * fo), tn = this.tn, V = this.V, dV = this.dV, tV = this.tV;
+    var VT2 = 2 * 0.312, h = 1 / (2 * fo), V = this.V, dV = this.dV, tV = this.tV;
     // k-rate knobs: read once per block
     var k0 = function (a) { return a[0]; };
-    var tune = k0(P.tune) / 100, gl = k0(P.glide), glOn = k0(P.glideOn) >= 0.5 && gl > 0, mm = k0(P.modMix);
-    var oscMod = k0(P.oscMod) >= 0.5, filtMod = k0(P.filterMod) >= 0.5;
+    var tune = k0(P.tune) / 100, upR = k0(P.glide), dnR = k0(P.glideDown), glOn = k0(P.glideOn) >= 0.5;
+    var mm = k0(P.modMix), mAmt = k0(P.modAmount), oscMod = k0(P.oscMod) >= 0.5, filtMod = k0(P.filterMod) >= 0.5;
+    var g3m = MD.modInv * Math.min(1, 2 * (1 - mm)), gnm = MD.modInv * Math.min(1, 2 * mm);
     var w1 = Math.round(k0(P.osc1Wave)), w2 = Math.round(k0(P.osc2Wave)), w3 = Math.round(k0(P.osc3Wave));
-    var r1 = MD.rangeOct[Math.round(k0(P.osc1Range))], r2 = MD.rangeOct[Math.round(k0(P.osc2Range))], r3i = Math.round(k0(P.osc3Range));
+    var r1 = MD.rangeOct[Math.round(k0(P.osc1Range))], r2 = MD.rangeOct[Math.round(k0(P.osc2Range))], r3 = MD.rangeOct[Math.round(k0(P.osc3Range))];
     var d2 = k0(P.osc2Detune), d3 = k0(P.osc3Detune), keys3 = k0(P.osc3Keys) >= 0.5;
-    var g1 = Math.pow(k0(P.mixOsc1), 1.5), g2 = Math.pow(k0(P.mixOsc2), 1.5), g3 = Math.pow(k0(P.mixOsc3), 1.5);
-    var gn = Math.pow(k0(P.mixNoise), 1.5), gf = 1.2 * k0(P.mixFeedback), pink = k0(P.noiseType) >= 0.5;
-    var track = (k0(P.keyTrack1) >= 0.5 ? 1 / 3 : 0) + (k0(P.keyTrack2) >= 0.5 ? 1 / 3 : 0);
+    var g1 = k0(P.mixOsc1), g2 = k0(P.mixOsc2), g3 = k0(P.mixOsc3), gn = k0(P.mixNoise), gf = k0(P.mixFeedback), pink = k0(P.noiseType) >= 0.5;
+    var kt1 = k0(P.keyTrack1) >= 0.5, kt2 = k0(P.keyTrack2) >= 0.5;
+    var track = kt1 && kt2 ? MD.trackBoth : (kt1 ? 1 / 3 : 0) + (kt2 ? 2 / 3 : 0);
     var fA = k0(P.fAttack), fD = k0(P.fDecay), fS = k0(P.fSustain), aA = k0(P.attack), aD = k0(P.decay), aS = k0(P.sustain);
-    var rel = k0(P.decaySwitch) >= 0.5 ? null : MD.fastRelease, fmax = Math.min(20000, 0.45 * fs);
-    var free3 = r3i === 0 ? MD.lfoBase * Math.pow(2, 5 * d3 / 7) : mtof(60 + 12 * MD.rangeOct[r3i] + d3);
+    var dsw = k0(P.decaySwitch) >= 0.5, fmax = Math.min(20000 * 1.6, 0.45 * fo / 2);
+    var free3 = MD.free3 * Math.pow(2, r3 + MD.free3Wide * d3 / 12);
     var pP = P.pitch, pG = P.gate, pT = P.trig, pS = P.slide, pV = P.vel, pC = P.cutoff, pE = P.emphasis, pK = P.contour;
-    var dt1 = this.dt1 || 0, dt2 = this.dt2 || 0, dt3 = this.dt3 || 0, g = this.g || 0, src = this.src || 0, kres = 0, make = 1;
+    var dt1 = this.dt1, dt2 = this.dt2, dt3 = this.dt3, g = this.g, src = this.src, kres = 0;
+    var upStep = upR / fs * 12, dnStep = dnR / fs * 12;      // semitones per sample
     for (i = 0; i < n; i++) {
       var trig = pv(pT, i), gate = pv(pG, i) >= 0.5;
       if (trig !== this.lastTrig) {
@@ -369,57 +384,57 @@ class ModelDProcessor extends AudioWorkletProcessor {
         var legato = pv(pS, i) >= 0.5 && this.gateOn;
         if (!this.started) { this.note = pv(pP, i) + tune; this.started = true; }
         if (!legato) { this.stF = 1; this.stA = 1; }        // single triggering: contours restart only after a gap
+        this.glideNow = legato;                              // glide only between held (overlapping or slid) notes (CA-72)
         this.vel = pv(pV, i);
         this.gateOn = true; this.idle = false; this.quiet = 0;
       } else if (!gate && this.gateOn) { this.gateOn = false; this.stF = 3; this.stA = 3; }
       if (this.idle) { out[i] = 0; continue; }
-      // pitch CV in semitones with the glide RC
+      // pitch CV in semitones; glide is a constant rate (octaves per second, up faster than down)
       var target = pv(pP, i) + tune;
-      this.note = glOn ? target + this.glC.of(gl) * (this.note - target) : target;
-      // contours (RC segments): attack toward 1.5 cut at 1; decay / release are times to -60 dB
-      this.eF = this.contour(this.eF, 'stF', fA, fD, fS, rel, 0);
-      this.eA = this.contour(this.eA, 'stA', aA, aD, aS, rel, 3);
-      // noise (base rate, held across the oversampled loop)
-      var w = this.rng.next() * MD.noiseGain, pk = this.pk;
+      if (glOn && this.glideNow) {
+        var dn = target - this.note;
+        this.note = dn > 0 ? (dn > upStep ? this.note + upStep : target) : (-dn > dnStep ? this.note - dnStep : target);
+      } else this.note = target;
+      // contours: attack is an RC toward R x peak cut at the peak; decay and release are RCs
+      this.eF = this.contour(this.eF, 'stF', fA, fD, fS, dsw, MD.rFilter, 0);
+      this.eA = this.contour(this.eA, 'stA', aA, aD, aS, dsw, MD.rLoud, 3);
+      // noise (base rate, held across the oversampled loop); modulation noise is one step redder
+      var w = this.rng.next(), pk = this.pk;
       pk[0] = 0.99765 * pk[0] + w * 0.0990460; pk[1] = 0.96300 * pk[1] + w * 0.2965164; pk[2] = 0.57000 * pk[2] + w * 1.0526913;
-      var noise = pink ? (pk[0] + pk[1] + pk[2] + w * 0.1848) * 0.3 : w;
-      kres = MD.kMax * pv(pE, i); make = 1 + MD.makeup * kres;
+      var pinkS = (pk[0] + pk[1] + pk[2] + w * 0.1848) * MD.pinkGain;
+      this.red += this.redC * (w - this.red);
+      var noise = pink ? pinkS : w * MD.noiseGain, mNoise = pink ? this.red * MD.redGain : pinkS;
+      kres = pv(pE, i);
       // control rate (every 4 samples): drift, oscillator increments, modulation source, cutoff
       if ((this.ctl++ & 3) === 0) {
-        if ((this.ctl & 255) === 1) for (j = 0; j < 3; j++) {
-          this.driftV[j] = 0.999 * this.driftV[j] + 0.02 * this.drng.next();
-          this.drift[j] = clamp(0.98 * this.drift[j] + 0.02 * this.driftV[j] * 30, -2, 2);
-        }
-        var dr = MD.drift / 100, nt = this.note;
-        src = (1 - mm) * this.naive(this.ph[2], w3, true) + mm * w * 2;
-        var om = oscMod ? src * MD.oscModSt : 0;
-        dt1 = mtof(nt + 12 * r1 + om + this.drift[0] * dr) / fo;
-        dt2 = mtof(nt + 12 * r2 + d2 + om + this.drift[1] * dr) / fo;
-        dt3 = (keys3 ? mtof(nt + 12 * MD.rangeOct[r3i] + d3 + this.drift[2] * dr) : free3) / fo;
-        // cutoff CV in octaves: knob, keyboard (pivot C4), contour (0..4 oct), modulation
-        var oct = track * (nt - 60) / 12 + 4 * pv(pK, i) * this.eF + (filtMod ? src * MD.filtModOct : 0);
-        var fc = clamp(pv(pC, i) * Math.pow(2, oct), 10, fmax);
-        // tuning correction for the one-sample feedback delay (P5, measured in Chromium: without it the ladder sings
-        // flat by about 5.1 fc / fo, -21 ct at 440 Hz and -186 ct at 3520 Hz)
+        if ((this.ctl & 63) === 1) for (j = 0; j < 4; j++) this.drift[j] = this.dC * this.drift[j] + (1 - this.dC) * 8 * this.drng.next();
+        var nt = this.note, dr = MD.driftCt / 100;
+        src = -(g3m * this.naive(this.ph[2], w3) + gnm * mNoise);
+        var om = oscMod ? src * mAmt * MD.modPitchSt : 0;
+        dt1 = mtof(nt + 12 * r1 + om + this.offset[0] + this.drift[0] * dr) / fo;
+        dt2 = mtof(nt + 12 * r2 + d2 + om + this.offset[1] + this.drift[1] * dr) / fo;
+        dt3 = (keys3 ? mtof(nt + 12 * r3 + d3 + this.offset[2] + this.drift[2] * dr) : free3) / fo;
+        // cutoff CV in octaves: knob, keyboard (pivot C2), contour, modulation, drift
+        var oct = track * (nt - MD.pivot) / 12 + pv(pK, i) * this.eF + (filtMod ? src * mAmt * MD.modCutOct : 0) + this.drift[3] * MD.cutDriftOct;
+        var fc = clamp(pv(pC, i) * Math.pow(2, oct), 5, fmax);
         fc = fc / (1 - MD.tuneFix * fc / fo);
         var x = Math.PI * fc / fo;
         g = 4 * Math.PI * 0.312 * fc * (1 - x) / (1 + x);
       }
       var y = 0;
-      // the feedback path: previous output through a 4 kHz one-pole
       this.fbLp += this.fbC * (this.prevOut - this.fbLp);
       var ext = gn * noise + gf * this.fbLp + MD.seedNoise * w, ph = this.ph;
       for (k = 0; k < OS; k++) {
         var m = ext;
-        if (g1 > 0) m += g1 * this.osc(0, ph[0], dt1, w1, false);
-        if (g2 > 0) m += g2 * this.osc(1, ph[1], dt2, w2, false);
-        if (g3 > 0) m += g3 * this.osc(2, ph[2], dt3, w3, true);
+        if (g1 > 0) m += g1 * this.osc(ph[0], dt1, w1, false);
+        if (g2 > 0) m += g2 * this.osc(ph[1], dt2, w2, false);
+        if (g3 > 0) m += g3 * this.osc(ph[2], dt3, w3, true);
         ph[0] += dt1; if (ph[0] >= 1) ph[0] -= 1;
         ph[1] += dt2; if (ph[1] >= 1) ph[1] -= 1;
         ph[2] += dt3; if (ph[2] >= 1) ph[2] -= 1;
-        m = th(MD.mixDrive * m) / tn;
-        // ImprovedMoog (D'Angelo, ISC): trapezoidal stages, tanh per stage, feedback from the previous V3
-        var dV0 = -g * (th((MD.inScale * m + kres * V[3]) / VT2) + tV[0]);
+        // ImprovedMoog (D'Angelo, ISC): trapezoidal stages, tanh per stage, feedback from the previous V3. The input
+        // pair's tanh is the mixer overdrive (CA-72 board4: no separate clipper)
+        var dV0 = -g * (th((MD.drive * m + kres * V[3]) / VT2) + tV[0]);
         V[0] += (dV0 + dV[0]) * h; dV[0] = dV0; tV[0] = th(V[0] / VT2);
         var dV1 = g * (tV[0] - tV[1]);
         V[1] += (dV1 + dV[1]) * h; dV[1] = dV1; tV[1] = th(V[1] / VT2);
@@ -427,7 +442,7 @@ class ModelDProcessor extends AudioWorkletProcessor {
         V[2] += (dV2 + dV[2]) * h; dV[2] = dV2; tV[2] = th(V[2] / VT2);
         var dV3 = g * (tV[2] - tV[3]);
         V[3] += (dV3 + dV[3]) * h; dV[3] = dV3; tV[3] = th(V[3] / VT2);
-        y = this.dec.run(-V[3] * MD.outScale * make);
+        y = this.dec.run(-V[3] * MD.outScale);
       }
       var o = y * this.eA * this.vel * MD.outGain;
       this.prevOut = o;
@@ -437,15 +452,16 @@ class ModelDProcessor extends AudioWorkletProcessor {
     this.dt1 = dt1; this.dt2 = dt2; this.dt3 = dt3; this.g = g; this.src = src;
     return this.alive;
   }
-  contour(lv, key, a, d, s, rel, c) {
+  // a: attack RC time constant, R: attack target / peak; d: decay RC time constant; s: sustain level
+  contour(lv, key, a, d, s, dsw, R, c) {
     var st = this[key], C = this.cC;
     if (st === 1) {
-      lv += (1.5 - lv) * (1 - C[c].of(Math.max(a, 0.0005)));
+      lv += (R - lv) * (1 - C[c].of(Math.max(a, 0.0001)));
       if (lv >= 1) { lv = 1; this[key] = 2; }
     } else if (st === 2) {
-      lv = s + (lv - s) * C[c + 1].of(Math.max(d, 0.001));
+      lv = s + (lv - s) * C[c + 1].of(Math.max(d, 0.0001));
     } else if (st === 3) {
-      lv *= C[c + 2].of(Math.max(rel == null ? d : rel, 0.001));
+      lv *= C[c + 2].of(dsw ? Math.max(d, 0.0001) : MD.dump);
       if (lv < 1e-6) { lv = 0; this[key] = 0; }
     }
     return lv;

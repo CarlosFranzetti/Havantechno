@@ -100,7 +100,7 @@ var PROCS = loadProcs(44100);
 
 var FROZEN = {
   tb303: ['tune', 'wave', 'cutoff', 'resonance', 'envMod', 'decay', 'accent', 'slideTime', 'level'],
-  modeld: ['tune', 'glide', 'glideOn', 'modMix', 'oscMod', 'filterMod', 'osc1Range', 'osc1Wave', 'osc2Range', 'osc2Wave', 'osc2Detune',
+  modeld: ['tune', 'glide', 'glideOn', 'modMix', 'modAmount', 'oscMod', 'filterMod', 'osc1Range', 'osc1Wave', 'osc2Range', 'osc2Wave', 'osc2Detune',
            'osc3Range', 'osc3Wave', 'osc3Detune', 'osc3Keys', 'mixOsc1', 'mixOsc2', 'mixOsc3', 'mixNoise', 'noiseType', 'mixFeedback',
            'cutoff', 'emphasis', 'contour', 'keyTrack1', 'keyTrack2', 'fAttack', 'fDecay', 'fSustain', 'attack', 'decay', 'sustain',
            'decaySwitch', 'level']
@@ -129,6 +129,15 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
     ok(['pitch', 'gate', 'trig', 'slide', 'vel'].every(function (k) { return desc.indexOf(k) >= 0; }), t + ' processor has the event params pitch, gate, trig, slide, vel');
   });
   ok(C.spec('tb303').cutoff.min === 314 && C.spec('tb303').cutoff.max === 2394 && C.spec('tb303').decay.unit === 'ms' && C.spec('tb303').slideTime.value === 60, '303 ranges from P1 (cutoff 314-2394 Hz, decay ms, slide 60 ms)');
+  var V = function (n, v) { return C.values('modeld', n, v); };
+  ok(near(V('cutoff', 0)[0][1], 680 * 1.578, 0.01) && near(V('cutoff', -3)[0][1], 70 * 1.578, 0.01) && near(V('cutoff', 5)[0][1], 19000 * 1.578, 0.1) && near(V('cutoff', 0.5)[0][1], Math.sqrt(680 * 1485) * 1.578, 0.01), 'Model D cutoff marks map to the CA-72 corners (x 1.578, the singing ratio), log-linear between marks');
+  ok(near(V('emphasis', 8)[0][1], 4.1, 1e-9) && near(V('emphasis', 5)[0][1], 2.05, 1e-9) && V('emphasis', 0)[0][1] === 0, 'emphasis marks map to k (mark 8 = 4.1, the onset)');
+  ok(V('mixOsc1', 10)[0][1] === 1 && near(20 * Math.log10(V('mixOsc1', 4)[0][1]), -9.42, 1e-6) && V('mixOsc1', 0)[0][1] === 0, 'mixer volume law (0 dB at 10, -9.42 dB at 4, silent at 0)');
+  ok(near(V('contour', 10)[0][1], 9.7, 1e-9) && near(V('contour', 5)[0][1], 9.7 * 0.489, 1e-9), 'contour amount in octaves (9.7 at 10)');
+  var gl = V('glide', 5);
+  ok(gl.length === 2 && gl[0][0] === 'glide' && near(gl[0][1], 29, 1e-6) && gl[1][0] === 'glideDown' && near(gl[1][1], 13, 1e-6), 'glide mark 5 = 29 oct/s up, 13 down');
+  var la = V('attack', 6)[0][1], R = 9.3 / 5.28;
+  ok(near(la * Math.log((R - 0.1) / (R - 0.9)), 0.457, 1e-6) && near(V('decay', 8.5)[0][1] * Math.log(1.8), 4.02, 1e-6) && near(V('sustain', 5)[0][1], Math.pow(0.5, 1.5), 1e-9), 'contour time laws: loudness attack 457 ms (10-90 %) at 6, decay 4.02 s (90-50 %) at 8.5, sustain (v/10)^1.5');
   ok(C.numeric('modeld', 'osc1Range', '8') === 3 && C.numeric('modeld', 'osc3Wave', 'revsaw') === 1 && C.numeric('modeld', 'osc1Wave', 'bogus') === 2 && C.numeric('tb303', 'wave', 'square') === 1, 'enumerations map to the processor indexes; unknown strings fall back to the default');
 
   // ------------------------------------------------------------------ 2. no AudioContext
@@ -303,9 +312,9 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
   ok(b1.every(isFinite) && peakOf(b1, 2205, 17000) > 0.05 && same2, 'modeld processor sounds, finite, identical on two runs (noise from a seeded generator)');
   var b3 = run('hvt-modeld', 0.6, mv, { decaySwitch: 0 });
   ok(peakOf(b3, 18500, 26460) < peakOf(b3, 2205, 17000) * 0.01 && peakOf(b1, 18500, 26460) > peakOf(b1, 2205, 17000) * 0.05, 'modeld: release 4 ms with the decay switch off, the decay time with it on');
-  var s1 = run('hvt-modeld', 1.2, { trig: [[0.05, 1]], gate: [[0.05, 1]] }, { mixOsc1: 0, mixOsc2: 0, mixOsc3: 0, emphasis: 1, cutoff: 440, contour: 0, keyTrack1: 0, sustain: 1 });
-  var s0 = run('hvt-modeld', 1.2, { trig: [[0.05, 1]], gate: [[0.05, 1]] }, { mixOsc1: 0, mixOsc2: 0, mixOsc3: 0, emphasis: 0.9, cutoff: 440, contour: 0, keyTrack1: 0, sustain: 1 });
-  ok(peakOf(s1, 40000, 52000) > 0.05 && peakOf(s0, 40000, 52000) < 1e-4, 'the Model D ladder sings at emphasis 1 with no source and is quiet at 0.9');
+  var s1 = run('hvt-modeld', 1.2, { trig: [[0.05, 1]], gate: [[0.05, 1]] }, { mixOsc1: 0, mixOsc2: 0, mixOsc3: 0, emphasis: 4.1, cutoff: 440, contour: 0, keyTrack1: 0, sustain: 1 });
+  var s0 = run('hvt-modeld', 1.2, { trig: [[0.05, 1]], gate: [[0.05, 1]] }, { mixOsc1: 0, mixOsc2: 0, mixOsc3: 0, emphasis: 2.9, cutoff: 440, contour: 0, keyTrack1: 0, sustain: 1 });
+  ok(peakOf(s1, 40000, 52000) > 0.05 && peakOf(s0, 40000, 52000) < 1e-4, 'the Model D ladder sings at k 4.1 (mark 8) with no source and is quiet at k 2.9 (mark 7)');
   var sl = run('hvt-tb303', 0.5, { trig: [[0.05, 1], [0.175, 2]], gate: [[0.05, 1], [0.4, 0]], slide: [[0.175, 1]], pitch: [[0, 36], [0.175, 48]] }, { cutoff: 2394, envMod: 0 });
   ok(sl.proc.freq > 130 && sl.proc.freq < 131.7, 'tb303 processor glides to the slid note (' + sl.proc.freq.toFixed(2) + ' Hz)');
   var x = run('hvt-tb303', 0.05, {}); x.proc.port.onmessage({ data: 'stop' });

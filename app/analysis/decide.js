@@ -36,7 +36,7 @@
       // this engine's Drums do (drums.js noiseBuf, a 2 s seeded buffer started at offset 0), and every one of their noise
       // voices read twin 1.00. Analogue noise never repeats, so "not analogue noise" stays certain; "a sample" is not.
       var rrBand = id.bands.filter(function (b) { return b.shareDb > T.bandShare && b.pairs === b.pairs && b.pairs < 0.9 && b.twin >= T.same; });
-      if (noisy && rrBand.length) return out('sample', 'high', 0.95, ev.concat(['noise content replays identically, and from a small set of different recordings (pairs ' + f2(rrBand[0].pairs) + ', twin ' + f2(rrBand[0].twin) + ' in ' + rrBand[0].lo + '-' + rrBand[0].hi + ' Hz): round robins or velocity layers']), [{ value: 'synth', p: 0.05 }]);
+      if (noisy && rrBand.length) return out('sample', 'high', 0.95, ev.concat(['noise content replays identically, and from a small set of different recordings (pairs ' + f2(rrBand[0].pairs) + ', twin ' + f2(rrBand[0].twin) + ' in ' + rrBand[0].lo + '-' + rrBand[0].hi + ' Hz): round robins, velocity layers or transposition']), [{ value: 'synth', p: 0.05 }]);
       if (noisy) return out('sample', 'medium', 0.85, ev.concat(['noise content (3-16 kHz flatness ' + f2(id.hfFlatness) + ') replays identically: a recording, or a digital voice restarting one noise table each hit; not free-running analogue noise']), [{ value: 'synth (digital, frozen noise)', p: 0.15 }]);
       var support = [];
       // L2: the formant score is features.formantSlope's alignment ratio. Above 0.9 the harmonic profile and its time
