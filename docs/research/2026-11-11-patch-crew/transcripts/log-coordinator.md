@@ -71,3 +71,7 @@ Rulings: (1) HT-Demucs is the default separator and MDX-Net the fallback, revers
 L2's finding in drums.js, fixed by the coordinator (A12 is not running): every hit started the shared seeded noise buffer at offset 0, so the eleven noise voices replayed identically, which no real machine does and which reads as a sample to the analysis. v.noise now starts each hit of an instrument at a different offset (hit count times 0.382 s, modulo 1.9 s; the first hit at 0), so a render is still the same twice. drums-check 342.
 
 Scorer: three accent rows (ch808, oh808, cy808) had a target of exactly 2.0 and a lower bound of 2.0, so a reading of 1.9999 failed and the total moved between 83 and 86 from run to run. Lower bound set to 1.98 (coordinator's edit in A9's file). Two consecutive runs now read PASS 86, FAIL 19. The clap rows were tuned to the first hit's noise, which is unchanged.
+
+## 2026-11-11 13:46 EST (18:46 UTC) — Remove track covers drum and synth tracks (coordinator's edit in system-editor.js)
+
+"Remove track" acted only on sampler tracks, so a drum voice or classic synth added from the "+ track" menu could be taken out only by undo. isRemovable(name) now also accepts tracks whose type is a Drums or Classics type; the song's built-in tracks stay protected. system-editor-check OK: 97 (no new rows). In the app page in Chromium: add HVT-303 from the menu, the menu then offers Remove track "tb303", it removes it (13 tracks again), and the Undo button brings it back; no page errors.

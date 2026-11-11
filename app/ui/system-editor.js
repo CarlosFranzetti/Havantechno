@@ -489,7 +489,7 @@
 
       on(row, 'click', function () { select(name); });
       on(row, 'contextmenu', function (e) {      // a sampler row: "Remove track"
-        if (!isSampler(name)) return;
+        if (!isRemovable(name)) return;
         if (e && e.preventDefault) e.preventDefault();
         select(name);
         openMenu([{ label: 'Remove track \u201c' + name + '\u201d', run: function () { removeSampler(name); } }], (e && e.clientX) || 0, (e && e.clientY) || 0, null);
@@ -843,8 +843,14 @@
       }, function (err) { setStatus('Could not pick a file: ' + ((err && err.message) || err)); });
     }
     function isSampler(name) { return !!S.doc && isSamplerTrack(findTrack(S.doc, name)); }
+    // tracks the "+ track" menu can add (sampler, drum-machine voices, classic synths) can also be removed from it
+    function isRemovable(name) {
+      if (isSampler(name)) return true;
+      var t = S.doc ? findTrack(S.doc, name) : null, ty = t && (t.type || t.inst);
+      return !!ty && (drumTypes().indexOf(ty) >= 0 || classicTypes().indexOf(ty) >= 0);
+    }
     function removeSampler(name) {
-      if (!isSampler(name)) return false;
+      if (!isRemovable(name)) return false;
       var ed = host.editor();
       if (!ed || !isFn(ed.removeTrack)) return false;
       var run = function (e) { return e.removeTrack(name); };
@@ -898,7 +904,7 @@
         { label: 'Drum voice\u2026', disabled: !drumTypes().length, keepOpen: true }
       ].concat(classicMenuItems()).concat([
         { label: 'Import SFZ\u2026', run: function () { pickProgramSource({ accept: '.sfz,audio/*,' + ['wav', 'mp3', 'ogg', 'flac', 'aif', 'aiff'].map(function (e) { return '.' + e; }).join(',') }); } },
-        { label: sel && isSampler(sel) ? 'Remove track \u201c' + sel + '\u201d' : 'Remove track (select a sampler row)', disabled: !(sel && isSampler(sel)), run: function () { removeSampler(sel); } }
+        { label: sel && isRemovable(sel) ? 'Remove track \u201c' + sel + '\u201d' : 'Remove track (select a sampler, drum or synth row)', disabled: !(sel && isRemovable(sel)), run: function () { removeSampler(sel); } }
       ]);
     }
     function buildTrackHeader() {
