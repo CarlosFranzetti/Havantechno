@@ -1205,6 +1205,38 @@
     };
   }
 
+  // a keyboard strip that auditions the window's track through host.audition(track, {midi, vel, dur}) when the host has it
+  // (Shift plays a major triad on a poly). Returns the group; without the hook the keys are drawn inert and aria-hidden.
+  function keyboard(P, parent, o) {
+    var host = P.host, aud = typeof host.audition === 'function', WHITE = [0, 2, 4, 5, 7, 9, 11], m, wi = 0, nw = 0, blk = [];
+    for (m = o.lo; m <= o.hi; m++) if (WHITE.indexOf(m % 12) >= 0) nw++;
+    var ww = o.w / nw, kb = P.g(parent, { 'class': 'pn-keys', role: aud ? 'group' : null, 'aria-label': aud ? 'Audition keyboard' : null, 'aria-hidden': aud ? null : 'true' });
+    function bind(r, mm, fill) {
+      r.setAttribute('data-midi', mm);
+      if (!aud) return;
+      r.setAttribute('role', 'button'); r.setAttribute('aria-label', 'Play ' + noteName(mm)); r.setAttribute('cursor', 'pointer');
+      P.listen(r, 'pointerdown', function (e) {
+        var notes = (o.chord && e && e.shiftKey) ? [mm, mm + 4, mm + 7] : [mm], okAll = true;
+        notes.forEach(function (n) { var ok = safe(function () { return host.audition(P.device.track, { midi: n, vel: 0.85, dur: o.dur || 0.4 }); }, false); okAll = okAll && !!ok; });
+        P.state.lastAudition = { midi: notes, ok: okAll };
+        r.setAttribute('fill', '#f09a5c');
+      });
+      var up = function () { r.setAttribute('fill', fill); };
+      P.listen(r, 'pointerup', up); P.listen(r, 'pointerleave', up);
+    }
+    for (m = o.lo; m <= o.hi; m++) {
+      if (WHITE.indexOf(m % 12) >= 0) {
+        var r = P.el('rect', { x: f2(o.x + wi * ww), y: o.y, width: f2(ww - 1.5), height: o.h, rx: 2, fill: o.white || '#ece8dc', stroke: '#222' }, kb);
+        bind(r, m, o.white || '#ece8dc'); wi++;
+      } else blk.push([m, o.x + wi * ww - ww * 0.3]);
+    }
+    blk.forEach(function (b) {
+      var r = P.el('rect', { x: f2(b[1]), y: o.y, width: f2(ww * 0.6), height: o.h * 0.62, rx: 2, fill: o.black || '#151515', stroke: '#000' }, kb);
+      bind(r, b[0], o.black || '#151515');
+    });
+    return kb;
+  }
+
   // ------------------------------------------------------------------ HVT-303
   var C303 = { cheek: '#121212', panel: '#c7cace', panelLo: '#b4b7bc', ink: '#161616', orange: '#e8671a', led: '#ff4a1a', ledOff: '#55301c',
     key: '#2a2a2c', keyInk: '#ecebe6', white: '#e9e9e4', black: '#1c1c1e', btn: '#3a3a3d' };
@@ -1456,24 +1488,7 @@
           sv('rect', { x: -11, y: f2(-42 + 84 * (1 - pos) - 2), width: 22, height: 4, fill: '#e8e3d0' }, c.ridges);
         } });
       P.text(svg, 152, 592, 'MOD', { fill: C.ink, 'font-size': 8, 'font-weight': 700 });
-      var aud = typeof host.audition === 'function';
-      var kx0 = 200, kx1 = 1330, whitesN = 26, ww = (kx1 - kx0) / whitesN, kb = P.g(svg, { 'class': 'pn-keys', 'aria-hidden': aud ? 'false' : 'true' });
-      var WHITE = [0, 2, 4, 5, 7, 9, 11], m = 41, wi = 0, blacksD = [];
-      for (; m <= 84; m++) {
-        var pc = m % 12, isW = WHITE.indexOf(pc) >= 0;
-        if (isW) {
-          (function (mm, x) {
-            var r = P.el('rect', { x: f2(x), y: 512, width: f2(ww - 1.5), height: 180, rx: 2, fill: '#ece8dc', stroke: '#222' }, kb);
-            if (aud) P.listen(r, 'pointerdown', function () { safe(function () { host.audition(P.device.track, { midi: mm, vel: 0.85, dur: 0.3 }); }); });
-          })(m, kx0 + wi * ww);
-          wi++;
-        } else blacksD.push([m, kx0 + wi * ww - ww * 0.3]);
-      }
-      blacksD.forEach(function (bk) {
-        var r = P.el('rect', { x: f2(bk[1]), y: 512, width: f2(ww * 0.6), height: 112, rx: 2, fill: '#151515', stroke: '#000' }, kb);
-        if (aud) P.listen(r, 'pointerdown', function () { safe(function () { host.audition(P.device.track, { midi: bk[0], vel: 0.85, dur: 0.3 }); }); });
-      });
-      if (!aud) kb.setAttribute('opacity', '0.92');
+      keyboard(P, svg, { x: 200, y: 512, w: 1130, h: 180, lo: 41, hi: 84, dur: 0.4 });
       return {};
     }
   });
@@ -1482,11 +1497,13 @@
   var CJ = { body: '#29292b', strip: '#d9d6cc', ink: '#ecebe6', dark: '#151515', blue: '#3b7bd6', orange: '#e8781e', yellow: '#e2c21c', red: '#d63a2c', green: '#3aa35b',
     teal: '#2aa7a0', purple: '#8f62c8', btn: '#c9c7c0' };
   Panels.define('hvt106', {
-    label: 'HVT-106 polyphonic synthesizer', size: { w: 1600, h: 470 }, win: { w: 1200 },
+    label: 'HVT-106 polyphonic synthesizer', size: { w: 1600, h: 580 }, win: { w: 1200 },
     match: function (d) { return d.kind === 'instrument' && d.type === 'juno'; },
     build: function (P) {
       var svg = P.svg, C = CJ;
-      P.el('rect', { x: 0, y: 0, width: 1600, height: 470, rx: 10, fill: '#111' }, svg);
+      P.el('rect', { x: 0, y: 0, width: 1600, height: 580, rx: 10, fill: '#111' }, svg);
+      P.el('rect', { x: 10, y: 466, width: 1580, height: 106, rx: 4, fill: '#0b0b0c' }, svg);
+      keyboard(P, svg, { x: 20, y: 472, w: 1560, h: 96, lo: 36, hi: 84, chord: true, dur: 0.6 });
       P.el('rect', { x: 10, y: 10, width: 1580, height: 368, rx: 4, fill: C.body }, svg);
       P.el('rect', { x: 10, y: 386, width: 1580, height: 74, rx: 4, fill: '#1c1c1e' }, svg);
       P.text(svg, 40, 434, 'HAVANTECHNO', { 'text-anchor': 'start', fill: '#ff5fa2', 'font-size': 22, 'font-weight': 800, 'letter-spacing': 4 });
@@ -1506,7 +1523,12 @@
       // performance
       section(10, 250, 'CONTROL', C.purple);
       P.knob(svg, { x: 60, y: 110, r: 20, param: 'tune', label: 'tune', caption: 'TUNE', captionY: -34, captionSize: 9.5, style: { skirt: '#111', cap: '#3a3a3c', pointer: '#fff', ticks: 11, tick: '#8a8a8a', label: C.ink } });
-      F(130, 'bend', 'BEND'); F(190, 'portamento', 'PORTA');
+      var bendF = F(130, 'bend', 'BEND'); F(190, 'portamento', 'PORTA');
+      if (bendF) {                     // stored in the song, not used by the engine yet: drawn dimmed, and says so
+        bendF.g.setAttribute('opacity', '0.45'); bendF.g.setAttribute('data-inactive', 'true');
+        var tt = P.el('title', null, bendF.g); tt.textContent = 'Bend range: stored with the song, but the engine does not use it yet';
+        bendF.g.setAttribute('aria-description', 'inactive: stored, not used by the engine yet');
+      }
       radio(36, 196, 'voiceMode', ['poly', 'unison'], { poly: 'POLY', poly1: 'POLY 1', poly2: 'POLY 2', unison: 'UNI' }, { gap: 18 });
       // LFO
       section(250, 380, 'LFO', C.blue);

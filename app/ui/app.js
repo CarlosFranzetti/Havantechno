@@ -204,6 +204,7 @@
       commit: function () { return host.commit(); },
       transportToggle: function () { return host.transport.toggle(); },
       transportStop: function () { return host.transport.stop(); },
+      audition: function (t, o) { return typeof host.audition === 'function' ? host.audition(t, o) : false; },
       playing: function () { return !!host.transport.playing; },
       on: function (type, fn) { return host.on(type, fn); },
       off: function (type, fn) { return host.off(type, fn); },
@@ -709,7 +710,7 @@
 
     var subs = [];
     var h = {};
-    ['setParam', 'getParam', 'hold', 'release', 'releaseAll', 'heldCount', 'isHeld', 'device', 'devices', 'meter', 'sections', 'tracks', 'sends', 'bpm', 'swing', 'totalBars', 'mute', 'solo', 'bypass', 'isBypassed', 'audio', 'loadAudio', 'document', 'editor', 'commit'].forEach(function (n) {
+    ['setParam', 'getParam', 'hold', 'release', 'releaseAll', 'heldCount', 'isHeld', 'device', 'devices', 'meter', 'sections', 'tracks', 'sends', 'bpm', 'swing', 'totalBars', 'mute', 'solo', 'bypass', 'isBypassed', 'audio', 'loadAudio', 'document', 'editor', 'commit', 'audition'].forEach(function (n) {
       if (typeof bridge[n] === 'function') h[n] = function () { return bridge[n].apply(bridge, arguments); };
     });
     h.on = function (type, fn) { subs.push([type, fn]); bridge.on(type, fn); return h; };

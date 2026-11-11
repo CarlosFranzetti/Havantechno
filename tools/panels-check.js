@@ -393,6 +393,19 @@ var rD2 = P.render(Object.assign({}, dD, { spec: spec2, id: 'track:renamed' }), 
 var have2 = controlsOf(rD2);
 ok(!have2.cutoff && !have2.freq, 'a spec without cutoff draws no cutoff knob, and the new row has no control (so everyRow would fail)');
 rD2.dispose();
+var dAud = [];
+var hostA = Object.create(host); hostA.audition = function (t, o) { dAud.push([t, o.midi]); return true; };
+var rDa = P.render(dD, hostA);
+var dk = rDa.el.find(function (n) { return n.attrs['data-midi'] != null; });
+ok(dk.length === 44 && dk.some(function (k) { return k.attrs['data-midi'] === '41'; }) && dk.some(function (k) { return k.attrs['data-midi'] === '84'; }), 'HVT-D keyboard: 44 keys from F (MIDI 41)');
+var k46 = dk.filter(function (k) { return k.attrs['data-midi'] === '46'; })[0];
+k46.fire('pointerdown', { shiftKey: true }); k46.fire('pointerup', {});
+ok(dAud.length === 1 && dAud[0][0] === 'modeld' && dAud[0][1] === 46, 'HVT-D key auditions one note on the modeld track (mono: no chord)');
+rDa.dispose();
+var rDn = P.render(dD, host);
+var kbN = rDn.el.find(function (n) { return n.className === 'pn-keys' || n.attrs['class'] === 'pn-keys'; })[0];
+ok(kbN && (typeof host.audition === 'function' ? kbN.attrs.role === 'group' : kbN.attrs['aria-hidden'] === 'true'), 'the keyboard is a live group only when the host can audition');
+rDn.dispose();
 
 // ---- HVT-106 on a stub spec (P3's table; names from BRIEF.md)
 var JUNO = {
@@ -406,6 +419,11 @@ var JUNO = {
 var jv = {}, jh = { hold: [], set: [] };
 var jhost = { getParam: function (p) { return jv[p]; }, setParam: function (p, v) { jv[p] = v; jh.set.push([p, v]); }, hold: function (p) { jh.hold.push(p); },
   devices: function () { return [jdev]; }, device: function () { return jdev; }, sections: function () { return []; }, transport: { pos: function () { return { step: 0 }; }, playing: false }, on: function () {}, off: function () {} };
+var realJuno = CL && CL.has && CL.has('juno') ? CL.spec('juno') : null;
+if (realJuno) JUNO = realJuno;                      // the engine's spec; the stub stays only for a context without the juno engine
+console.log('  (HVT-106 checked against ' + (realJuno ? 'Classics.spec(juno), ' + Object.keys(JUNO).length + ' rows' : 'the stub from P3') + ')');
+var auditions = [];
+jhost.audition = function (t, o) { auditions.push([t, o.midi]); return true; };
 var jdev = { id: 'track:juno', type: 'juno', kind: 'instrument', track: 'juno', name: 'juno', family: 'keys', pathPrefix: 'juno', spec: JUNO };
 ok(P.for(jdev, jhost) === 'hvt106', 'juno opens HVT-106');
 var rJ = P.render(jdev, jhost);
@@ -422,6 +440,13 @@ ok(jv['juno.pulse'] === true && pulse.attrs['aria-checked'] === 'true', 'the pul
 var hpf = ctl(rJ, 'hpf');
 hpf.fire('pointerdown', { button: 0, clientY: 300 }); hpf.fire('pointermove', { clientY: 230 }); hpf.fire('pointerup', {});
 ok(jv['juno.hpf'] === Math.round(jv['juno.hpf']) && jv['juno.hpf'] > 1, 'the HPF fader snaps to whole positions (' + jv['juno.hpf'] + ')');
+var bendC = ctl(rJ, 'bend');
+ok(bendC && bendC.attrs['data-inactive'] === 'true' && bendC.attrs.opacity === '0.45' && bendC.find(function (n) { return n.tagName === 'TITLE' && /does not use it/.test(n.textContent); }).length === 1, 'bend is drawn dimmed with a title saying it is inactive');
+var jkeys = rJ.el.find(function (n) { return n.attrs['data-midi'] != null; });
+ok(jkeys.length === 49 && jkeys.every(function (k) { return k.attrs.role === 'button'; }), 'HVT-106 audition strip: 49 keys (C2..C6), buttons when the host has audition');
+var c3 = jkeys.filter(function (k) { return k.attrs['data-midi'] === '48'; })[0];
+c3.fire('pointerdown', { shiftKey: true }); c3.fire('pointerup', {});
+ok(auditions.length === 3 && auditions.map(function (a) { return a[1]; }).join() === '48,52,55' && auditions[0][0] === 'juno' && rJ.kit.state.lastAudition.ok, 'Shift-click on C3 auditions a C major triad on the juno track');
 var LJ = LIVE.n; rJ.dispose();
 ok(rJ.listenerCount() === 0 && listenersUnder(rJ.el) === 0 && LIVE.n < LJ, 'HVT-106 dispose removes its listeners');
 

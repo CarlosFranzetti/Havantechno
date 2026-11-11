@@ -37,7 +37,9 @@
       // voices read twin 1.00. Analogue noise never repeats, so "not analogue noise" stays certain; "a sample" is not.
       var rrBand = id.bands.filter(function (b) { return b.shareDb > T.bandShare && b.pairs === b.pairs && b.pairs < 0.9 && b.twin >= T.same; });
       if (noisy && rrBand.length) return out('sample', 'high', 0.95, ev.concat(['noise content replays identically, and from a small set of different recordings (pairs ' + f2(rrBand[0].pairs) + ', twin ' + f2(rrBand[0].twin) + ' in ' + rrBand[0].lo + '-' + rrBand[0].hi + ' Hz): round robins, velocity layers or transposition']), [{ value: 'synth', p: 0.05 }]);
-      if (noisy) return out('sample', 'medium', 0.85, ev.concat(['noise content (3-16 kHz flatness ' + f2(id.hfFlatness) + ') replays identically: a recording, or a digital voice restarting one noise table each hit; not free-running analogue noise']), [{ value: 'synth (digital, frozen noise)', p: 0.15 }]);
+      // back to high after the coordinator's drums.js fix (per-hit noise offset, 2026-11-11): in the truth set only the
+      // sampler now replays noise identically. The caveat stays in the evidence for other digital machines.
+      if (noisy) return out('sample', 'high', 0.9, ev.concat(['noise content (3-16 kHz flatness ' + f2(id.hfFlatness) + ') replays identically: a recording (a digital voice that restarts one noise table at every hit would read the same)']), [{ value: 'synth (digital, frozen noise)', p: 0.1 }]);
       var support = [];
       // L2: the formant score is features.formantSlope's alignment ratio. Above 0.9 the harmonic profile and its time
       // course both scale with pitch, as a transposed recording's do; an FM synth's profile also scales but its
@@ -49,6 +51,11 @@
       return out('sample', 'low', 0.55, ev.concat(['identical replays with no noise content: a sample or a deterministic one-shot synth (capped)']), [{ value: 'synth', p: 0.45 }]);
     }
     if (tw < 0.6) return out('synth', 'medium', 0.8, ev.concat(['hits differ but no band carries clear fresh noise']), [{ value: 'sample', p: 0.2 }]);
+    // L2: the residual after the best scaled, aligned twin. Replays (any sampler) leave -30 dB or less, deterministic
+    // synthesis -19 to -46 dB, free-running oscillators and fresh noise -2 to -7 dB (truth set, 2026-11-11: Drums noise
+    // voices after the per-hit noise offset, juno, modeld). A sampler with sample-start or filter modulation would also
+    // leave a large residual, so this is medium, not high.
+    if (id.residualDb === id.residualDb && id.residualDb > -10) return out('synth', 'medium', 0.8, ev.concat(['no hit has a close replay (residual ' + id.residualDb.toFixed(1) + ' dB after the best aligned, scaled twin): free-running oscillators or fresh noise; a sampler with per-hit modulation would read the same']), [{ value: 'sample', p: 0.2 }]);
     return out('undecided', 'low', 0.5, ev.concat(['partial similarity: modulation, velocity layers or effects']), [{ value: 'synth', p: 0.5 }, { value: 'sample', p: 0.5 }]);
   }
 

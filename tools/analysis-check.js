@@ -31,7 +31,7 @@ var HIT = Math.round(0.2 * SR);
 var fixedNoise = decayNoise(HIT, 0.04), rr = [decayNoise(HIT, 0.04), decayNoise(HIT, 0.04), decayNoise(HIT, 0.04)], tone = sweptSine(HIT);
 var cases = [
   ['fresh noise each hit', track(function () { return decayNoise(HIT, 0.04); }, 32, 0.25), 'synth', 'high'],
-  ['one noise hit replayed (a sampled hat, or a restarted noise table)', track(function () { return fixedNoise; }, 32, 0.25), 'sample', 'medium'],
+  ['one noise hit replayed (a sampled hat)', track(function () { return fixedNoise; }, 32, 0.25), 'sample', 'high'],
   ['three round-robin noise hits', track(function (k) { return rr[k % 3]; }, 32, 0.25), 'sample', 'high'],
   ['noise hit transposed by a sampler', track(function (k) { return D.resample(fixedNoise, [1, 1.1225, 0.8409, 1.3348][k % 4]); }, 32, 0.25), 'sample', 'high'],
   ['deterministic swept sine (synth kick, no noise): capped', track(function () { return tone; }, 32, 0.25), 'sample', 'low']
