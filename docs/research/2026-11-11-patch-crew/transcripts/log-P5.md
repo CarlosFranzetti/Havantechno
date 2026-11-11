@@ -136,3 +136,63 @@ Chromium (Playwright, headless, served by tools/serve.js; scripts in the scratch
 ## 7. Output level fix (coordinator, after verification)
 
 The default levels were too hot (coordinator's render: modeld eighth-note bass at defaults peaked 1.42; a tb303 line at resonance 0.8, envMod 0.7, accent 0.7 with six accents peaked 1.30). Changed the internal output gains in the processor, not the `level` rows: tb303 `T303.outGain` 0.5 -> 0.3, modeld `MD.outGain` 1 -> 0.56. Chromium, instrument output at level 1: tb303 hot line 0.846, tb303 defaults with the same six accents 0.753, modeld default eighth-note bass 0.846 (RMS 0.254). New classics-check rows run the processors on those two patterns and fail above 0.9 (or under 0.5): classics-check 82, exit 0. The demo WAVs in tools/out/ were rendered before this change.
+
+## 8. juno (six voices, one processor)
+
+Built to P3-juno.md (sections 1 to 11) and the settled names in BRIEF.md. Nothing from Junox is ported as code. Its numbers are used, cited by file and line through P3: `junox.js` 239-252 (mix gains 0.2 / 0.2 / 0.195 / 0.21, compression above 0.26), 273, 284-306 (LFO rate and delay tables, HPF), `voice.js` 126 (5 kHz noise), 168-170 (PWM by LFO and env), 180-192 (cutoff law 7.8 Hz x 2^(200 s/12), envelope 12 oct, the +0.5 s oct resonance offset), 209 (key follow), `dco.js` 45 (duty 0.5 - 0.45 w), `chorus.js` 133-135 (7237 / 10644 Hz), 232-238 (dry 0.44, wet 0.56), `juno60Envelope.js` 5-7 and 214 (tables, 10 ms release at low sustain). Licence: GPL-3.0-or-later (package.json). The measured tables come from pendragon-andyh/Juno60 (MIT). Both have rows in THIRD_PARTY.md.
+
+Design:
+- `hvt-juno` holds six voices. The per-voice params are pitchN, gateN, trigN and glideN. The knobs are k-rate, except cutoff, resonance and envAmt, which are a-rate. The node has a stereo output.
+- Each voice: a free-running PolyBLEP DCO at fixed start phases. The phases were chosen so a unison sum is near sqrt(6) per harmonic; equal spacing cancelled the fundamental.
+  - Saw and pulse (PWM duty 0.5 - 0.45 w).
+  - Sub one octave down through a 4.2 kHz RC.
+  - Shared 5 kHz noise.
+  - The Junox mix compression.
+  - A 4-pole TPT (zero-delay) ladder at 1x with one Pade tanh at the loop input. k = 4.08 s, a thermal seed so it can sing.
+  - The Juno-60 ADSR: attack RC toward 1/0.632 cut at 1; decay and release RCs with tau = time / 3.5. Gate mode: 3 ms / 6 ms.
+- Shared: the triangle LFO (rate table; delay then a linear fade; the delay restarts on the first note after silence when lfoAuto, on every note otherwise), the HPF (0: +6 dB shelf under 65 Hz, 1: flat, 2: 225 Hz, 3: 720 Hz, first order) and the chorus stage. The chorus is one triangle LFO (0.513 or 0.863 Hz) driving two lines swept 1.66 to 5.35 ms in antiphase, with the Junox pre and post low-passes, dry 0.44 and wet 0.56. Optional hiss (chorusNoise) is panned by the sweep and is seeded, so it is deterministic too.
+- Allocation (main thread): poly takes the free voice released longest ago, else steals the oldest held one, cancelling its pending gate-off. `ev.notes` takes one voice per note. A note after an `ev.slide` reuses that voice and glides (tau at least 60 ms, prior). Portamento glides each voice from its own last pitch, tau s^3 x 3 s (KR-106). Unison puts all six voices on the note, each at 0.6 (prior: louder than one voice).
+- Velocity is ignored, as on the instrument. `bend` is stored but the engine has no bend input. `voiceMode` is 'poly' | 'unison' per the brief (P3's poly1 / poly2 are not separate).
+- The FALLBACK uses one native voice per note in its slot (a stolen slot is cut), two biquads, mono, no chorus.
+- Spec: 29 rows, every row with min, max, value, unit, basis and label. Switches are booleans with min 0 and max 1; range and chorus are numbers with `options`. P3's prior marks are carried (tune).
+- Panel: I ran panels-check with its HVT-106 stub replaced by `Classics.spec('juno')` (a scratchpad copy): 110 checks pass, exit 0. Every name matches; none was renamed.
+
+Checks:
+- `node tools/classics-check.js`: 110 checks (was 82; juno spec and name list, mapping tables, no-context API, fallback allocation and stealing, stub-node allocation, stealing with the cancelled gate, slide reuse, portamento tau, unison, locks, panic, processor determinism and stereo chorus, hiss), exit 0.
+- `app/engine/selfcheck.js` 395, panels 110, synths 169, drums 342, faces 2495, system-editor 97, processors 92, step-view 72, widgets 157, analysis 39 (another crew's file, changed under it): all exit 0. `node tools/browser-check.js`: PASS 26, exit 0.
+
+Chromium (worklet path, 44.1 kHz, stereo OfflineAudioContext; scratchpad `p5/pw/mju.js`, `mjh.js`):
+- Pitch on six voices (notes 45..65 played in turn): -0.01 / 0.11 / -0.10 / 0.10 / 0.07 / 0.29 ct.
+- Chorus, held A3:
+
+  | Chorus | L/R correlation | Mono-sum pitch | Mono-sum level re left |
+  |---|---|---|---|
+  | off | 1.000 | 220.01 Hz | 0 dB |
+  | I | 0.347 | 219.99 Hz | -2.1 dB |
+  | II | 0.354 | 220.00 Hz | -1.7 dB |
+
+  The image widens and the pitch of the mono sum does not move.
+- PWM manual: high fraction 50.0 / 27.6 / 5.1 % at pwm 0 / 0.5 / 1 (law: 50 / 27.5 / 5). LFO mode at pwm 1: sweeps 5.0 to 49.4 %.
+- Filter, noise source, resonance 0, cutoff 445 Hz: -9.2 / -26.1 / -47.8 / -72.8 dB at 1 / 2 / 4 / 8 x the cutoff, relative to fc/4; slope -21.7 (2x to 4x) and -25.0 (4x to 8x) dB/oct. At resonance 1 with no source it sings at 1120.7 Hz, exactly the law with the +0.5 oct offset.
+- Envelopes against P3's table:
+  - Attack slider 0.25 / 0.5 / 0.75 reaches 97 % at 27 / 222 / 604 ms. The RC segment ends at 30 / 240 / 650 ms, where 97 % falls at 0.95 x, so 28.5 / 228 / 617 ms predicted.
+  - Decay 0.25 / 0.5 to e^-3.5 in 98 / 986 ms (table 96 / 984).
+  - Release 0.5 in 974 ms (984).
+  - Gate mode: 90 % in 1.4 ms, -40 dB 7.6 ms after the gate.
+- Determinism: two stereo renders of chord changes with stealing, LFO to pitch, PWM and the filter, sub and noise, chorus I, chorusNoise off: 0 of 176400 frames differ.
+- Levels: default patch, four-note chords: peak 0.57 L, 0.55 R. A2 held: one voice RMS 0.041; unison RMS 0.058, peak 0.19.
+- Host path:
+  - A `juno` chord track (chords from the progression, chorus II) and a `juno` melody track in unison with portamento and a slide were added through `editor().addTrack` and played in every section.
+  - `host.render({from 0, to 8})` gave 17.8 s in 4.0 s. The soloed chord track has RMS 0.185 and an L-R difference RMS of 0.209 (stereo chorus).
+  - Family keys, device kind "instrument keys juno". Live engine after `host.start()`: worklet. No page errors.
+- CPU: in Node, four held voices take about 52 ms per second of audio. Voices sleep when released below -100 dB.
+- Demo: `tools/out/classics-demo-juno-chords.wav`, a four-chord progression (Am, F, G, Em voicings, 8 bars at 100 bpm) with a PWM pad on chorus II and a pulse-and-sub bass (-20.1 LUFS, peak -7.8 dBFS). The tb303 and modeld demos were re-rendered at the new levels: -24.3 and -21.5 LUFS.
+
+Not verified:
+- Not listened to by a person. No Juno recording compared.
+- 106-versus-60 conflicts (chorus depth, HPF corners, 400 versus 300 ct vibrato, envelope 12 versus 14 oct, LFO 3.5 versus 3 oct) are resolved as P3 recommends, not measured.
+- The chorus BBD's own low-pass and nonlinearity are not modelled.
+- The filter runs at 1x without oversampling: some aliasing of the tanh at high cutoff and resonance, not measured.
+- Unison detune and per-voice component variance are not built.
+- A full 200-bar render with juno tracks is not timed.
+- The fallback is not measured beyond the Node check.

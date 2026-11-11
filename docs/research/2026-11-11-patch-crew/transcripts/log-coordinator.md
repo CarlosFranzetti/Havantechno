@@ -75,3 +75,15 @@ Scorer: three accent rows (ch808, oh808, cy808) had a target of exactly 2.0 and 
 ## 2026-11-11 13:46 EST (18:46 UTC) — Remove track covers drum and synth tracks (coordinator's edit in system-editor.js)
 
 "Remove track" acted only on sampler tracks, so a drum voice or classic synth added from the "+ track" menu could be taken out only by undo. isRemovable(name) now also accepts tracks whose type is a Drums or Classics type; the song's built-in tracks stay protected. system-editor-check OK: 97 (no new rows). In the app page in Chromium: add HVT-303 from the menu, the menu then offers Remove track "tb303", it removes it (13 tracks again), and the Undo button brings it back; no page errors.
+
+## 2026-11-11 13:51 EST (18:51 UTC) — P5 task 2 verified: default levels and the juno engine
+
+P5's hand-back: internal output gains lowered (tb303 0.5 to 0.3, modeld 1 to 0.56; the level rows unchanged) with two classics-check rows that fail above 0.9; juno built as one stereo worklet processor (hvt-juno) with six voices and the chorus inside it, voice allocation on the main thread, a fallback for fake contexts, 29 spec rows, no Junox code ported (numbers only, cited; THIRD_PARTY rows for Junox and Juno60). P5's files were in the WIP snapshots; only log-P5.md changed since.
+
+Run here, exit codes read directly: classics-check OK: 110; selfcheck 395; panels 110; synths 169; drums 342; faces 2495; system-editor 97; processors 92; step-view 72; widgets 157; analysis 39; browser-check PASS (26).
+
+The coordinator's own Chromium render (scratchpad classicsdemo.js): all three ready on the worklet, no page or console errors. Peaks at the instrument output: the tb303 line 0.78 (was 1.30), the modeld line 0.80 (was 1.42), juno four-note chords 0.66 with chorus off, 0.56 with chorus I, 0.47 with chorus II. Left/right correlation of the juno render: 1.00 chorus off, 0.32 chorus I, 0.34 chorus II. A held A1 on juno reads 55.11 Hz by the coordinator's rough autocorrelation with the default chorus on (the same estimator reads 54.96 and 55.04 on the monos); P5's own figure is 0.3 cents on all six voices with a finer method, not repeated here. P5's PWM, filter-slope, envelope-time and determinism figures were not repeated.
+
+Open, from P5's list: unison has no detune; bend is stored and does nothing; the filter is not oversampled; the chorus has no delay-line noise or filtering; no comparison with a real Juno; a full 200-bar render with juno tracks not timed. P4 asked to switch HVT-106 from its stub to Classics.spec('juno'), open it in a real device window and wire the keyboards to Host.audition.
+
+Render Room republished (version 8): an HVT-106 chord demo, and the 303 and Model D demos re-rendered at the new levels with no extra attenuation.
