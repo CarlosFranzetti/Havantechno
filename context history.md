@@ -165,4 +165,36 @@ Never git stash/checkout/reset/clean in the shared tree (A1 incident, nothing lo
 
 Supply files for the Crate Crew's picks 1 to 5; the TR-808 and TR-909 service-manual PDFs if available; reference 808/909 hits for fitting; listen to V3; GitHub default branch to main; the earlier items stand.
 
+## Dump 6 at 2026-11-11 14:55 EST (2026-11-11 19:55:28 UTC)
+
+Owner updates since Dump 5: "continue" (twice), the three manuals uploaded (TR-808 service notes and owner's manual, TR-909 service notes), "pause", "let's continue and start with adding a 303 and a moog and afterwards a poly synth; I want the plugins to have a floating window with designs modeled after the synths and drum boxes like Arturia and Roland cloud", "run a few sub agents in parallel and orchestrate it", "try again" (after a usage-limit stop). The stop hook asks for a commit whenever agents leave files in the tree; those are committed as WIP snapshots labelled syntax-checked only.
+
+### Repo
+
+`CarlosFranzetti/Havantechno`, branch main, last verified commit at this dump: the Dubplate Crew brief (1566334). AassMaster is not touched. Commit trailers carry no model name.
+
+### Built since Dump 5
+
+- **Drums fitted to the manuals** (A12, two passes) and scored by `tools/drums-score.js`: 86 pass, 19 fail on two consecutive runs. The coordinator made each hit start the noise buffer at a different offset (identical replays read as samples to the analysis) and loosened three accent rows that sat exactly on their bound.
+- **Patch Crew (batch 2b), done.** P1/P2/P3 specs; P5's AudioWorklet engine (`app/engine/worklets.js`, `worklets/classics-processor.js`, `classics.js`: `tb303`, `modeld`, `juno`, a plain-node fallback, `Host.audition`); P4's panel system (`app/ui/panels.js`) with HVT-808, HVT-909, HVT-303, HVT-D, HVT-106, shown first in a device window, edits working in Electron child windows. "+ track" lists the classic synths; Remove track covers drum and synth tracks; the menu sits above windows (coordinator's edits in system-editor.js). Default levels fixed after the coordinator measured peaks of 1.30 and 1.42. `DISCUSSION.md` (25 threads), `REPORT.md`.
+- **Lab Crew (batch 3), done to its first plan.** L2 replaced L1: `app/analysis/` (dsp, features, decide, drumlib, report), `tools/analyze.js`, `tools/analysis-truth.js`, HT-Demucs the default in `tools/separate.py`. `REPORT.md`.
+- **Docs.** THIRD_PARTY.md has real rows; Box Crew report addendum; README section with the five panel screenshots; roadmap status for 11 November; CLAUDE.md current.
+- **Render Room** (https://claude.ai/artifact/D9a1XyaKNManzV714jEUzj) version 8: V3, V2, refitted drum voices, HVT-303 line, HVT-D bass, HVT-106 chords.
+
+### Checks at this dump (coordinator's runs, exit 0 unless noted)
+
+selfcheck 395, classics 110, panels 116, synths 169, drums 342, faces 2495, system-editor 97, processors 92, step-view 72, widgets 157, analysis 47, browser 26, archived studio 161; drums-score exit 1 (86/19).
+
+### In flight
+
+Dubplate Crew (batch 4; `docs/research/2026-11-11-dubplate-crew/BRIEF.md`, frozen interface): D1 engine (doc.reference, host.ab, matchLevel, `app/engine/importer.js`, `Project.importTrack`), D2 interface (`app/ui/import-view.js`, A/B in the transport, reference lane, index.html tags), D3 shell separation and `render.js` labels. Agent ids are in the scratchpad roster.
+
+### Rules added
+
+Rulings given to agents in messages are written into the coordinator's log at the time (the scribe found five that were not). The coordinator re-measures at least pitch, level and engine selection itself before accepting an instrument.
+
+### Open with the owner
+
+Listen to the Render Room (nobody has listened to anything). HVT-D note priority: last-note as built or low-note as on the hardware. Dry recordings or panel photos of a 303, Model D or Juno if available. Files for the Crate Crew's picks. GitHub default branch to main. Earlier items stand.
+
 <!-- next dump goes here -->
