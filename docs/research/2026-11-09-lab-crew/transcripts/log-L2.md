@@ -223,3 +223,218 @@ the stab, so it is skipped there).
 
 Step 3 mono/poly, step 4 FM/subtractive with real `fm` renders, the drum decision with the Drums truth set above,
 step 5 the analyze entry (JSON and table), step 6 the labels spec for A9, and the run on the four reference stems.
+
+## 9. Second session (2026-11-11, from 13:50 EST / 18:50 UTC): coordinator's rulings applied
+
+Rulings received: HT-Demucs default and MDX-Net fallback (already in separate.py as `--model auto`); the truth harness
+moves into the repository as `tools/analysis-truth.js` (mine, writes only to `tools/out/`); THIRD_PARTY.md has the
+separation-model row (coordinator); drums.js now starts each hit's noise at an offset (hit count x 0.382 s modulo 1.9 s);
+add `tb303`, `modeld`, `juno` to the truth set.
+
+### 9.1 `tools/analysis-truth.js`
+
+Grown from the scratchpad harness. It awaits `Worklets.load(ctx)` on every OfflineAudioContext, so the classics run
+their AudioWorklet engines (sidecars say `"engine": "worklet"` for tb303, modeld and juno). Five sets, 257 renders,
+each a float32 WAV plus a `.json` sidecar `{labels, events, secs, peak}` in `tools/out/analysis-truth/<set>/`:
+identity (55), reverb (9), poly (29: chords of 1 to 6 notes on stab, pad, juno and fm; lines on bass, tb303, modeld,
+lead and juno), fm (23: fm over 8 ratio/index pairs with indexEnv 0 and 0.8; bass, lead, stab, pad, tb303, modeld,
+juno), drums (141: all 27 voices at their defaults and three random knob settings, a sampler replay of each, and six
+engine synth drums). `node tools/analysis-truth.js` -> "257 rendered, 0 failed or silent", "page errors: none", exit 0,
+58 s.
+
+### 9.2 Identity after the drums.js noise fix
+
+The 11 Drums noise voices now read **synth, medium** (twin 0.46 to 0.88). That needed a new rule: their twin sits
+between 0.6 and 0.97 (the tonal part still repeats), so the old rules said "undecided". New rule, from the residual
+after the best aligned twin: replays (every sampler job) leave -30 dB or less; deterministic synthesis -19 to -46 dB;
+free-running oscillators and fresh noise -2 to -7 dB (Drums noise voices, juno, modeld). Residual > -10 dB is
+"synth, medium" (medium, because a sampler with per-hit start or filter modulation would read the same).
+
+Identical noise replays went back to **high**: in the truth set only the sampler replays noise identically now. The
+evidence still names the exception (a digital voice restarting one noise table).
+
+`node tools/analyze.js --score identity` -> "PASS identity: 0 confident wrong calls of 55", exit 0. The full table is
+in `l2/score-identity.txt`. Highlights:
+- smp-cp808, smp-sd808 and smp-sd909 read sample/high.
+- smp-fm-pitched and smp-tb303-pitched read sample/medium, lifted by the formant score.
+- juno and modeld read synth (medium or high).
+- tb303 and the other deterministic synths read sample/low (the cap).
+- synp-tb303 reads synth/medium: the formant score is under 0.3 (fixed filter).
+
+### 9.3 Step 3: mono or poly
+
+`features.specPeaks`, `features.multiF0` and `features.polyphony`, plus `decide.monoPoly`.
+
+The method is L1's iterative estimate-and-cancel. 93 ms frames, zero-padded to 16384, are taken every 46 ms over the
+sounding part (at most 160 frames). Changes from L1, each measured on the poly set:
+- stop at 25 % of the first salience, not 12 % (12 % over-counted every chord: 3 of 29 exact counts);
+- 93 ms frames, not 186 ms (17 against 21 of 29 exact counts);
+- count pitch classes, not F0s, so a sub-octave oscillator or octave layer is one voice (the engine's bass has a sub
+  oscillator and read 2 notes; octave layering is reported separately);
+- no candidate at 3x or more of an accepted F0. FM 1:2's strong 3rd and 5th partials had read as two extra notes. The
+  cost: a note exactly a twelfth or more above another reads as its partial.
+
+The decision answers the owner's question about the instrument:
+- **poly** when the median pitch-class count is 2 or more;
+- **poly, medium** when a second pitch rings on in more than 30 % of frames (overlapping releases, which a mono synth cuts);
+- otherwise **mono, medium**, with the evidence line that a poly synth played one note at a time reads the same.
+
+`--score poly` -> "PASS poly: 29 of 29 mono/poly right; 17 exact median counts", exit 0. Two of these were scored
+against the instrument rather than the label:
+- ch-pad-1 reads poly. The pad's 1 s release overlaps the next chord at a 0.8 s spacing, so two notes do sound.
+- line-juno reads poly, medium. Its overlapping releases show a poly instrument. The scorer accepts either answer for a
+  poly synth playing a line.
+
+Under-counts appear at 5 and 6 notes on fm and stab. The glide and voice-stealing tests (L1 4.3) are not built.
+
+### 9.4 Step 4: FM or subtractive
+
+`features.fmFit` and `decide.fmOrSubtractive`, using L1's model comparison. Two findings:
+- **Folded sidebands need the carrier's phase.** With the phases fixed, an ideal 1:1 FM at index 4 was modelled with
+  harmonic 1 at -30 dB, where an exact Fourier series gives -4.8 dB. Every static-index FM note failed. FM on a Web
+  Audio frequency parameter starts the modulator at phase 0 and accumulates the carrier phase offset ψ = I. So the
+  modulator phase φ ∈ {0, π/2} and the carrier phase ψ (8 steps) are now free per frame. After that the fit recovers
+  ratio and index: 1:1 index 3.9→4 and 7.9→7.9; 1:2 index 2→2; 1:3 index 2→2; 2:1 index 3→3.
+- **Ratio 3.5 (2:7) is outside L1's seven pairs.** It read "subtractive, high" at 2.8 dB against 6.1. I added 3:2, 1:5,
+  2:5, 1:7 and 2:7. A "high" call now also needs the winning family within 3 dB; otherwise it is medium, with a note
+  that the sound may be outside both families.
+
+The inharmonicity check now uses 60 to 160 ms after the onset, because attack transients had given the lead 76
+cents. It only votes FM when the subtractive fit is not clearly better.
+
+`--score fm` -> "PASS fm: 21 of 23 right, 0 wrong", exit 0. No call on two notes:
+- fm r1 i1 e0.8 is near-sine: fewer than 4 harmonics within 40 dB, so "unknown".
+- fm r1.41 static is "undecided": its pitch tracking reads 33 to 44 Hz, and inharmonicity reads 13.9 cents, under the
+  15-cent line.
+
+All 7 subtractive instruments read subtractive (tb303 and bass high, the rest medium). The fit takes 0.2 to 0.7 s per
+element.
+
+### 9.5 The drum decision: TR-808, TR-909, other, or sample
+
+`features.drumVector` builds 29 features per element: decay to -10/-20/-40 dB, attack, energies in 10 octave bands at
+0-50 ms and 50-300 ms, centroid, flatness, and pitch at 5-85 ms and 60-260 ms. `app/analysis/drumlib.js` is generated
+by `node tools/analyze.js --build-drumlib`: 114 items (108 Drums renders and 6 engine synth drums) with z-scored
+vectors. `decide.drumMachine` works as follows:
+- the machine is the nearest item's machine (a 5-neighbour vote let the other machine's same voice outvote it: 109
+  against 118 of 135);
+- confidence comes from the distance ratio to the nearest item of the other machine (above 1.5 and close: high; above
+  1.15: medium);
+- an element farther than 3x the library's own spacing is "unknown: the nearest voice is a guess";
+- the recreation is the nearest voice with its knob settings;
+- a sample verdict from decision A (medium or high) makes the recreation "sampler", with the voice as the alternative.
+
+`--score drums` (leave the item out) -> "PASS drums: machine right 118 of 135, voice right 90 of 135; high-confidence
+calls right 97 of 97; sampler replays called sample 11 of 27", exit 0. The other 16 replays are tonal and stay at the
+sample/low cap. The 6 engine synth drums are not scored: each has one render, so leaving it out removes its class.
+The 17 misses are all low or medium confidence, mostly the bd808/bd909, sd808/sd909 and cp808/cp909 pairs at extreme
+knob settings. **This is in-domain** (library and tests are the same engine). Real 808s and 909s are untested.
+
+### 9.6 Step 5: the analyze entry
+
+`app/analysis/report.js` (`Analysis.report.element`, `.stem`, `.shared`, `.table`) takes one element. A drums stem is
+split into three bands (under 150 Hz, 150 Hz to 5 kHz, over 6 kHz); this is not a separation, and the report says so.
+It returns every decision with value, confidence, p, evidence and alternatives, and a recreation:
+- a Drums voice with knob settings;
+- "sampler" (with a root note for pitched material);
+- `fm` with ratio, index and indexEnv;
+- `tb303` (square wave or Q 3 or more, mono), `modeld` (mono, gentle lowpass) or `juno` (poly). These are chosen by
+  rules, at low confidence, until analysis by synthesis exists.
+
+The route between drums and pitched uses three things: the role; the polyphony (chords defeat YIN, so 2 or more
+pitches means pitched); and closeness to a Drums voice (an 808 kick is pitched but goes the drum route).
+
+`tools/analyze.js` is the Node entry. The brief allowed "tools/analyze.py or a Node entry"; the coordinator should
+confirm the name. It does three things:
+- `node tools/analyze.js <wav ...> [--role] [--json out]` prints a table and the evidence per element, and writes JSON
+  marked "output of an unvalidated tool";
+- `--score <set>` scores against the truth labels;
+- `--build-drumlib`.
+
+It reads 16-bit, 24-bit and float WAV. The four reference stems (388 s each) took 2 min 37 s.
+
+### 9.7 Checks
+
+`tools/analysis-check.js` gained 8 checks:
+- a triad track gives 3 pitch classes, poly;
+- a line with a sub-octave oscillator reads mono;
+- ideal FM 1:2 with index 3 decaying gives fm with ratio 2;
+- a saw through a swept resonant lowpass gives subtractive;
+- chords are not attempted;
+- drumlib.js holds tr808, tr909 and other;
+- a replayed noise hit gets the sampler as its recreation;
+- an FM line gets the fm recreation with ratio 2.
+
+Run 14:48 EST (19:48 UTC): `node tools/analysis-check.js` -> `OK: 47 checks passed`, exit 0. The five `--score` runs
+above all exit 0.
+
+## 10. Spec for A9: render.js `labels` sidecar field and a sampler-track option
+
+Purpose: generate the scoring set (L1 section 10) from song renders, and not only from single-instrument jobs. It uses
+the same field names `tools/analysis-truth.js` writes, so `tools/analyze.js --score` reads both.
+
+1. **`labels` in every sidecar** (`tools/out/<name>.json`), written from the document after the render. It is an
+   object keyed by track id, with one entry per track that sounds in the rendered bars:
+   - `element` (track name), `type` (instrument type as given to `Synths.create`), `family` (`synth`, `drums`,
+     `classic` or `sampler`, from where the type resolved), `machine` (`tr808` or `tr909` for Drums types, else
+     `other`), `source` (`sample` for a sampler track, else `synth`);
+   - `params`: the instrument's params at the render's start, after `opts`;
+   - `polyphony`: the largest number of notes sounding at once in the rendered events, counting each note's
+     `dur` plus the instrument's release param if it has one;
+   - `notes`: sorted unique MIDI numbers in the rendered events;
+   - `reverb`: `{send: <send.reverb level or 0>, rt60: <reverb impulse length param>, predelayMs, kind:
+     'shared (send or bus)'}` when the send is above 0, else `{present: false}`;
+   - `delay`: the same for the delay send;
+   - `soloed: true|false`.
+
+   With `--solo`, `labels` still lists every track but marks which ones sounded. The master chain goes in
+   `labels._master` as `[unit types]`.
+2. **`--labels-only`**: write the sidecar without rendering. This is cheap, for checking.
+3. **Sampler-track option** `--sampler-from <track>[:<bars>]`: render that track's first hit (or first `bars`) solo,
+   then render the song again with that track replaced by a `sampler` track playing the captured buffer on the same
+   events. Its labels get `source: 'sample'` and `sampleOf: <original type>`. With `:rr3` it captures three different
+   hits and assigns them as round robins (needs `ev.hit`, already noted as a sequencer line). With `:pitched` it
+   captures one note and transposes it to each event's MIDI. This gives "sample" truth inside a real mix, which
+   `analysis-truth.js` cannot.
+4. Nothing else changes in render.js; the WAV is unchanged.
+5. I check it by running `node tools/analyze.js --score` against a render with labels once A9 lands it (a
+   `--score song` scorer to add then).
+
+## 11. The owner's track: four HT-Demucs reference stems (OUTPUT OF AN UNVALIDATED TOOL)
+
+`node tools/analyze.js <scratchpad>/ref/stems/htdemucs/reference/{drums,bass,other,vocals}.wav --json
+<scratchpad>/l2/ref-report.json`, exit 0. Audio and report stay in the scratchpad.
+
+| Element | Synth or sample | Mono/poly | Reverb | Shared? | Drum decision / recreation |
+|---|---|---|---|---|---|
+| kick band (< 150 Hz) | replays identically (twin 1.00, residual -31.5 dB): sample or deterministic synth, low | - | none (mono tail 0.59 s, own decay), medium | - | TR-909, nearest bd909 (ratio 1.22 to the nearest 808 item), medium; recreation bd909 |
+| snare/clap band (150 Hz - 5 kHz) | replays identically, sample or deterministic, low | - | yes, late slope 1.21 s, side 1.43 s, high | element-specific | nearest the engine's own `perc`, then mt808, medium: no confident machine |
+| hat/cymbal band (> 6 kHz) | synth (fresh noise, residual -5.9 dB), medium | - | yes, 2.87 s, pre-delay 4.4 ms, high | element-specific | TR-808 family, nearest ma808 then oh808 (ratio 1.34 to ch909), medium |
+| bass stem | synth (no close replays), medium | poly, high (notes 24, 26 and 43 to 45: low C/D drone plus a line a twelfth up) | none (mono tail) | - | juno by rule, low. Read: two parts in one stem (a drone and a line), not a poly synth |
+| other stem | synth, high | poly, high (median 4 pitch classes; 51, 63, 68, 73, 58, 56) | yes, 6.1 s, pre-delay 17.6 ms, high | element-specific | juno by rule, low |
+| vocals stem | synth (fresh), high | poly, high | yes, 2.47 s | element-specific | juno by rule, low. The track has no vocal; this stem is leakage from the other parts |
+
+Agreements with earlier hand work, all reported only as consistent:
+- the kick band's nearest voice is the 909 kick, agreeing with E1's 909-style glide (52 + 210 e^(-t/24 ms) Hz);
+- the other stem's 6.1 s tail is of the order of E4's end-tail RT60 (500 Hz 5.5 s, 2 kHz 4.2 s);
+- the bass stem's low notes (MIDI 24 to 26) sit near the C#1 drone (MIDI 25) the Ear Crew found.
+
+**Unverified after separation:**
+- nothing in this table was checked against stems with known truth, except the separation SDR on the engine's own
+  16 bars (section 5.3);
+- leakage between stems: the vocals stem exists at all, and the bass stem holds two parts;
+- the band split of the drums stem mixes voices; the snare band holds whatever else lives at 150 Hz to 5 kHz;
+- every element-specific reverb call compares tails across stems of different bandwidth, so "shared" could be missed;
+- decision E's library is the engine's own Drums, not real machines;
+- the recreation types for pitched parts are rules, not fits.
+
+## 12. Hooks and open points (second session)
+
+- The `labels` spec (section 10) is for A9.
+- Separation-identity test (L1's sampled hat through the separator) still not run for HT-Demucs.
+- Analysis by synthesis (L1 8.2) is the next build: fit the suggested engine type's parameters to the element.
+- Name of the CLI: `tools/analyze.js` (Node) instead of `tools/analyze.py`; coordinator to confirm.
+- `app/analysis/drumlib.js` is generated (38 KB). Rebuild it when drums.js changes:
+  `node tools/analysis-truth.js --sets drums && node tools/analyze.js --build-drumlib`.
+- CONTRACT.md Analysis section and `host.analyze` (A1): the API is `Analysis.report.element/stem/shared/table`. The load
+  order is dsp, features, decide, drumlib, report.

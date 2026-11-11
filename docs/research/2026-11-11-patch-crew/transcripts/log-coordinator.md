@@ -114,3 +114,11 @@ The scribe compiled DISCUSSION.md (469 lines, 25 threads) from the brief and the
 10. The two resonance-peak figures measure different things, as the scribe says.
 
 Lesson for the next crew: rulings given in task messages go into the log at the time, since the messages are not part of the record.
+
+## 2026-11-11 14:51 EST (19:51 UTC) — L2 (Lab Crew) second milestone verified: the analysis module's six steps
+
+L2's hand-back (log sections 9 to 12 of docs/research/2026-11-09-lab-crew/transcripts/log-L2.md): tools/analysis-truth.js renders 257 labelled WAVs from the engine (the three classic synths on their worklets); synth or sample with a residual-after-twin rule (0 confident wrong of 55); mono or poly (29 of 29; exact note counts 17 of 29, low at five to six notes); FM or subtractive with free phases (21 of 23, 0 wrong); 808 or 909 or sample by nearest match against a generated library, app/analysis/drumlib.js (machine right 118 of 135 leave-one-out, voice 90 of 135, high-confidence calls 97 of 97; the engine's own voices only); Analysis.report and node tools/analyze.js <wav...> with a confidence on every decision and a suggested recreation; a labels spec for render.js; the run on the four HT-Demucs reference stems, marked as the output of an unvalidated tool.
+
+Run here: analysis-check OK: 47, exit 0. L2's five truth-set scores were not repeated. The coordinator ran tools/analyze.js on three renders it had not seen (the Render Room's HVT-303 line, HVT-D bass and HVT-106 chords, rendered by the coordinator's own script): recreation tb303, modeld and juno respectively, each at low confidence by rule; mono, mono, poly; subtractive high on the two monos. Two wrong or empty readings on the dry HVT-D bass: "reverb yes, RT60 1.56 s" at low confidence (it is the patch's own release; the file is mono, where the tool has only bandwidth to go on), and synth or sample "unknown" because fewer than three onsets were found in a line of 32 notes with little gap.
+
+Rulings: tools/analyze.js as the command name stands. drumlib.js is generated and must be rebuilt when drums.js changes (the coordinator's noise-offset edit predates L2's build of it). The reference-stem table stays in the log; it is not evidence about the record until a stem with known truth has gone through the separator.

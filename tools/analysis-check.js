@@ -9,7 +9,7 @@
 'use strict';
 var fs = require('fs'), path = require('path'), vm = require('vm');
 var ROOT = path.join(__dirname, '..');
-['dsp.js', 'features.js', 'decide.js'].forEach(function (f) {
+['dsp.js', 'features.js', 'decide.js', 'drumlib.js', 'report.js'].forEach(function (f) {
   var p = path.join(ROOT, 'app', 'analysis', f);
   vm.runInThisContext(fs.readFileSync(p, 'utf8'), { filename: p });
 });
@@ -98,6 +98,31 @@ for (var q = 0; q < monoTail[0].length; q++) { monoTail[0][q] = wetA[0][q]; mono
 monoTail[1][100] += 1e-3;   // not bit-identical, so the file counts as stereo
 var rMono = X.reverb(F.freeDecay(monoTail[0], monoTail[1], SR));
 check('D a long tail with L/R correlation 1 in a stereo file: own decay, not reverb', rMono.value.present === false && rMono.value.tailCorr > 0.99, 'tail corr ' + rMono.value.tailCorr);
+
+// L2: decision B (polyphony). Saw notes (band-limited, 24 harmonics) as chords and as a line with a sub-octave sine.
+function sawNote(f0, n, sub) { var y = new Float64Array(n), k, i; for (k = 1; k <= 24 && k * f0 < SR / 2; k++) for (i = 0; i < n; i++) y[i] += Math.sin(2 * Math.PI * k * f0 * i / SR) / k; if (sub) for (i = 0; i < n; i++) y[i] += 0.5 * Math.sin(Math.PI * f0 * i / SR); for (i = 0; i < n; i++) y[i] *= Math.min(1, i / 200) * Math.exp(-i / (0.5 * SR)); return y; }
+function mtof(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+function chordTrack(chords, ioi, sub) { var len = Math.round((chords.length * ioi + 0.5) * SR), y = new Float64Array(len); chords.forEach(function (c, j) { var s = Math.round((0.05 + j * ioi) * SR); c.forEach(function (m) { var x = sawNote(mtof(m), Math.round(ioi * 0.9 * SR), sub); for (var i = 0; i < x.length; i++) y[s + i] += x[i] / c.length; }); }); return y; }
+var triads = chordTrack([[57, 60, 64], [62, 65, 69], [55, 59, 62], [60, 64, 67], [57, 60, 64], [62, 65, 69]], 0.6), pT = F.polyphony(triads, null, SR), dT = X.monoPoly(pT);
+check('B a triad track reads 3 pitch classes, poly', pT.median === 3 && dT.value === 'poly', 'median ' + pT.median + ', ' + dT.value + ' ' + dT.confidence);
+var line = chordTrack([[45], [48], [52], [45], [50], [43], [47], [52]], 0.3, true), pL = F.polyphony(line, null, SR), dL = X.monoPoly(pL);
+check('B a line with a sub-octave oscillator reads mono (octave layer is one voice)', dL.value === 'mono', dL.value + ' ' + dL.confidence + ', octave layering ' + pL.octaveLayered.toFixed(2));
+// decision C: ideal FM 1:2 (frequency modulation by a sine, as a Web Audio oscillator does) against a swept saw
+function fmNote(f0, n, ratio, I) { var y = new Float64Array(n), ph = 0, pm = 0, i; for (i = 0; i < n; i++) { var fm = f0 * ratio, f = f0 + I * Math.exp(-i / (0.3 * SR)) * fm * Math.sin(pm); y[i] = Math.sin(ph) * Math.min(1, i / 100) * Math.exp(-i / (0.6 * SR)); ph += 2 * Math.PI * f / SR; pm += 2 * Math.PI * fm / SR; } return y; }
+function sweptSaw(f0, n) { var y = new Float64Array(n), k, i, z1 = 0, z2 = 0; var x = sawNote(f0, n); for (i = 0; i < n; i++) { var fc = 300 + 3000 * Math.exp(-i / (0.15 * SR)), w = 2 * Math.PI * fc / SR, q = 3, al = Math.sin(w) / (2 * q), c = Math.cos(w), a0 = 1 + al; var v = ((1 - c) / 2 * x[i] + (1 - c) * (i > 0 ? x[i - 1] : 0) + (1 - c) / 2 * (i > 1 ? x[i - 2] : 0) + 2 * c * z1 - (1 - al) * z2) / a0; z2 = z1; z1 = v; y[i] = v; } return y; }
+function notesTrack(fn, pitches) { var ioi = 0.5, y = new Float64Array(Math.round((pitches.length * ioi + 0.5) * SR)); pitches.forEach(function (m, j) { var s = Math.round((0.05 + j * ioi) * SR), x = fn(mtof(m), Math.round(0.45 * SR)); for (var i = 0; i < x.length; i++) y[s + i] += x[i]; }); return y; }
+var fmT = notesTrack(function (f, n) { return fmNote(f, n, 2, 3); }, [45, 52, 57, 45, 52, 57]), fitF = F.fmFit(fmT, null, SR), dF = X.fmOrSubtractive(fitF);
+check('C ideal FM 1:2, index 3 decaying -> fm, ratio 2', dF.value === 'fm' && fitF.fm && fitF.fm.ratio === 2, dF.value + ' ' + dF.confidence + (fitF.fm ? ', ' + fitF.fm.pair.join(':') + ' ' + fitF.fm.err.toFixed(2) + ' dB against ' + fitF.sub.err.toFixed(2) : ''));
+var subT = notesTrack(sweptSaw, [45, 52, 57, 45, 52, 57]), fitS = F.fmFit(subT, null, SR), dS = X.fmOrSubtractive(fitS);
+check('C a saw through a swept resonant lowpass -> subtractive', dS.value === 'subtractive', dS.value + ' ' + dS.confidence + (fitS.sub ? ', ' + fitS.sub.wave + ' Q' + fitS.sub.q + ' ' + fitS.sub.err.toFixed(2) + ' dB against ' + fitS.fm.err.toFixed(2) : ''));
+check('C chords are not attempted', X.fmOrSubtractive(null, 'poly').value === 'not attempted', '');
+// decision E and the report: the generated library is present and whole; a report comes back with a recreation
+var lib = A.drumlib, machines = lib ? lib.items.map(function (it) { return it.machine; }) : [];
+check('E drumlib.js holds both machines and the engine drums', !!lib && machines.indexOf('tr808') >= 0 && machines.indexOf('tr909') >= 0 && machines.indexOf('other') >= 0 && lib.keys.length === F.DRUM_KEYS.length, lib ? lib.items.length + ' items' : 'missing');
+var repD = A.report.element(cases[1][1], null, SR, { name: 'replayed hat', role: 'drums' });
+check('report: a replayed noise hit -> sample, recreation sampler', repD.decisions.synthOrSample.value === 'sample' && repD.recreation && repD.recreation.type === 'sampler', repD.recreation && repD.recreation.type);
+var repP = A.report.element(fmT, null, SR, { name: 'fm line', role: 'auto' });
+check('report: an FM line -> recreation fm with a ratio', repP.recreation && repP.recreation.type === 'fm' && repP.recreation.params.ratio === 2, repP.recreation && repP.recreation.type + ' ' + JSON.stringify(repP.recreation.params) + ' ' + Object.keys(repP.decisions).join(','));
 
 // ------------------------------------------------------------ the engine's renders (labels from GUIDANCE_V3)
 function readWav(p) {

@@ -69,7 +69,7 @@
     if (p.octaveLayered > 0.3) ev.push('octave layering in ' + Math.round(100 * p.octaveLayered) + ' % of frames: a sub or octave oscillator, or octave doubling');
     var top = Object.keys(p.notes).sort(function (a, b) { return p.notes[b] - p.notes[a]; }).slice(0, 6);
     ev.push('commonest notes (MIDI): ' + top.join(', '));
-    if (p.median >= 2) return out('poly', p.multi > 0.6 ? 'high' : 'medium', p.multi > 0.6 ? 0.9 : 0.75, ev.concat(['several pitches sound together: chords or overlapping notes']), [{ value: 'mono', p: p.multi > 0.6 ? 0.1 : 0.25 }]);
+    if (p.median >= 2) return out('poly', p.multi > 0.6 ? 'high' : 'medium', p.multi > 0.6 ? 0.9 : 0.75, ev.concat(['several pitches sound together: chords, overlapping notes, or several parts in one stem (a separated stem can hold a drone and a line)']), [{ value: 'mono', p: p.multi > 0.6 ? 0.1 : 0.25 }]);
     if (p.multi > 0.3) return out('poly', 'medium', 0.7, ev.concat(['mostly one pitch, but in ' + Math.round(100 * p.multi) + ' % of frames a second pitch rings on: releases overlapping the next note, which a mono synth cuts']), [{ value: 'mono', p: 0.3 }]);
     return out('mono', p.frameCount >= 10 ? 'medium' : 'low', p.frameCount >= 10 ? 0.75 : 0.6, ev.concat(['one pitch at a time; a poly synth played one note at a time, with no overlapping release, would read the same']), [{ value: 'poly', p: 0.25 }]);
   }
@@ -84,12 +84,51 @@
               'subtractive fit ' + f2(fit.sub.err) + ' dB (' + fit.sub.wave + ' through a 2-pole lowpass, Q ' + fit.sub.q + ')',
               'inharmonicity ' + f2(fit.inharmonicCents) + ' cents'];
     if (fit.inharmonicCents > 15 && fit.sub.err - fit.fm.err > -1) return out('fm', 'medium', 0.75, ev.concat(['partials off the harmonic series: FM with a non-integer ratio, ring modulation, or a bell or metal sound']), [{ value: 'subtractive', p: 0.25 }]);
-    var gap = fit.sub.err - fit.fm.err;
-    if (gap > 2) return out('fm', 'high', 0.9, ev, [{ value: 'subtractive', p: 0.1 }]);
+    var gap = fit.sub.err - fit.fm.err, fitsWell = Math.min(fit.sub.err, fit.fm.err) < 3;
+    // high needs a 2 dB gap and a winner that fits within 3 dB; otherwise the winner may only be the less bad of two
+    // wrong models (an FM ratio outside the searched pairs read 'subtractive' 2.8 against 6.1 dB before 2:7 was added)
+    if (!fitsWell) ev.push('neither family fits within 3 dB: the sound may be outside both (other ratios, more operators, wavefolding, sync, a sample)');
+    if (gap > 2) return out('fm', fitsWell ? 'high' : 'medium', fitsWell ? 0.9 : 0.7, ev, [{ value: 'subtractive', p: fitsWell ? 0.1 : 0.3 }]);
     if (gap > 1) return out('fm', 'medium', 0.75, ev, [{ value: 'subtractive', p: 0.25 }]);
-    if (gap < -2) return out('subtractive', 'high', 0.9, ev, [{ value: 'fm', p: 0.1 }]);
+    if (gap < -2) return out('subtractive', fitsWell ? 'high' : 'medium', fitsWell ? 0.9 : 0.7, ev, [{ value: 'fm', p: fitsWell ? 0.1 : 0.3 }]);
     if (gap < -1) return out('subtractive', 'medium', 0.75, ev, [{ value: 'fm', p: 0.25 }]);
     return out('undecided', 'low', 0.5, ev.concat(['the two families fit within 1 dB of each other (e.g. FM 1:2 and a filtered square both give odd harmonics)']), [{ value: 'fm', p: 0.5 }, { value: 'subtractive', p: 0.5 }]);
+  }
+
+  // ------------------------------------------------------------ decision E: TR-808, TR-909, other or sample (L2)
+  // vec = features.drumVector; id = decide.synthOrSample's result (optional); lib = Analysis.drumlib (generated from the
+  // engine's Drums renders: every voice at its defaults and three random knob settings). Nearest neighbours on z-scored
+  // features; the machine is the nearest item's; the nearest voice and its knob settings are the suggested recreation's
+  // starting point. Confidence from the distance ratio to the nearest item of another machine, and from how far the
+  // nearest item is relative to the library's own nearest-neighbour spacing (more than 3 x: "unknown: a guess").
+  function zvec(lib, v) { return lib.keys.map(function (k, i) { var x = v[k]; return ((x === x ? x : lib.mean[i]) - lib.mean[i]) / (lib.sd[i] || 1); }); }
+  function dist(a, b) { var s = 0; for (var i = 0; i < a.length; i++) s += (a[i] - b[i]) * (a[i] - b[i]); return Math.sqrt(s / a.length); }
+  function drumNeighbours(vec, lib, exclude) {
+    var z = zvec(lib, vec);
+    return lib.items.filter(function (it) { return !exclude || !exclude(it); }).map(function (it) { return { item: it, d: dist(z, it.z) }; }).sort(function (a, b) { return a.d - b.d; });
+  }
+  function drumMachine(vec, id, o) {
+    o = o || {};
+    var lib = o.lib || A.drumlib;
+    if (!vec) return out('unknown', 'none', 0.5, ['no hits to measure']);
+    if (!lib) return out('unknown', 'none', 0.5, ['no drum library loaded (app/analysis/drumlib.js)']);
+    var nb = drumNeighbours(vec, lib, o.exclude), near = nb[0], best = near.item.machine, other = null, i;
+    // the machine of the nearest item (a 5-neighbour vote was tried first: with four settings per voice it let the
+    // other machine's same voice outvote the right one, 109 of 141 against 125 of 141 for the nearest item)
+    for (i = 1; i < nb.length; i++) if (nb[i].item.machine !== best) { other = nb[i]; break; }
+    var margin = other ? other.d / (near.d + 1e-6) : Infinity, far = near.d / (lib.nnMedian || 1);
+    var name = { tr808: 'TR-808', tr909: 'TR-909', other: 'not an 808 or 909 voice (another synth drum)' };
+    var ev = ['nearest: ' + nb.slice(0, 3).map(function (n) { return n.item.type + ' (' + n.item.name + ', distance ' + n.d.toFixed(2) + ')'; }).join('; '),
+              other ? 'nearest of another machine: ' + other.item.type + ' at ' + other.d.toFixed(2) + ' (ratio ' + margin.toFixed(2) + ')' : 'every near item is the same machine',
+              'nearest distance ' + near.d.toFixed(2) + ' = ' + far.toFixed(1) + ' x the library\'s own spacing'];
+    var rec = { type: near.item.type, params: near.item.params || {}, distance: near.d };
+    var sample = id && id.value === 'sample' && (id.confidence === 'high' || id.confidence === 'medium');
+    if (sample) ev.push('decision A: the hits are replays of one recording (' + id.confidence + '): a sample' + (best !== 'other' ? ' of, or like, a ' + name[best] + ' ' + near.item.type : ''));
+    var v = { machine: best, voice: near.item.type, source: sample ? 'sample' : !id ? 'unknown' : (id.value === 'sample' ? 'identical replays (sample or deterministic synthesis)' : id.value), recreation: rec };
+    var alt = other ? [{ value: other.item.machine + ' ' + other.item.type, p: 1 / (1 + margin) }] : [];
+    if (far > 3) return out(Object.assign(v, { machine: 'unknown' }), 'low', 0.4, ev.concat(['farther from every library voice than 3 x its spacing: unknown machine; the nearest voice is a guess']), alt);
+    var conf = margin > 1.5 && far < 1.5 ? 'high' : margin > 1.15 ? 'medium' : 'low';
+    return out(v, conf, conf === 'high' ? 0.9 : conf === 'medium' ? 0.75 : 0.55, ev, alt);
   }
 
   // ------------------------------------------------------------ decision D: reverb present, RT60, pre-delay
@@ -174,5 +213,5 @@
     return { elements: result, groups: Object.keys(groups).map(function (g) { return groups[g]; }), pairs: pairs };
   }
 
-  A.decide = { THRESHOLDS: T, synthOrSample: synthOrSample, monoPoly: monoPoly, fmOrSubtractive: fmOrSubtractive, reverb: reverb, sameReverb: sameReverb, sharedOrSpecific: sharedOrSpecific };
+  A.decide = { THRESHOLDS: T, synthOrSample: synthOrSample, monoPoly: monoPoly, fmOrSubtractive: fmOrSubtractive, drumMachine: drumMachine, drumNeighbours: drumNeighbours, zvec: zvec, reverb: reverb, sameReverb: sameReverb, sharedOrSpecific: sharedOrSpecific };
 })();
