@@ -34,6 +34,6 @@ Roundtable group of the Soundsystem, opened 2026-11-11 ET by the coordinator. Th
 
 - `tb303`: `tune`, `wave` ('saw' | 'square'), `cutoff`, `resonance`, `envMod`, `decay`, `accent`, `slideTime`, `level`.
 - `modeld`: `tune`, `glide`, `glideOn`, `modMix`, `oscMod`, `filterMod`; `osc1Range`, `osc1Wave`, `osc2Range`, `osc2Wave`, `osc2Detune`, `osc3Range`, `osc3Wave`, `osc3Detune`, `osc3Keys` (oscillator 3 follows the keyboard or runs free as an LFO); `mixOsc1`, `mixOsc2`, `mixOsc3`, `mixNoise`, `noiseType` ('white' | 'pink'), `mixFeedback`; `cutoff`, `emphasis`, `contour`, `keyTrack1`, `keyTrack2`, `fAttack`, `fDecay`, `fSustain`, `attack`, `decay`, `sustain`, `decaySwitch`; `level`.
-- `juno` (provisional until P3): `lfoRate`, `lfoDelay`, `dcoLfo`, `pwm`, `pwmMode`, `pulse`, `saw`, `sub`, `noise`, `range`, `hpf`, `cutoff`, `resonance`, `envAmt`, `vcfLfo`, `vcfKey`, `vcaMode`, `attack`, `decay`, `sustain`, `release`, `chorus` (0 | 1 | 2), `level`.
+- `juno` (settled after P3, 2026-11-11): `tune`, `bend`, `portamento`, `voiceMode` ('poly' | 'unison'), `lfoRate`, `lfoDelay`, `lfoAuto`, `dcoLfo`, `pwm`, `pwmMode` ('lfo' | 'manual' | 'env', env being the Juno-60's), `pulse`, `saw`, `sub`, `noise`, `range`, `hpf`, `cutoff`, `resonance`, `envAmt` (bipolar, -1..1), `vcfLfo`, `vcfKey`, `vcaMode`, `attack`, `decay`, `sustain`, `release`, `chorus` (0 | 1 | 2), `chorusNoise` (optional), `level`.
 
 A researcher who finds a name here wrong or missing says so in the hand-back; the coordinator amends this list and tells P4 and P5.
