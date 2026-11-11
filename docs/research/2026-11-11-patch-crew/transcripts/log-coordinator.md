@@ -97,3 +97,20 @@ P4: HVT-106 reads Classics.spec('juno') (the stub survives only in panels-check 
 P4 reported that an open device window could cover the "+ track" menu. Cause: the menu sat at z-index 20 and each window focus raises a window's z-index by one from 10. Coordinator's edit in system-editor.js: the menu's z-index is 100000. Checked in the app page: with a device window placed under the button, all ten menu items are the top element at their own position; system-editor-check 97.
 
 Not verified: hearing an auditioned note (headless); the keyboards in an Electron child window; keyboard (Tab) access to the audition keys, which are pointer only.
+
+## 2026-11-11 14:00 EST (19:00 UTC) — DISCUSSION.md compiled; answers to the contradictions the scribe found
+
+The scribe compiled DISCUSSION.md (469 lines, 25 threads) from the brief and the six transcripts and listed ten contradictions it could not reconcile. Answers, checked against the code where a file can answer:
+
+1. Model D note priority. The coordinator told P5 to build last-note in its task message and confirmed it in a later message ("note priority stays last-note as you built it; record that the hardware is low-note priority per P2"). Neither was written in BRIEF.md or this log, so P5's "the brief" and "ruling" had nothing on file behind them. Recorded now: last-note as built; the hardware is low-note (P2, CA-72); the owner is asked in REPORT.md section 6.
+2. Model D tune. app/engine/classics.js line 61: −100 to 100 cents, basis prior. The panel prints −5 to +5 as a dial legend (P4's choice); the stored value is cents.
+3. Model D mixer rows. classics.js line 77: 0 to 10, unit mark, mapped by the CA-72 volume law. The amended brief won over P2's 0 to 1.
+4. Juno chorus II. classics-processor.js line 492: 0.513 and 0.863 Hz, the Juno-60 figures three of P3's four sources give; P3's 0.835 Hz for the 106 rests on one source's argument. Built as the majority figure; not measured against a unit.
+5. voiceMode. Built as poly and unison (classics.js line 144). Poly 2 was dropped when the coordinator settled the name list after P3 and no ruling was written; recorded now as not built, backlog.
+6. Junox. No code ported; the THIRD_PARTY row covers its numbers (GPL-3.0-or-later), cited by file and line in log-P5.md.
+7. Unison detune. P3's sources say the hardware does not detune unison voices; the coordinator's earlier "unison has no detune" as a gap was wrong and is corrected in REPORT.md and the roadmap.
+8. Fetch budget. The "10 page fetches and 6 searches" was in the researchers' task messages, not in BRIEF.md. The raw.githubusercontent.com difference between P1 and the others is unexplained.
+9. Spec-rows-only controls. The instruction to P4 was in a task message ("draw a control only for rows that exist"); no separate log entry. Recorded now.
+10. The two resonance-peak figures measure different things, as the scribe says.
+
+Lesson for the next crew: rulings given in task messages go into the log at the time, since the messages are not part of the record.

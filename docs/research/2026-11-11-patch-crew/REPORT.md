@@ -45,11 +45,15 @@ Final counts on one tree, run by the coordinator with exit codes read directly: 
 - Nobody has listened to any instrument, and none has been compared with a real machine or a recording of one.
 - The 303's accent-sweep time constants and the soft clip in its filter feedback are priors; its resonance does not self-oscillate at maximum (P5's measurement).
 - The Model D's passband sits about 2.5 dB under the reference table near the corner (it was tuned to the singing pitch instead); at cutoff mark +2 the singing pitch is 3 % flat; note priority is last-note where the hardware is low-note.
-- The Juno: unison has no detune; bend is stored and does nothing; the filter is not oversampled; the chorus has no delay-line noise or filtering; the 106-versus-60 choices are P3's recommendations.
+- The Juno: bend is stored and does nothing; Poly 2 (the hardware's voice-reuse mode) is not built, only poly and unison; chorus II runs at 0.863 Hz, the figure three sources give for the Juno-60, where one source argues 0.835 Hz for the 106; unison has no detune, which P3's sources say matches the hardware (voices at fixed phase offsets); the filter is not oversampled; the chorus has no delay-line noise or filtering; the 106-versus-60 choices are P3's recommendations.
 - The coordinator's own measurements cover pitch, peak level, stereo correlation and engine selection. P5's finer figures (slopes, envelope times, PWM, determinism) and P4's Chromium interactions were not repeated.
 - The three synths have not been run in Electron; the panel keyboards have not been tried in a child window; audition keys are pointer only (no Tab access); touch input is untested.
 - A full 200-bar render with both monos took 134 s against 95 s for the stock song (P5); with Juno tracks it has not been timed. No underrun measurement on a realtime context.
 - The 303 and 106 panel layouts come from memory and from text, not photographs.
+
+### Contradictions the scribe found in the records, and the coordinator's answers
+
+`DISCUSSION.md` lists ten places where the records disagree. Those with an answer in the code or a ruling: the Model D's note priority (last-note was the coordinator's instruction to P5 in a message, not written in the brief or the log until 11 November 15:20 ET; the hardware is low-note); the Model D mixer rows (built as panel marks 0 to 10, as the amended brief says, not P2's 0 to 1); the Model D tune row (−100 to 100 cents in the engine; the panel prints −5 to +5 as a dial legend); `voiceMode` (poly and unison built; Poly 2 dropped without a recorded ruling, now recorded); the chorus II rate (above); Junox (numbers only, no code; the THIRD_PARTY row is for the numbers). The rest stand as the scribe wrote them.
 
 ## 6. Decisions for the owner
 
