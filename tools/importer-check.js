@@ -81,7 +81,8 @@ function nodeChecks() {
   var sine = new Float32Array(SR * 2); for (var i = 0; i < sine.length; i++) sine[i] = 0.1 * Math.sin(2 * Math.PI * 997 * i / SR);
   check('BS.1770-4: 997 Hz at -20 dBFS on two channels reads -20.00 LUFS', I.loudness({ L: sine, R: sine, sr: SR }).lufs === -20);
   var quiet = new Float32Array(SR * 4); for (i = 0; i < SR * 2; i++) quiet[i] = sine[i];
-  check('BS.1770-4: two seconds of silence are gated out', I.loudness({ L: quiet, R: quiet, sr: SR }).lufs === -20);
+  var lq = I.loudness({ L: quiet, R: quiet, sr: SR }).lufs;
+  check('BS.1770-4: two seconds of silence are gated out (blocks across the edge still count)', Math.abs(lq + 20.34) <= 0.02, lq + ' LUFS (17 full blocks and 3 part blocks above the relative gate: -20.34 by hand)');
   var s48 = new Float32Array(48000 * 2); for (i = 0; i < s48.length; i++) s48[i] = 0.1 * Math.sin(2 * Math.PI * 997 * i / 48000);
   check('BS.1770-4 at 48 kHz', Math.abs(I.loudness({ L: s48, R: s48, sr: 48000 }).lufs + 20) <= 0.01);
   // fold
@@ -161,7 +162,10 @@ function pageTruth() {
   function expand(v, bars) { var out = []; for (var i = 0; i < bars * 16; i++) out.push(v.cells[i % v.cells.length]); return out; }
   function union(list, bars) { var out = []; for (var i = 0; i < bars * 16; i++) { var best = null; list.forEach(function (c) { var x = c[i]; if (x && (!best || (x.vel || 0.85) > (best.vel || 0.85))) best = x; }); out.push(best); } return out; }
 
-  var results = { cases: [] };
+  var results = { cases: [], wavs: {} };
+  function keep(name, buf) { var u = new Uint8Array(Sequencer.wav(buf)), str = ''; for (var j = 0; j < u.length; j += 0x8000) str += String.fromCharCode.apply(null, u.subarray(j, j + 0x8000)); results.wavs[name] = btoa(str); }
+  // where the audio of bar 1 really starts: the master chain delays the scheduled time (0.05 s) by its own latency
+  function audibleStart(b) { var x = b.getChannelData(0), pk = 0, i; for (i = 0; i < x.length; i++) pk = Math.max(pk, Math.abs(x[i])); for (i = 0; i < x.length; i++) if (Math.abs(x[i]) > 0.01 * pk) return i / b.sampleRate; return null; }
   // ---- 1. TR-909 voices at 126 BPM, 8 bars, accents on the hats and the kick
   var B1 = 8, d1 = doc(126, 0, [
     { name: 'bd', inst: 'bd909', kind: 'drum', gain: 0.9, variants: { A: { bars: B1, cells: cells(B1, pat('X...x...X...x..x', B1)) } } },
@@ -185,12 +189,12 @@ function pageTruth() {
     work = work.then(function () {
       var bars = d.sections[0].bars, mix;
       return render(d, bars).then(function (m) {
-        mix = m; var t0 = performance.now(), tp = Importer.tempo(m), ms = performance.now() - t0;
-        var c = { name: name, bpm: d.bpm, swing: d.swing, tempo: tp, tempoError: Math.round((tp.bpm - d.bpm) * 1000) / 1000, offsetErrorMs: Math.round((tp.offset - OFF) * 10000) / 10, tempoMs: Math.round(ms), voices: [] };
+        mix = m; keep(name.split(',')[0].replace(/[^a-z0-9]+/gi, '-'), m); var t0 = performance.now(), tp = Importer.tempo(m), ms = performance.now() - t0, aud = audibleStart(m);
+        var c = { name: name, bpm: d.bpm, swing: d.swing, tempo: tp, tempoError: Math.round((tp.bpm - d.bpm) * 1000) / 1000, offsetErrorMs: Math.round((tp.offset - OFF) * 10000) / 10, audibleStart: aud, offsetVsAudibleMs: Math.round((tp.offset - aud) * 10000) / 10, tempoMs: Math.round(ms), voices: [] };
         var chain = Promise.resolve();
         d.tracks.forEach(function (t) {
           chain = chain.then(function () { return render(only(d, [t.name]), bars); }).then(function (solo) {
-            var st = Importer.steps(solo, { bpm: d.bpm, offset: OFF, bars: bars }), stE = Importer.steps(solo, { bpm: tp.bpm, offset: tp.offset, bars: bars });
+            var st = Importer.steps(solo, { bpm: d.bpm, offset: aud, bars: bars }), stE = Importer.steps(solo, { bpm: tp.bpm, offset: tp.offset, bars: bars });
             c.voices.push({ voice: t.inst, withTrueGrid: stepScore(t.variants.A.cells, st.cells), withReadGrid: stepScore(t.variants.A.cells, stE.cells), stats: stE.stats });
           });
         });
@@ -206,7 +210,8 @@ function pageTruth() {
     work = work.then(function () {
       var bars = d.sections[0].bars, t = d.tracks[0];
       return render(d, bars).then(function (m) {
-        var tp = Importer.tempo(m), nt = Importer.notes(m, { bpm: d.bpm, offset: OFF, bars: bars }), ntE = Importer.notes(m, { bpm: tp.bpm, offset: tp.offset, bars: bars });
+        keep(name.split(',')[0].replace(/[^a-z0-9]+/gi, '-'), m);
+        var tp = Importer.tempo(m), aud = audibleStart(m), nt = Importer.notes(m, { bpm: d.bpm, offset: aud, bars: bars }), ntE = Importer.notes(m, { bpm: tp.bpm, offset: tp.offset, bars: bars });
         results.cases.push({ name: name, bpm: d.bpm, tempo: tp, tempoError: Math.round((tp.bpm - d.bpm) * 1000) / 1000, offsetErrorMs: Math.round((tp.offset - OFF) * 10000) / 10,
                              withTrueGrid: noteScore(t.variants.A.cells, nt.cells), withReadGrid: noteScore(t.variants.A.cells, ntE.cells), stats: nt.stats,
                              sample: nt.cells.slice(0, 32).map(function (x) { return x ? x.note + (x.slide ? 's' : '') + (x.acc ? '!' : '') + (x.len > 1 ? '/' + x.len : '') : '.'; }).join(' ') });
@@ -229,7 +234,7 @@ function pageTruth() {
     { name: 'lead', inst: 'fm', kind: 'melody', gain: 0.35, gate: 1, params: {}, variants: { A: { bars: B5, cells: chordCells } } }], B5);
   work = work.then(function () {
     var stems = { drums: ['kick', 'clap', 'hat'], bass: ['acid'], other: ['lead'] }, bufs = {};
-    var chain = render(d5, B5).then(function (m) { bufs.mix = m; });
+    var chain = render(d5, B5).then(function (m) { bufs.mix = m; keep('song-mix', m); });
     Object.keys(stems).forEach(function (k) { chain = chain.then(function () { return render(only(d5, stems[k]), B5); }).then(function (b) { bufs[k] = b; }); });
     return chain.then(function () {
       var host = Host.create(), saved = [], stages = [], t0 = performance.now();
@@ -238,7 +243,7 @@ function pageTruth() {
         stems: ['drums', 'bass', 'other'].map(function (k) { return { name: k, source: { name: k + '.wav', bytes: Sequencer.wav(bufs[k]) } }; }),
         onProgress: function (e) { stages.push(e.stage + (e.note ? ': ' + e.note : '')); } }).then(function (r) {
         var dd = host.document(), an = r.analysis, out = { name: 'song import (16 bars, 124 BPM, stems drums/bass/other)', seconds: Math.round((performance.now() - t0) / 100) / 10, saved: saved.length, savedName: r.saved && r.saved.name,
-          bpm: an.bpm, tempoError: Math.round((an.bpm.value - 124) * 1000) / 1000, offsetErrorMs: Math.round((an.bpm.offset - OFF) * 10000) / 10, reference: host.reference(), level: r.level, stages: stages.filter(function (s, i, a) { return a.indexOf(s) === i; }).slice(0, 40), elements: [] };
+          bpm: an.bpm, tempoError: Math.round((an.bpm.value - 124) * 1000) / 1000, offsetErrorMs: Math.round((an.bpm.offset - OFF) * 10000) / 10, audibleStart: audibleStart(bufs.mix), offsetVsAudibleMs: Math.round((an.bpm.offset - audibleStart(bufs.mix)) * 10000) / 10, reference: host.reference(), level: r.level, stages: stages.filter(function (s, i, a) { return a.indexOf(s) === i; }).slice(0, 40), elements: [] };
         var truthFor = { 'drums-kick': ['kick'], 'drums-snare': ['clap'], 'drums-hats': ['hat'], bass: ['acid'], other: ['lead'] };
         an.elements.forEach(function (el) {
           var tr = dd.tracks.filter(function (t) { return t.name === el.track; })[0], row = { element: el.id, track: el.track, type: tr ? tr.inst : null, recreation: el.recreation ? el.recreation.type + ' [' + el.recreation.confidence + ']' : null,
@@ -276,10 +281,12 @@ function pageTruth() {
     page.setDefaultTimeout(0);
     var res = await page.evaluate(pageTruth);
     var dir = path.join(REPO, 'tools', 'out', 'importer-truth'); fs.mkdirSync(dir, { recursive: true });
+    Object.keys(res.wavs || {}).forEach(function (k) { fs.writeFileSync(path.join(dir, k + '.wav'), Buffer.from(res.wavs[k], 'base64')); });
+    delete res.wavs;
     fs.writeFileSync(path.join(dir, 'results.json'), JSON.stringify(res, null, 1));
     res.cases.forEach(function (c) {
       console.log('\n== ' + c.name);
-      console.log('tempo ' + (c.tempo ? c.tempo.bpm : c.bpm.value) + ' (error ' + c.tempoError + ' BPM), offset error ' + c.offsetErrorMs + ' ms' + (c.tempo ? ', confidence ' + c.tempo.confidence + ', downbeat confidence ' + c.tempo.downbeatConfidence + ', grid rms ' + c.tempo.gridRmsMs + ' ms' : ''));
+      console.log('tempo ' + (c.tempo ? c.tempo.bpm : c.bpm.value) + ' (error ' + c.tempoError + ' BPM), offset ' + (c.offsetVsAudibleMs == null ? '' : c.offsetVsAudibleMs + ' ms from the audible start of bar 1 (' + Math.round(c.audibleStart * 10000) / 10 + ' ms; scheduled 50 ms), ') + c.offsetErrorMs + ' ms from the scheduled time' + (c.tempo ? ', confidence ' + c.tempo.confidence + ', downbeat confidence ' + c.tempo.downbeatConfidence + ', grid rms ' + c.tempo.gridRmsMs + ' ms' : ''));
       (c.voices || []).forEach(function (v) { console.log('  ' + v.voice + ': steps recall ' + v.withReadGrid.recall.toFixed(2) + ' precision ' + v.withReadGrid.precision.toFixed(2) + ' (' + v.withReadGrid.found + '/' + v.withReadGrid.truth + ', ' + v.withReadGrid.extra + ' extra), vel error median ' + v.withReadGrid.velErrMedian + '; true grid recall ' + v.withTrueGrid.recall.toFixed(2)); });
       if (c.mixSteps) console.log('  full mix steps (any voice): recall ' + c.mixSteps.recall.toFixed(2) + ' precision ' + c.mixSteps.precision.toFixed(2));
       if (c.withReadGrid) { var s = c.withReadGrid; console.log('  notes ' + s.found + '/' + s.truth + ' (' + s.recall.toFixed(2) + '), len right ' + s.lenRight + ', slides ' + s.slidesFound + '/' + s.slides + ' (+' + s.slideFalse + ' false), accent right ' + s.accentRight + ', wrong pitch ' + s.wrongPitch + ' (octave ' + s.octaveOff + '), extra ' + s.extra + '; true grid ' + c.withTrueGrid.found + '/' + c.withTrueGrid.truth); console.log('  first 2 bars read: ' + c.sample); }

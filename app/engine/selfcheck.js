@@ -1069,7 +1069,7 @@ function section10() {
   var got = 0, extra = 0; st.cells.forEach(function (c, i) { if (c && want[i]) got++; else if (c) extra++; });
   ok(st.bars === 8 && got === Object.keys(want).length && extra === 0, 'steps: every hit of the loop on its sixteenth (' + got + ' of ' + Object.keys(want).length + ', ' + extra + ' extra)');
   var kv = st.cells[0].vel, hv = st.cells[1].vel;
-  ok(kv === 1 && hv < kv, 'steps: velocity from the hit level (kick ' + kv + ', hat ' + hv + ')');
+  ok(kv > hv && st.cells[4].vel === 1, 'steps: velocity from the hit level (kick and snare together loudest) (kick ' + kv + ', hat ' + hv + ')');
   var line = synthLine(125, 0.05, 4, SR10), nt = I.notes({ data: line.L, sampleRate: SR10 }, { bpm: 125, offset: 0.05, bars: 4 }), nOk = 0, lOk = 0, sOk = 0, aOk = 0;
   line.ev.forEach(function (e) { var c = nt.cells[e.step]; if (c && c.note === e.note) { nOk++; if (c.len === e.len) lOk++; if (!!c.slide === !!e.slide) sOk++; if (!!c.acc === !!e.acc) aOk++; } });
   ok(nOk >= 0.9 * line.ev.length && lOk >= 0.85 * nOk && sOk === nOk && aOk === nOk, 'notes: ' + nOk + ' of ' + line.ev.length + ' notes (step and pitch), len ' + lOk + ', slide ' + sOk + ', accent ' + aOk);
@@ -1089,10 +1089,10 @@ function section10() {
   host.on('ab', function (e) { abEv.push(e.state); }); host.on('reference', function (e) { refEv.push(e.status); });
   return host.start().then(function () {
     ok(host.reference() === null && host.ab() === 'song' && host.ab('reference') === 'song' && abEv.length === 0, 'no reference: ab stays on song, no event');
-    return host.setReference(new ArrayBuffer(SR10 * 4), { offset: 0.5, name: 'original.wav' });
+    return host.setReference(new ArrayBuffer(SR10 * 40), { offset: 0.5, name: 'original.wav' });
   }).then(function (r) {
     var rf = host.reference(), b = host.buffer(rf.id);
-    b.getChannelData(0).set(loop.L.subarray(0, b.length)); b.getChannelData(1).set(loop.L.subarray(0, b.length));
+    b.getChannelData(0).set(loop.L); b.getChannelData(1).set(loop.L);
     ok(r === true && rf.ready && rf.gain === 1 && rf.offset === 0.5 && rf.name === 'original.wav' && host.document().reference.audio === rf.id && refEv[0] === 'set', 'setReference loads the file and stores {audio, gain, offset}');
     ok(host.audio().filter(function (a) { return a.id === rf.id; })[0].usedBy.indexOf('reference') >= 0 && host.editor().canUndo(), "the reference keeps its audio entry ('reference' in usedBy) and is one undo step");
     var s = host.engine(), outs = s.out.connections, ab = outs.filter(function (n) { return n !== s.analyser; });

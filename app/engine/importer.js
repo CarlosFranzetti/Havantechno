@@ -68,29 +68,29 @@
   }
   function hann(n) { var w = new Float64Array(n); for (var i = 0; i < n; i++) w[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / n); return w; }
 
-  // spectral flux on log magnitudes (half-wave rectified). Frame f is centred at (f*hop + N/2)/sr seconds.
+  // spectral flux on log magnitudes (half-wave rectified). Frame f is centred at f*hop/sr seconds.
   // o.low: also a flux restricted to bins under o.low Hz. Input is normalised to its peak first.
   function flux(x, sr, N, hop, o) {
     o = o || {};
-    var nF = x.length >= N ? Math.floor((x.length - N) / hop) + 1 : 0, w = hann(N), half = N / 2 + 1;
+    var nF = x.length >= N ? Math.floor(x.length / hop) + 1 : 0, w = hann(N), half = N / 2 + 1, h2 = N / 2, len = x.length;
     var env = new Float32Array(nF), low = o.low ? new Float32Array(nF) : null, lowBin = o.low ? Math.max(1, Math.round(o.low * N / sr)) : 0;
     var re = new Float64Array(N), im = new Float64Array(N), prev = new Float64Array(half), cur = new Float64Array(half);
     var pk = peakAbs(x) || 1, g = 1 / pk, i, f;
     for (f = 0; f < nF; f++) {
-      var s = f * hop;
-      for (i = 0; i < N; i++) { re[i] = x[s + i] * g * w[i]; im[i] = 0; }
+      var s = f * hop - h2;                                   // frames are centred on f*hop (zeros before the start)
+      for (i = 0; i < N; i++) { var j = s + i; re[i] = (j >= 0 && j < len ? x[j] : 0) * g * w[i]; im[i] = 0; }
       fft(re, im);
       var sum = 0, sl = 0;
       for (i = 0; i < half; i++) {
         var m = Math.log(1 + 100 * Math.sqrt(re[i] * re[i] + im[i] * im[i]));
         cur[i] = m;
         var d = m - prev[i];
-        if (d > 0 && f > 0) { sum += d; if (i < lowBin) sl += d; }
+        if (d > 0) { sum += d; if (i < lowBin) sl += d; }          // frame 0 against silence: a hit at the very start counts
       }
       env[f] = sum; if (low) low[f] = sl;
       var tmp = prev; prev = cur; cur = tmp;
     }
-    return { env: env, low: low, hop: hop, N: N, sr: sr, t0: N / 2 / sr, dt: hop / sr };
+    return { env: env, low: low, hop: hop, N: N, sr: sr, t0: 0, dt: hop / sr };
   }
   function movingMean(e, half) {
     var n = e.length, out = new Float32Array(n), s = 0, a = 0, b = -1, i;
@@ -103,26 +103,29 @@
     return out;
   }
 
-  // the first rise of a hit near t (seconds): the first sample where the rectified signal, smoothed over 1 ms, crosses
-  // a quarter of the way from the level just before the window to the hit's peak
+  // the rise of a hit near t (seconds): an rms envelope in 0.5 ms blocks over [t - before, t + after]; from the loudest
+  // block, walk back while the envelope stays over 30 % of the way up from the level at the window's start. Walking
+  // back from the peak keeps the noise of an earlier hit's tail from triggering it early.
   function refineOnset(x, sr, t, before, after) {
-    var a = Math.max(1, Math.round((t - before) * sr)), b = Math.min(x.length - 1, Math.round((t + after) * sr)), w = Math.max(1, Math.round(0.001 * sr));
-    if (b <= a + w) return t;
-    var pk = 0, pi = a, i, s = 0;
-    for (i = a; i <= b; i++) { var v = x[i] < 0 ? -x[i] : x[i]; if (v > pk) { pk = v; pi = i; } }
-    var b0 = Math.max(0, a - Math.round(0.01 * sr)), base = 0;
-    for (i = b0; i < a; i++) base = Math.max(base, x[i] < 0 ? -x[i] : x[i]);
-    if (pk <= base * 1.2) return t;
-    var th = base + 0.25 * (pk - base);
-    for (i = a; i <= pi; i++) {
-      s = 0; for (var k = 0; k < w && i + k < x.length; k++) s = Math.max(s, x[i + k] < 0 ? -x[i + k] : x[i + k]);
-      if (s >= th) {
-        // walk back to the first sample of that millisecond that crosses
-        for (var j = i; j < i + w; j++) if ((x[j] < 0 ? -x[j] : x[j]) >= th) return j / sr;
-        return i / sr;
-      }
-    }
-    return pi / sr;
+    var r1 = riseIn(x, sr, t, before, after, false), r2 = riseIn(x, sr, t, before, after, true);
+    // the signal or its first difference, whichever rises more clearly (a hat over a kick's tail rises in the second)
+    var r = !r1 ? r2 : !r2 ? r1 : (r2.ratio > r1.ratio * 1.5 ? r2 : r1);
+    return r ? r.t : t;
+  }
+  function riseIn(x, sr, t, before, after, diff) {
+    var a = Math.max(1, Math.round((t - before) * sr)), b = Math.min(x.length, Math.round((t + after) * sr)), w = Math.max(4, Math.round(0.0005 * sr));
+    var nb = Math.floor((b - a) / w);
+    if (nb < 4) return null;
+    var e = new Float64Array(nb), k, i, kp = 0, v;
+    for (k = 0; k < nb; k++) { var s2 = 0; for (i = a + k * w; i < a + (k + 1) * w; i++) { v = diff ? x[i] - x[i - 1] : x[i]; s2 += v * v; } e[k] = Math.sqrt(s2 / w); if (e[k] > e[kp]) kp = k; }
+    var nb0 = Math.max(1, Math.min(kp, Math.round(0.004 * sr / w))), base = Infinity;
+    for (k = 0; k < nb0; k++) base = Math.min(base, e[k]);
+    if (!(e[kp] > base * 1.2)) return null;
+    var th = base + 0.3 * (e[kp] - base);
+    for (k = kp; k > 0 && e[k - 1] >= th; k--) {}
+    var thA = th * 1.2, at = (a + k * w) / sr;
+    for (i = a + Math.max(0, k - 1) * w; i < a + (k + 1) * w; i++) { v = diff ? x[i] - x[i - 1] : x[i]; if ((v < 0 ? -v : v) >= thA) { at = i / sr; break; } }
+    return { t: at, ratio: e[kp] / Math.max(base, 1e-9) };
   }
 
   // onsets: flux peaks over an adaptive threshold, refined in time, with each hit's peak level.
@@ -134,12 +137,12 @@
     var mean = movingMean(e, Math.max(2, Math.round(0.15 / F.dt))), pmax = 0, i;
     for (i = 0; i < n; i++) if (e[i] > pmax) pmax = e[i];
     var floor = (o.floor == null ? 0.08 : o.floor) * pmax, near = Math.max(1, Math.round(0.02 / F.dt)), out = [], minGap = o.minGap || 0.03;
-    for (i = 1; i < n - 1; i++) {
+    for (i = 0; i < n - 1; i++) {
       if (e[i] < floor || e[i] < mean[i] * 1.4) continue;
       var isMax = true;
       for (var k = Math.max(0, i - near); k <= Math.min(n - 1, i + near); k++) if (e[k] > e[i] || (e[k] === e[i] && k < i)) { isMax = false; break; }
       if (!isMax) continue;
-      var tc = i * F.dt + F.t0, t = refineOnset(x, sr, tc, 0.75 * N / fsr, 1.0 * N / fsr);
+      var tc = i * F.dt + F.t0, t = refineOnset(x, sr, tc, 0.008, 0.010);   // the flux peak of a centred frame sits within a few ms of the hit
       // a new hit raises the level: a flux peak inside a ringing hit (a kick's sweep) does not
       // (checked on the signal and on its first difference, which a hat over a kick's tail raises and a sweep does not)
       var after = rmsAt(x, sr, t, t + 0.012), before = rmsAt(x, sr, t - 0.014, t - 0.002);
@@ -206,16 +209,15 @@
     // phase from the fold, then tempo and phase fitted to the refined onset times (least squares of onset time
     // against its sixteenth index, twice), so the grid lands within a millisecond or two on clean material
     var phase = (fold.bin + 0.5) / BINS * P;                               // frame centres are already in F.t0
-    // the fold's peak can be an off-beat (hats); the beat is the sixteenth of the four with the most low-band energy
-    var lowFold = foldScore(F.low, dt, F.t0, P, BINS), q4 = BINS / 4, bestQ = 0, bestLow = -1;
-    if (lowFold.total > 0) for (var q = 0; q < 4; q++) {
-      var bq = (fold.bin + q * q4) % BINS, lv = lowFold.hist[bq] + 0.5 * (lowFold.hist[(bq + BINS - 1) % BINS] + lowFold.hist[(bq + 1) % BINS]);
-      if (lv > bestLow * 1.05) { bestLow = lv; bestQ = q; }
-    }
-    phase = ((fold.bin + bestQ * q4) % BINS + 0.5) / BINS * P;
     var hits = onsets(m, { floor: 0.1 }), hitsT = hits, hitsTop = 0, latency = 0, fitN = 0, fitRms = null;
     hits.forEach(function (h) { if (h.peak > hitsTop) hitsTop = h.peak; });
     var strong = hits.filter(function (h) { return h.peak >= 0.15 * hitsTop; });
+    // the fold's peak can be an off-beat (hats): the beat is the sixteenth of the four whose hits carry the most
+    // low-frequency energy (kicks; under about 150 Hz, two one-pole lowpasses)
+    var lp = lowpass2(m.x, m.sr, 150), lowAt = [0, 0, 0, 0], q;
+    strong.forEach(function (h) { var u = Math.round((h.t - phase) / sd); h.low = rmsAt(lp, m.sr, h.t, h.t + 0.03); lowAt[((u % 4) + 4) % 4] += h.low; });
+    var bestQ = 0; for (q = 1; q < 4; q++) if (lowAt[q] > lowAt[bestQ] * 1.02) bestQ = q;
+    phase += bestQ * sd;
     function pairs(sdv, ph, tol) { var out = []; strong.forEach(function (h) { var u = (h.t - ph) / sdv, k = Math.round(u); if (Math.abs(u - k) < tol && k % 2 === 0) out.push([k, h.t]); }); return out; }   // even sixteenths: swing moves the odd ones
     function fit(pp, fixedSd) {
       var n2 = pp.length, sk = 0, st = 0, skk = 0, skt = 0, j;
@@ -258,7 +260,7 @@
     if (gap < 0.1 && (order[1] === startBeat)) db = startBeat;
     var dbConf = clamp(gap * 2, 0, 1);
     var off = phase + db * P;
-    off = ((off % bar) + bar) % bar;
+    off = (((off + 0.25 * P) % bar) + bar) % bar - 0.25 * P;               // a hit right at the start is bar 1
     var first = hits.length ? hits[0].t : 0;
     while (off < first - 0.25 * P) off += bar;
     var conf = clamp((peakRatio - 1.5) / 6, 0, 1);
@@ -267,10 +269,12 @@
   }
 
   // ------------------------------------------------------------------ grid helpers
+  // whole bars from the offset to the end; a last part bar counts when it holds more than 0.3 of a bar (not a tail)
+  function barsFor(dur, off, bpm) { return Math.max(1, Math.ceil((dur - off) / (240 / bpm) - 0.3)); }
   function gridOf(m, o) {
     o = o || {};
     var bpm = o.bpm > 0 ? o.bpm : 120, off = typeof o.offset === 'number' ? o.offset : 0, sd = 15 / bpm;
-    var bars = o.bars > 0 ? (o.bars | 0) : Math.max(1, Math.ceil((m.duration - off) / (16 * sd) - 0.25));
+    var bars = o.bars > 0 ? (o.bars | 0) : barsFor(m.duration, off, bpm);
     return { bpm: bpm, offset: off, sd: sd, bars: bars, n: bars * STEPS };
   }
   function emptyCells(n) { var c = []; for (var i = 0; i < n; i++) c.push(null); return c; }
@@ -330,6 +334,11 @@
     var tau = best + clamp(sh, -1, 1);
     return { hz: sr / tau, clarity: clamp(1 - x1, 0, 1) };
   }
+  function lowpass2(x, sr, hz) {
+    var a = 1 - Math.exp(-2 * Math.PI * hz / sr), y = new Float32Array(x.length), s1 = 0, s2 = 0;
+    for (var i = 0; i < x.length; i++) { s1 += a * (x[i] - s1); s2 += a * (s1 - s2); y[i] = s2; }
+    return y;
+  }
   function diffRms(x, sr, t0, t1) { var a = Math.max(1, Math.round(t0 * sr)), b = Math.min(x.length, Math.round(t1 * sr)), s = 0; for (var i = a; i < b; i++) { var d = x[i] - x[i - 1]; s += d * d; } return b > a ? Math.sqrt(s / (b - a)) : 0; }
   function rmsAt(x, sr, t0, t1) { var a = Math.max(0, Math.round(t0 * sr)), b = Math.min(x.length, Math.round(t1 * sr)), s = 0; for (var i = a; i < b; i++) s += x[i] * x[i]; return b > a ? Math.sqrt(s / (b - a)) : 0; }
   function notes(buffer, o) {
@@ -379,6 +388,9 @@
   function fold(v, o) {
     o = o || {};
     var agree = o.agree == null ? 0.9 : o.agree, maxBars = o.maxBars || 16, kind = o.kind || 'drum', lens = [1, 2, 4, 8, 16];
+    // bars after the last hit (the end of the file, a fade) do not count against a repeat
+    var lastBar = -1; for (var z = v.cells.length - 1; z >= 0; z--) if (v.cells[z]) { lastBar = Math.floor(z / STEPS); break; }
+    if (lastBar >= 0 && lastBar + 1 < v.bars) v = { bars: lastBar + 1, cells: v.cells.slice(0, (lastBar + 1) * STEPS) };
     for (var li = 0; li < lens.length; li++) {
       var Lb = lens[li];
       if (Lb > maxBars || v.bars < 2 * Lb) continue;
@@ -583,7 +595,7 @@
       var bufs = o.buffers || {}, any = null;
       for (var k in bufs) if (has(bufs, k) && bufs[k]) { try { any = input(bufs[k]); } catch (e) { any = null; } if (any) break; }
       var d = dur || (any ? any.duration : 16 * 240 / bpm);
-      bars = Math.max(1, Math.ceil((d - off) / (240 / bpm) - 0.25));
+      bars = barsFor(d, off, bpm);
     }
     var used = {}; (o.existing || []).forEach(function (n) { used[n] = true; });
     var tracks = [], play = {};

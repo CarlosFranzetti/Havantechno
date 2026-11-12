@@ -330,6 +330,7 @@
           var go = function () {
             try {
               live = true;
+              measureLatency();
               rebuild(true);
               emit('document', { reason: 'start', rebuilt: true });
               if (missingIds().length) host.reloadAudio(lastAudioOpts);
@@ -1057,7 +1058,28 @@
     // Graph on a live context: seq.out -> abSong -> destination; source -> per-source fade gain -> ref.gain
     // (doc.reference.gain) -> abRef -> destination. Reference time at song step s is offset + s * stepSec.
     var XFADE = 0.01, SRC_FADE = 0.004;
-    var ref = { state: 'song', abSong: null, abRef: null, gain: null, cur: null, nodeCtx: null };
+    var ref = { state: 'song', abSong: null, abRef: null, gain: null, cur: null, nodeCtx: null, latency: 0, latencyCtx: null };
+    // the master chain delays the song (its compressors look ahead: 19.3 ms in Chromium, measured 2026-11-11), so the
+    // reference starts that much later to line up with what is heard. Measured once per context: a click through a
+    // fresh Processors.master on an OfflineAudioContext at the context's rate, first sample over 1 % of the peak.
+    function measureLatency() {
+      var OAC = root.OfflineAudioContext || root.webkitOfflineAudioContext, Pr = root.Processors;
+      if (!OAC || !Pr || typeof Pr.master !== 'function' || !ctx || ref.latencyCtx === ctx) return;
+      ref.latencyCtx = ctx;
+      try {
+        var sr = ctx.sampleRate || 44100, oc = new OAC(2, Math.round(sr * 0.25), sr), m = Pr.master(oc), b = oc.createBuffer(1, 32, sr), src = oc.createBufferSource(), d = b.getChannelData(0);
+        for (var i = 0; i < 32; i++) d[i] = 0.5 * (1 - i / 32);
+        src.buffer = b; src.connect(m.input); m.output.connect(oc.destination); src.start(0.02);
+        var p = oc.startRendering(), done = function (out) {
+          if (!out || typeof out.getChannelData !== 'function') return;
+          var x = out.getChannelData(0), pk = 0, k;
+          for (k = 0; k < x.length; k++) pk = Math.max(pk, Math.abs(x[k]));
+          if (!(pk > 0)) return;
+          for (k = 0; k < x.length; k++) if (Math.abs(x[k]) > 0.01 * pk) { ref.latency = clamp(k / sr - 0.02, 0, 0.1); break; }
+        };
+        if (p && p.then) p.then(done, function () {}); else oc.oncomplete = function (e) { done(e.renderedBuffer); };
+      } catch (e) { warn('latency measurement failed: ' + (e && e.message)); }
+    }
     function refDoc() { var r = ed && ed.doc.reference; return (r && typeof r === 'object' && r.audio) ? r : null; }
     function num(v, d) { v = Number(v); return v === v && isFinite(v) ? v : d; }
     function rampTo(p, v, now, dur) {
@@ -1099,8 +1121,9 @@
       if (!live || !ctx || !seq) return;
       var now = ctx.currentTime;
       if (!(t >= now)) t = now;
-      fadeOutRef(ref.cur, t); ref.cur = null;
+      fadeOutRef(ref.cur, t + ref.latency); ref.cur = null;
       if (!buf || !ensureRefNodes()) return;
+      t += ref.latency;
       var pos = num(r.offset, 0) + step * seq.stepSec(), dur = typeof buf.duration === 'number' ? buf.duration : buf.length / buf.sampleRate;
       if (pos >= dur) return;
       try {
@@ -1145,7 +1168,7 @@
     host.reference = function () {
       var r = refDoc(); if (!r) return null;
       var a = audioMap()[r.audio] || {}, b = getBuffer(r.audio);
-      return { id: r.audio, name: a.name || r.audio, duration: b ? b.duration : (a.duration == null ? null : a.duration), gain: num(r.gain, 1), offset: num(r.offset, 0), ready: !!b };
+      return { id: r.audio, name: a.name || r.audio, duration: b ? b.duration : (a.duration == null ? null : a.duration), gain: num(r.gain, 1), offset: num(r.offset, 0), ready: !!b, latency: ref.latency };
     };
     // source: as host.loadAudio takes, or the id of an entry already in doc.audio; null removes the reference.
     // One undo step. Resolves true when the document changed.
