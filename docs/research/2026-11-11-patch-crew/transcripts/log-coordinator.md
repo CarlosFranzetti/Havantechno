@@ -122,3 +122,14 @@ L2's hand-back (log sections 9 to 12 of docs/research/2026-11-09-lab-crew/transc
 Run here: analysis-check OK: 47, exit 0. L2's five truth-set scores were not repeated. The coordinator ran tools/analyze.js on three renders it had not seen (the Render Room's HVT-303 line, HVT-D bass and HVT-106 chords, rendered by the coordinator's own script): recreation tb303, modeld and juno respectively, each at low confidence by rule; mono, mono, poly; subtractive high on the two monos. Two wrong or empty readings on the dry HVT-D bass: "reverb yes, RT60 1.56 s" at low confidence (it is the patch's own release; the file is mono, where the tool has only bandwidth to go on), and synth or sample "unknown" because fewer than three onsets were found in a line of 32 notes with little gap.
 
 Rulings: tools/analyze.js as the command name stands. drumlib.js is generated and must be rebuilt when drums.js changes (the coordinator's noise-offset edit predates L2's build of it). The reference-stem table stays in the log; it is not evidence about the record until a stem with known truth has gone through the separator.
+
+## 2026-11-12 03:10 EST (08:10 UTC) — second round: the owner's "Let's focus on the 303"
+
+The owner wrote "Let's workshop a new name" and then "Let's focus on the 303". The coordinator offered a first slate of app names and asked which thing is to be renamed; no answer yet, nothing renamed. The second message is read as: make the HVT-303 right before anything else (BRIEF-303-focus.md states the reading and will be amended if the owner meant something narrower).
+
+Dispatched, all three resumed from their first-round transcripts:
+- P1: a second research pass, written as a new file P1-303-second-pass.md, on the accent circuit and the diode ladder (hosts www.firstpr.com.au and www.timstinchcombe.co.uk, allowed since the first round) and any primary document; each correction with its source, its kind (measured, from the schematic, secondary) and the exact change for the build; the hardware's sequencer and panel in words.
+- P5: tools/tb303-bench.js (a repeatable characterisation on the worklet path with --compare) and demos of the classic knob moves, dry and through mild drive; then P1's corrections when they arrive. Ruling: no new public parameter without a line to the coordinator; the frozen names stay.
+- P4: app/solo/303.html, a single-instrument page on the real engine files and the real panel, usable on a 390 px phone, started by a tap, saying so when it runs the fallback, with original stored patterns (ruling: no transcription of a specific record's line), every fetched file listed so the coordinator can publish it as a static bundle for the owner; the hardware's layout and sequencer functions later, from P1.
+
+Held for later: the analysis rules that labelled a tb303 line as modeld (app/analysis/) and tempo from a bass line alone (importer.js).
