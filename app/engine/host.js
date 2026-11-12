@@ -1278,14 +1278,20 @@
     // stems: [{name, source | id | buffer}] (names drums, bass, other, vocals, or mix for a file with no stems).
     // Loads, reads the tempo, runs Analysis.report on each stem (a drums stem or a lone mix in three bands), builds
     // tracks with Importer.build, stores doc.analysis and commits (one undo step). o: {onProgress, source, separator,
-    // unverified, tempo, maxSeconds}. A document with no tracks takes the analysis's tempo and its one section;
+    // unverified, tempo, maxSeconds, signal}. An aborted signal stops it at the next stage (AbortError), before any edit. A document with no tracks takes the analysis's tempo and its one section;
     // otherwise the tracks are added and the section appended. Tracks an earlier analysis built are replaced.
     host.analyze = function (stems, o) {
       o = o || {};
       var A = root.Analysis, I = root.Importer;
       if (!A || !A.report || !A.dsp || !I) return Promise.reject(new Error('Host.analyze: load app/analysis/ (dsp, features, decide, drumlib, report) and engine/importer.js'));
       if (!isArr(stems) || !stems.length) return Promise.reject(new Error('Host.analyze: no stems'));
-      function prog(stage, done, total, note) { if (typeof o.onProgress === 'function') { try { o.onProgress({ stage: stage, done: done, total: total, note: note }); } catch (e) {} } }
+      var progWarned = false;
+      function prog(stage, done, total, note) {
+        if (typeof o.onProgress !== 'function') return;
+        try { o.onProgress({ stage: stage, done: done, total: total, note: note }); }
+        catch (e) { if (!progWarned) { progWarned = true; warn('analyze: onProgress threw (' + (e && e.message) + '); further throws are not logged'); } }
+        if (o.signal && o.signal.aborted && !(stage === 'build' && done > 0)) { var ae = new Error('Host.analyze: cancelled'); ae.name = 'AbortError'; throw ae; }
+      }
       var g = gen, list = stems.map(function (s) { return { name: String(s.name || 'mix').toLowerCase(), raw: s }; }), ids = [];
       prog('decode', 0, list.length, 'loading stems');
       return list.reduce(function (p, st, i) {

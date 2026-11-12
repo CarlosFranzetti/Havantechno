@@ -145,8 +145,8 @@
       var tc = i * F.dt + F.t0, t = refineOnset(x, sr, tc, 0.008, 0.010);   // the flux peak of a centred frame sits within a few ms of the hit
       // a new hit raises the level: a flux peak inside a ringing hit (a kick's sweep) does not
       // (checked on the signal and on its first difference, which a hat over a kick's tail raises and a sweep does not)
-      var after = rmsAt(x, sr, t, t + 0.012), before = rmsAt(x, sr, t - 0.014, t - 0.002);
-      if (before > 1e-5 && after < 1.3 * before && diffRms(x, sr, t, t + 0.012) < 1.6 * diffRms(x, sr, t - 0.014, t - 0.002)) continue;
+      var after = rmsAt(x, sr, t, t + 0.025), before = rmsAt(x, sr, t - 0.027, t - 0.002);   // 25 ms: a period of a low note
+      if (before > 1e-5 && after < 1.3 * before && diffRms(x, sr, t, t + 0.025) < 1.6 * diffRms(x, sr, t - 0.027, t - 0.002)) continue;
       if (out.length && t - out[out.length - 1].t < minGap) { if (e[i] > out[out.length - 1].strength) out.pop(); else continue; }
       out.push({ t: t, strength: e[i] });
     }
@@ -214,9 +214,17 @@
     var strong = hits.filter(function (h) { return h.peak >= 0.15 * hitsTop; });
     // the fold's peak can be an off-beat (hats): the beat is the sixteenth of the four whose hits carry the most
     // low-frequency energy (kicks; under about 150 Hz, two one-pole lowpasses)
-    var lp = lowpass2(m.x, m.sr, 150), lowAt = [0, 0, 0, 0], q;
-    strong.forEach(function (h) { var u = Math.round((h.t - phase) / sd); h.low = rmsAt(lp, m.sr, h.t, h.t + 0.03); lowAt[((u % 4) + 4) % 4] += h.low; });
-    var bestQ = 0; for (q = 1; q < 4; q++) if (lowAt[q] > lowAt[bestQ] * 1.02) bestQ = q;
+    // plus half the weight of mid-band (150 Hz to 4 kHz: snares, claps) energy, the backbeat that sits on beats too
+    var lp = lowpass2(m.x, m.sr, 150), lp4 = lowpass2(m.x, m.sr, 4000), mid = new Float32Array(lp.length), lowAt = [0, 0, 0, 0], midAt = [0, 0, 0, 0], q;
+    for (i = 0; i < mid.length; i++) mid[i] = lp4[i] - lp[i];
+    strong.forEach(function (h) { var u = Math.round((h.t - phase) / sd), k = ((u % 4) + 4) % 4; h.low = rmsAt(lp, m.sr, h.t, h.t + 0.08); h.mid = rmsAt(mid, m.sr, h.t, h.t + 0.08); lowAt[k] += h.low; midAt[k] += h.mid; });
+    var lM = Math.max.apply(null, lowAt) || 1, mM = Math.max.apply(null, midAt) || 1, qs = [0, 1, 2, 3].map(function (k) { return lowAt[k] / lM + 0.5 * midAt[k] / mM; });
+    strong.forEach(function (h) { h.kick = h.low * h.low / Math.max(1e-9, h.low + h.mid); });   // low energy, weighted by how much of the hit is low
+    var bestQ = 0; for (q = 1; q < 4; q++) if (qs[q] > qs[bestQ] * 1.02) bestQ = q;
+    // the start prior: music usually starts on a beat. The sixteenth of the first strong hit stays the beat unless
+    // another reads clearly more like one (1.6 times)
+    var firstHit = null; for (i = 0; i < strong.length; i++) if (strong[i].peak >= 0.3 * hitsTop) { firstHit = strong[i]; break; }
+    if (firstHit) { var fq = ((Math.round((firstHit.t - phase) / sd) % 4) + 4) % 4; if (qs[bestQ] < 1.6 * qs[fq]) bestQ = fq; }
     phase += bestQ * sd;
     function pairs(sdv, ph, tol) { var out = []; strong.forEach(function (h) { var u = (h.t - ph) / sdv, k = Math.round(u); if (Math.abs(u - k) < tol && k % 2 === 0) out.push([k, h.t]); }); return out; }   // even sixteenths: swing moves the odd ones
     function fit(pp, fixedSd) {
@@ -244,21 +252,22 @@
     P = 4 * sd;
     phase = ((phase % P) + P) % P;
     latency = phase - phase0;
-    // downbeat: the beat of four with the most low-band (kick) onset energy and the least mid-band (snare, clap)
-    // energy above it; when two beats read alike, the one the music starts on
-    var lowE = F.low, sums = [0, 0, 0, 0], mids = [0, 0, 0, 0], bar = 4 * P;
-    for (i = 0; i < n; i++) {
-      var t = i * dt + F.t0, u2 = (t - phase) / P, k2 = Math.round(u2);
-      if (Math.abs(u2 - k2) > 0.12) continue;
-      var bk = ((k2 % 4) + 4) % 4;
-      sums[bk] += lowE[i]; mids[bk] += F.env[i] - lowE[i];
+    // downbeat: the beat of four whose hits carry the most kick: low-band energy weighted by its share of the hit (a
+    // kick alone scores more than a kick under a clap), read on the refined hits (a frame flux misses a kick that follows another kick a sixteenth before);
+    // when two beats read within 0.1, the one the music starts on
+    var sums = [0, 0, 0, 0], mids = [0, 0, 0, 0], bar = 4 * P, nBeats = Math.floor((m.duration - phase) / P);
+    // read at the grid's beat times, not at detected hits (a kick right after another can go undetected)
+    for (var bt = 0; bt < nBeats; bt++) {
+      var tb = phase + bt * P, lo = rmsAt(lp, m.sr, tb, tb + 0.08), mi = rmsAt(mid, m.sr, tb, tb + 0.08);
+      sums[bt % 4] += lo * lo / Math.max(1e-9, lo + mi); mids[bt % 4] += mi;
     }
-    var lmax = Math.max.apply(null, sums) || 1, mmax = Math.max.apply(null, mids) || 1, score = [0, 1, 2, 3].map(function (k) { return sums[k] / lmax - 0.5 * mids[k] / mmax; });
+    var lmax = Math.max.apply(null, sums) || 1, score = [0, 1, 2, 3].map(function (k) { return sums[k] / lmax; });
     var first0 = 0; for (i = 0; i < hitsT.length; i++) if (hitsT[i].peak >= 0.3 * hitsTop) { first0 = hitsT[i].t; break; }
     var startBeat = ((Math.round((first0 - phase) / P) % 4) + 4) % 4;
     var order = [0, 1, 2, 3].sort(function (a, b) { return score[b] - score[a]; }), db = order[0], gap = score[order[0]] - score[order[1]];
-    if (gap < 0.1 && (order[1] === startBeat)) db = startBeat;
-    var dbConf = clamp(gap * 2, 0, 1);
+    // the same start prior for the downbeat: the beat the music starts on, unless another carries clearly more kick
+    if (score[order[0]] - score[startBeat] < 0.5) db = startBeat;
+    var dbConf = db === order[0] ? clamp(gap * 2, 0, 1) : 0;                // 0 when the start prior decided
     var off = phase + db * P;
     off = (((off + 0.25 * P) % bar) + bar) % bar - 0.25 * P;               // a hit right at the start is bar 1
     var first = hits.length ? hits[0].t : 0;
@@ -339,6 +348,7 @@
     for (var i = 0; i < x.length; i++) { s1 += a * (x[i] - s1); s2 += a * (s1 - s2); y[i] = s2; }
     return y;
   }
+  function peakAt(x, sr, t) { var a = Math.max(0, Math.round(t * sr)), b = Math.min(x.length, a + Math.round(0.04 * sr)), p = 0; for (var i = a; i < b; i++) { var v = x[i] < 0 ? -x[i] : x[i]; if (v > p) p = v; } return p; }
   function diffRms(x, sr, t0, t1) { var a = Math.max(1, Math.round(t0 * sr)), b = Math.min(x.length, Math.round(t1 * sr)), s = 0; for (var i = a; i < b; i++) { var d = x[i] - x[i - 1]; s += d * d; } return b > a ? Math.sqrt(s / (b - a)) : 0; }
   function rmsAt(x, sr, t0, t1) { var a = Math.max(0, Math.round(t0 * sr)), b = Math.min(x.length, Math.round(t1 * sr)), s = 0; for (var i = a; i < b; i++) s += x[i] * x[i]; return b > a ? Math.sqrt(s / (b - a)) : 0; }
   function notes(buffer, o) {
@@ -565,7 +575,8 @@
       if (type === 'juno' || (el.decisions && el.decisions.monoPoly && el.decisions.monoPoly.value === 'poly')) unver.push('several pitches sound at once: the pattern is a mono line read from a poly part (chords are not transcribed)');
     }
     if (!pat) pat = { bars: o.bars, cells: emptyCells(o.bars * STEPS), stats: { onsets: 0, notes: 0 } };
-    var variant = { bars: pat.bars, cells: pat.cells }, folded = null;
+    var variant = { bars: pat.bars, cells: pat.cells }, folded = null, lastBar = -1;
+    for (var z = pat.cells.length - 1; z >= 0; z--) if (pat.cells[z]) { lastBar = Math.floor(z / STEPS); break; }
     if (method === 'steps' || method === 'notes') {
       var f = fold(variant, { kind: kind, agree: 0.9 });
       if (f) { folded = { bars: f.bars, agreement: f.agreement, from: pat.bars }; variant = { bars: f.bars, cells: f.cells }; }
@@ -579,7 +590,7 @@
       element: el.id, stem: el.stem || null, band: el.band || null,
       recreation: { type: type, suggested: el.recreation ? el.recreation.type : null, confidence: el.recreation ? el.recreation.confidence : 'none', why: el.recreation ? (el.recreation.why || []).slice() : [] },
       decisions: decisionSummary(el.decisions || {}),
-      pattern: { method: method, confidence: pc.confidence, p: pc.p, stats: pat.stats || {}, folded: folded, bpm: o.bpm, offset: o.offset },
+      pattern: { method: method, confidence: pc.confidence, p: pc.p, stats: pat.stats || {}, folded: folded, bpm: o.bpm, offset: o.offset, lastBar: lastBar },
       unverified: unver
     };
     return def;
@@ -603,6 +614,12 @@
       var t = trackFor(el, { buffer: (o.buffers || {})[el.id] || null, bpm: bpm, offset: off, bars: bars, tempoConf: bpmO.confidence, used: used });
       tracks.push(t); play[t.name] = 'A';
     });
+    // the section ends with the last bar any read pattern plays in (a reverb tail or a fade adds no bar)
+    if (!(o.bars > 0)) {
+      var last = -1;
+      tracks.forEach(function (t) { var pa = t.analysis.pattern; if ((pa.method === 'steps' || pa.method === 'notes') && pa.lastBar > last) last = pa.lastBar; });
+      if (last >= 0 && last + 1 < bars) bars = last + 1;
+    }
     return { tracks: tracks, sections: [{ name: o.section || 'import', bars: bars, play: play }], bars: bars };
   }
 

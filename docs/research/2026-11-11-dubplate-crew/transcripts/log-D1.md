@@ -111,3 +111,97 @@ Speed (Node, one core): tempo on 30 s of audio about 0.3 s; `Analysis.report.ste
 (Order among the analysis files is fixed: dsp, features, decide, drumlib, report. `importer.js` needs none of them,
 but `host.analyze` checks for both at call time.) Until then my harness (`tools/importer-check.js --truth`) serves its
 own page with these tags.
+
+## 5. 20:20 (01:20, 12 November): after the usage-limit stop; the coordinator's message and ruling
+
+Received from the coordinator (quoted in short): "you were stopped by the account's usage limit mid-edit ... node
+app/engine/selfcheck.js FAILED 1 of 445, exit 1: your own row 'steps: velocity from the hit level (kick and snare
+together loudest) (kick 0.6, hat 0.3)'. Fix the code or the row, whichever is wrong ... index.html already loads the
+analysis scripts before host.js and importer.js after project.js, so you need no tag. One request from D2, now a
+ruling: Project.importTrack takes opts.signal (an AbortSignal); check it between stages and immediately before the
+save; when aborted, reject with an error whose name is 'AbortError', save nothing, and leave the host's current
+document as it was ... stop swallowing a throw from onProgress silently ... HavantechnoShell.separate(path, {model})
+-> {stems:[{name, path}], model, log, folder, cached?}; ... honour the signal by calling shell.cancelSeparate()."
+
+- **The velocity row was wrong, not the code.** It asked for the kick-and-snare step to read exactly 1.0; the noise in
+  the synthetic snare differs per hit, so only the loudest of the eight bars reads 1.0 and the others 0.95. The row
+  now asks for that step at 0.9 or more and above the kick alone. Section 4 (the tag request) is withdrawn: D2 added
+  the tags.
+- **Abort (ruling).** `Project.importTrack` takes `signal`; checked after decode, after separation, before analysis,
+  after analysis, before the level match and immediately before the save; `host.analyze` also checks it at each
+  progress step before it edits. Aborted: rejects with `name === 'AbortError'`, nothing saved; during a separation
+  `shell.cancelSeparate()` is called from the signal's abort event. The host gets back the document it had (the
+  document is serialised before the import and reloaded on any rejection, abort or error). A throw from `onProgress`
+  is logged once (`console.warn`) and ignored, in both `Project.importTrack` and `host.analyze`. Selfcheck rows added:
+  cancel during separation (cancelSeparate called, AbortError, no save, previous document back), a throwing
+  onProgress, cancel just before the save.
+- **Master-chain latency (found while measuring).** Every engine render's first audible sample is at 69.3 ms for a bar
+  scheduled at 50 ms: the master chain delays the song by 19.3 ms in Chromium (two DynamicsCompressorNodes with
+  look-ahead). The reference played at the scheduled time would run 19 ms ahead of the song in A/B. `host.start` now
+  measures the latency once per context (a click through a fresh `Processors.master` on an OfflineAudioContext, first
+  sample over 1 % of the peak) and the reference starts that much later; `host.reference().latency` reports it.
+  Measured in the browser by the truth harness's renders; the live measurement itself runs only on `host.start` in a
+  page and is not exercised by a Node check (the fake context has no OfflineAudioContext, so latency stays 0 there).
+
+## 6. 20:50 (01:50, 12 November): measurements against truth, and what changed to get them
+
+How: `node tools/importer-check.js --truth` serves the repo with its own page (engine, analysis, importer scripts),
+opens it in headless Chromium (Playwright, `chromium.launch()`), renders SongDocs with `Sequencer.render` (44.1 kHz,
+the master chain on, bar 1 scheduled at 0.05 s, AudioWorklet classics), runs the Importer in the page and scores
+against the documents' cells. Renders and `results.json` go to `tools/out/importer-truth/` (ignored). Offsets are
+scored against the audible start of bar 1 (first sample over 1 % of the peak: 69.3 to 69.4 ms) because of the latency
+above. "Read grid" = the Importer's own tempo and offset; "true grid" = the known tempo and the audible start.
+
+First run (before the changes below): tempo right on every drum case, but the offset two beats or half a beat off on
+both kits (wrong downbeat, wrong beat sixteenth), so read-grid step recall was 0.57 to 0.94 per voice while the
+true-grid recall was 1.00. Changes:
+- Downbeat read at the grid's beat times (low band weighted by its share of the low+mid energy, 80 ms after each beat),
+  not on detected hits: a 909 kick a sixteenth after another kick was not detected as a new hit and its beat scored 0.
+- Beat sixteenth and downbeat both carry a **start prior**: the music is taken to start on beat 1 of bar 1 unless
+  another sixteenth reads 1.6 times more like a beat, or another beat leads by 0.5 in the kick score. On the 909 kit
+  and the song mix the kick score alone picked beat 3 or 4 (bass and clap energy); the prior decided, and
+  `downbeatConfidence` is 0 in that case so the report says it was not measured. A file that opens on a pickup will get
+  bar 1 wrong: stated in the analysis's `unverified` when the downbeat confidence is under 0.3.
+- Onset level checks use 25 ms windows (a 12 ms window is shorter than one period of a 65 Hz note and its first
+  difference spikes once per saw period, which split held bass notes into several); a section ends at the last bar a
+  read pattern plays in (a render's 1 s tail had made a 17th bar).
+
+Results (final run, 01:50 UTC; selfcheck and every check green, section 7):
+
+| Case | Tempo read | Offset vs audible bar 1 | Steps / notes (read grid) |
+|---|---|---|---|
+| 909 kit, 126 BPM, 8 bars, accents | 126.000 | +2.0 ms | bd909 40/40, sd909 22/24, ch909 72/72, cp909 16/16; 0 extra; whole mix 0.82 recall 0.98 precision |
+| 808 kit, 98 BPM, swing 0.4, syncopated | 98.000 | +3.4 ms | bd808 40/40, sd808 24/24, ch808 128/128, cb808 24/24; 0 extra; whole mix 1.00 / 1.00 |
+| tb303 line alone, 128 BPM | 64 (half): FAILS | n/a | true grid: notes 72/72, len 64/72, slides 12/20 (0 false), accents 60/72 |
+| modeld line alone, 122 BPM | 122.000 | wrong bar | true grid: notes 70/72, len 42/72, slides 20/20 but 27 false, accents 50/72 |
+| song import, 16 bars, 124 BPM, stems drums/bass/other | 124.000 | +4.2 ms | see below |
+
+Velocity: median error of the read velocity against the truth (both scaled to their loudest) 0 to 0.2 per voice.
+Tempo from a bass line alone is not reliable (a 303 line read at half tempo, a modeld line with the wrong bar): the
+import reads the tempo from the drums stem (else the mix), which is how these numbers were meant to be used.
+
+Song import (`Project.importTrack` in the page with the mix as the file and three solo-group renders as stems, fake
+shell saving): 34.5 s; saved once; reference set with offset 0.0713 s; level match -9.78 LUFS song against -11.84
+reference, gain +2.06 dB (BS.1770-4, bars 0 to 16, 31 s). Built: kick bd909 (suggested bd909, high), snare cp909
+(suggested cp909, low), hats ma808 (truth ch909; suggested ma808, medium), bass modeld (truth tb303; suggested modeld,
+low), other modeld (truth fm; suggested modeld, low); one section of 16 bars. Patterns against truth: kick steps
+recall 1.00 precision 1.00 (folded to 1 bar); snare band recall 1.00 precision 0.22 (the 150 Hz to 5 kHz band of the
+drums stem also holds the kick's click and the hats: a band is not a separation); hats band 1.00 / 0.71; bass notes
+144/144, slides 32/40, 0 extra (folded to 2 bars); other 16/16. So: tempo, offset and the patterns hold on the
+engine's own material; the recreation types for the pitched parts are wrong in 2 of 2 (the Lab Crew's rules, not
+changed here: `app/analysis/` is not mine) and the hat voice is the wrong machine.
+
+## 7. Checks run at 20:52 (01:52 UTC, 12 November), each directly, exit codes read
+
+`node app/engine/selfcheck.js` OK 448, exit 0; `node tools/importer-check.js` OK 20, exit 0; synths 169, drums 342,
+classics 110, panels 116, faces 2495, system-editor 97, step-view 72, widgets 157, processors 92, analysis 47, all
+exit 0; `node tools/browser-check.js` PASS 26, exit 0; `node tools/importer-check.js --truth` exit 0 (measurements,
+no pass line).
+
+## 8. Not verified
+
+- Nothing here has been run on a real record or on separated stems; every number is the engine's own renders.
+- The live reference player (sync on loop wrap and jump, the latency compensation, the 10 ms A/B ramps) is checked
+  on the fake context only (schedule calls, node graph), not listened to or measured in a running AudioContext.
+- A tempo change inside a track, a non-4/4 bar, a pickup before bar 1 and a 174 BPM break (reads 87) are not handled.
+- Juno and other poly parts are read as a mono line (said in the track's `analysis.unverified`).

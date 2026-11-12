@@ -233,7 +233,10 @@
   }
 
   // ------------------------------------------------------------ import a track (Dubplate Crew, D1)
-  // o: {file, stems, shell, host, onProgress, name, model, matchLevel, maxSeconds (the classifier's excerpt, default 30)}. file: as host.loadAudio takes (a File, the
+  // o: {file, stems, shell, host, onProgress, signal, name, model, matchLevel, maxSeconds (the classifier's excerpt,
+  // default 30)}. signal (an AbortSignal) is checked between stages and right before the save; when aborted the call
+  // rejects with an error named 'AbortError', saves nothing, calls HavantechnoShell.cancelSeparate() during a
+  // separation, and the host gets back the document it had (as on any other failure). file: as host.loadAudio takes (a File, the
   // shell's {name, path, bytes}, bytes, a URL). stems: [{name, source}] or [File] (names read from the file names:
   // drums, bass, other, vocals). Without stems, Electron's HavantechnoShell.separate(path) splits the file when the
   // shell has it; else the analysis reads the mix in bands. Then: a new document, the file as its reference (offset =
@@ -249,14 +252,28 @@
     var host = o.host, sh = shellOf(o), file = o.file;
     if (!host || typeof host.analyze !== 'function' || typeof host.loadAudio !== 'function') return Promise.reject(new Error('Project.importTrack: a host is required'));
     if (!file) return Promise.reject(new Error('Project.importTrack: no file'));
-    function prog(stage, done, total, note) { if (typeof o.onProgress === 'function') { try { o.onProgress({ stage: stage, done: done, total: total, note: note }); } catch (e) {} } }
+    var progWarned = false, sig = o.signal || null;
+    function prog(stage, done, total, note) {
+      if (typeof o.onProgress !== 'function') return;
+      try { o.onProgress({ stage: stage, done: done, total: total, note: note }); }
+      catch (e) { if (!progWarned) { progWarned = true; warn('importTrack: onProgress threw (' + (e && e.message) + '); further throws are not logged'); } }
+    }
+    function aborted() { return !!(sig && sig.aborted); }
+    function abortError() { var e = new Error('Project.importTrack: cancelled'); e.name = 'AbortError'; return e; }
+    function gate(v) { if (aborted()) throw abortError(); return v; }
+    if (aborted()) return Promise.reject(abortError());
     var fname = String(file.name || (typeof file === 'string' ? file : '') || file.path || 'import').split(/[\\/]/).pop();
     var name = o.name || fname.replace(/\.[A-Za-z0-9]{1,5}$/, '') || 'import';
     var doc = { v: 1, name: name, bpm: 120, swing: 0, key: null, progression: [], sends: {}, tracks: [], sections: [{ name: 'import', bars: 1, play: {} }] };
     var refId = null, separator = null, unverified = [], analysis = null, level = null;
+    // the document the host had: put back when the import is cancelled or fails, so nothing of a half import remains
+    var before = null;
+    try { before = SD().save(host.document()); } catch (e) { before = null; }
+    function restoreHost() { if (before == null) return; try { host.loadDocument(before); } catch (e) { warn('importTrack: could not restore the previous document: ' + (e && e.message)); } }
     try { host.loadDocument(doc); } catch (e) { return Promise.reject(e); }
     prog('decode', 0, 1, fname);
     return host.loadAudio(file, { analyze: false }).then(function (id) {
+      gate();
       refId = id;
       prog('decode', 1, 1, fname);
       if (o.stems && o.stems.length) {
@@ -271,10 +288,13 @@
         return null;
       }
       prog('separate', 0, 1, 'separating ' + fname);
-      var off = null;
+      var off = null, onAbort = null;
+      if (sig && typeof sig.addEventListener === 'function' && fn(sh, 'cancelSeparate')) { onAbort = function () { try { sh.cancelSeparate(); } catch (e) {} }; sig.addEventListener('abort', onAbort); }
+      var unhook = function () { if (onAbort) { try { sig.removeEventListener('abort', onAbort); } catch (e) {} onAbort = null; } };
       if (fn(sh, 'onSeparateProgress')) { try { off = sh.onSeparateProgress(function (p) { p = p || {}; prog('separate', p.done == null ? 0 : p.done, p.total == null ? 1 : p.total, p.note || p.message || ''); }); } catch (e) { off = null; } }
       return asPromise(sh.separate(path, { model: o.model })).then(function (r) {
         if (typeof off === 'function') { try { off(); } catch (e) {} }
+        unhook(); gate();
         var list = (r && r.stems) || [];
         separator = { model: (r && r.model) || o.model || null, stems: list.map(function (s) { return s.name; }), log: String((r && r.log) || '').slice(-4000) };
         prog('separate', 1, 1, list.length + ' stems');
@@ -286,28 +306,36 @@
         })).then(function (st) { return st.filter(Boolean); });
       }, function (e) {
         if (typeof off === 'function') { try { off(); } catch (x) {} }
+        unhook(); gate();
         separator = { error: String((e && e.message) || e) };
         unverified.push('separation failed (' + separator.error + '): the analysis read the mix');
         return null;
       });
     }).then(function (stems) {
+      gate();
       var list = stems && stems.length ? stems : [{ name: 'mix', id: refId }];
       var b = host.buffer(refId);
       return host.analyze(list, { onProgress: o.onProgress, separator: separator, unverified: unverified, maxSeconds: o.maxSeconds,
-                                 source: { name: fname, duration: b ? b.duration : null, sampleRate: b ? b.sampleRate : null } });
+                                 source: { name: fname, duration: b ? b.duration : null, sampleRate: b ? b.sampleRate : null }, signal: sig });
     }).then(function (an) {
+      gate();
       analysis = an;
       return host.setReference(refId, { gain: 1, offset: an.bpm.offset });
     }).then(function () {
+      gate();
       if (o.matchLevel === false || typeof host.matchLevel !== 'function') return null;
       prog('build', 0, 1, 'level match');
       return host.matchLevel({ maxBars: 32 }).then(function (r) { level = r; prog('build', 1, 1, r ? 'level match ' + r.gainDb + ' dB' : 'level match not available'); }, function (e) { warn('importTrack: level match failed: ' + (e && e.message)); });
     }).then(function () {
+      gate();                                             // the last check: nothing is written after a cancel
       prog('save', 0, 1, name);
       return save(host.document(), { shell: sh, name: name });
     }).then(function (saved) {
       prog('save', 1, 1, saved ? saved.name : 'not saved');
       return { doc: host.document(), saved: saved, analysis: analysis, level: level };
+    }, function (e) {
+      restoreHost();
+      throw e;
     });
   }
 

@@ -1069,7 +1069,7 @@ function section10() {
   var got = 0, extra = 0; st.cells.forEach(function (c, i) { if (c && want[i]) got++; else if (c) extra++; });
   ok(st.bars === 8 && got === Object.keys(want).length && extra === 0, 'steps: every hit of the loop on its sixteenth (' + got + ' of ' + Object.keys(want).length + ', ' + extra + ' extra)');
   var kv = st.cells[0].vel, hv = st.cells[1].vel;
-  ok(kv > hv && st.cells[4].vel === 1, 'steps: velocity from the hit level (kick and snare together loudest) (kick ' + kv + ', hat ' + hv + ')');
+  ok(kv > hv && st.cells[4].vel >= 0.9 && st.cells[4].vel > kv, 'steps: velocity from the hit level (kick and snare together loudest, ' + st.cells[4].vel + ') (kick ' + kv + ', hat ' + hv + ')');
   var line = synthLine(125, 0.05, 4, SR10), nt = I.notes({ data: line.L, sampleRate: SR10 }, { bpm: 125, offset: 0.05, bars: 4 }), nOk = 0, lOk = 0, sOk = 0, aOk = 0;
   line.ev.forEach(function (e) { var c = nt.cells[e.step]; if (c && c.note === e.note) { nOk++; if (c.len === e.len) lOk++; if (!!c.slide === !!e.slide) sOk++; if (!!c.acc === !!e.acc) aOk++; } });
   ok(nOk >= 0.9 * line.ev.length && lOk >= 0.85 * nOk && sOk === nOk && aOk === nOk, 'notes: ' + nOk + ' of ' + line.ev.length + ' notes (step and pitch), len ' + lOk + ', slide ' + sOk + ', accent ' + aOk);
@@ -1209,7 +1209,22 @@ function section10() {
       var h2 = H.create({ context: ctx3 });
       return h2.start().then(function () { return P.importTrack({ file: bytes(11), host: h2, maxSeconds: 4, shell: { saveFile: function (o) { return Promise.resolve({ path: '/x/' + o.name }); } } }); }).then(function (r2) {
         ok(r2.analysis.elements.length === 3 && r2.analysis.stems[0].name === 'mix' && r2.analysis.unverified.some(function (u) { return /no stems/.test(u); }), 'no stems and no separator: the mix is read in three bands, and the report says so');
-        h.dispose(); h2.dispose();
+        // cancel (D2's request, coordinator's ruling): AbortError, nothing saved, the host keeps its document
+        var keep = sb.SongDoc.save(h2.document()), saves = 0, cancels = 0, sig = { aborted: false, l: [], addEventListener: function (t, f) { this.l.push(f); }, removeEventListener: function () {} };
+        var sh2 = { saveFile: function () { saves++; return Promise.resolve({ path: '/x' }); }, cancelSeparate: function () { cancels++; },
+                    readFile: function () { return Promise.resolve(bytes(22)); },
+                    separate: function () { sig.aborted = true; sig.l.forEach(function (f) { f(); }); return Promise.reject(new Error('cancelled')); } };
+        var thrown = 0;
+        return P.importTrack({ file: { name: 'b.wav', path: '/m/b.wav', bytes: bytes(11) }, host: h2, shell: sh2, signal: sig, maxSeconds: 4, onProgress: function () { thrown++; throw new Error('ui bug'); } }).then(function () { return 'resolved'; }, function (e) { return e.name; }).then(function (nm) {
+          ok(nm === 'AbortError' && saves === 0 && cancels === 1 && sb.SongDoc.save(h2.document()) === keep, 'a cancel during separation: shell.cancelSeparate, AbortError, nothing saved, the previous document back');
+          ok(thrown > 0, 'a throwing onProgress does not stop the import');
+          var sig2 = { aborted: false };
+          return P.importTrack({ file: bytes(11), host: h2, maxSeconds: 4, shell: { saveFile: function () { saves++; return Promise.resolve({ path: '/x' }); } }, signal: sig2,
+            onProgress: function (e) { if (e.stage === 'build' && e.note === 'level match') sig2.aborted = true; } }).then(function () { return 'resolved'; }, function (e) { return e.name; });
+        }).then(function (nm) {
+          ok(nm === 'AbortError' && saves === 0 && sb.SongDoc.save(h2.document()) === keep, 'a cancel just before the save: AbortError, no file, the previous document back');
+          h.dispose(); h2.dispose();
+        });
       });
     });
   });
