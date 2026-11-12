@@ -656,6 +656,8 @@
     on(overlay, 'keyup', function (ev) { if (ev.stopPropagation) ev.stopPropagation(); });
 
     function closeDlg() {
+      stopClock();
+      if (isFn(R.unsub)) { safe(R.unsub); R.unsub = null; }
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
       active = null;
       if (prevFocus && isFn(prevFocus.focus)) safe(function () { prevFocus.focus(); });
@@ -670,7 +672,9 @@
       if (R.cancelled) return;
       R.cancelled = true;
       if (R.abort) safe(function () { R.abort.abort(); });
-      say(R.separating ? 'Cancelling: separation in the desktop app runs to its end, then the result is dropped.' : 'Cancelling: waiting for the current stage to stop…');
+      var stopSep = R.separating && shell && isFn(shell.cancelSeparate);
+      if (stopSep) safe(function () { return Promise.resolve(shell.cancelSeparate()).catch(function () {}); });
+      say(stopSep ? 'Cancelling: the separator is being stopped; the project is restored when the engine lets go.' : 'Cancelling: waiting for the current stage to finish, then the project is restored…');
       cancelBtn.textContent = 'Cancelling…';
       setDisabled(cancelBtn, true, 'Cancelling');
     }
@@ -768,12 +772,24 @@
         stageEls[s.id] = { li: li, note: note };
       });
       content.appendChild(ol);
+      clockEl = el('p', 'iv-elapsed', 'Elapsed 0:00', { 'aria-live': 'off' });
+      content.appendChild(clockEl);
       content.appendChild(statusEl);
+      startClock();
       if (mode === 'mix') stage('separate', 'skip', 'skipped: the mix is analysed as one');
       else if (mode === 'stems') stage('separate', 'skip', 'stems supplied');
       setFoot([cancelBtn]);
       safe(function () { cancelBtn.focus(); });
     }
+    var clockEl = null, clockT = 0, clockStart = 0;
+    function mmss(ms) { var t = Math.floor(ms / 1000), m = Math.floor(t / 60), x = t % 60; return m + ':' + (x < 10 ? '0' : '') + x; }
+    function startClock() {
+      clockStart = Date.now();
+      stopClock();
+      if (typeof root.setInterval !== 'function') return;
+      clockT = root.setInterval(function () { if (clockEl) clockEl.textContent = 'Elapsed ' + mmss(Date.now() - clockStart) + (R.separating ? ' \u00b7 separation can take several minutes' : ''); }, 1000);
+    }
+    function stopClock() { if (clockT) { root.clearInterval(clockT); clockT = 0; } }
     var cur = -1;
     function stage(id, state, note) {
       var s = stageEls[id]; if (!s) return;
@@ -788,7 +804,8 @@
       for (var j = 0; j < idx; j++) { var st = stageEls[STAGES[j].id]; if (st && st.li.getAttribute('data-state') === 'run' || st && st.li.getAttribute('data-state') === 'wait') stage(STAGES[j].id, 'done'); }
       var frac = (p.total > 0 && p.done >= 0) ? Math.min(1, p.done / p.total) : 0;
       var complete = p.total > 0 && p.done >= p.total;
-      stage(p.stage, complete ? 'done' : 'run', (p.total > 0 ? p.done + ' of ' + p.total : 'working…') + (p.note ? ' · ' + p.note : ''));
+      var count = p.total > 1 ? p.done + ' of ' + p.total : '';
+      stage(p.stage, complete ? 'done' : 'run', [count, p.note ? String(p.note) : ''].filter(Boolean).join(' \u00b7 ') || (complete ? 'done' : 'working\u2026'));
       cur = Math.max(cur, idx);
       var pct = Math.round(((idx + frac) / STAGES.length) * 100);
       bar.setAttribute('aria-valuenow', String(pct)); barFill.style.width = pct + '%';
@@ -815,7 +832,18 @@
         useShell = {};
         for (var k in shell) if (k !== 'separate' && k !== 'onSeparateProgress') useShell[k] = shell[k];
       }
-      if (mode === 'separate') { R.separating = true; stage('separate', 'run', 'starting the separator\u2026'); }
+      if (mode === 'separate') {
+        R.separating = true; stage('separate', 'run', 'starting the separator\u2026');
+        if (shell && isFn(shell.onSeparateProgress)) R.unsub = safe(function () {
+          return shell.onSeparateProgress(function (ev) {
+            if (R.cancelled || !R.separating || !ev) return;
+            var t = typeof ev === 'string' ? ev : (ev.note || ev.line || ev.message || '');
+            var head = ev.stage && ev.stage !== 'separate' ? ev.stage + ': ' : '';
+            var cnt = ev.total > 1 && ev.done >= 0 ? ev.done + ' of ' + ev.total + ' \u00b7 ' : '';
+            if (t || head) stage('separate', 'run', (cnt + head + String(t)).slice(0, 160));
+          });
+        }, null);
+      }
       var p = Promise.resolve(stemList);
       p.then(function () {
         if (R.cancelled) throw cancelErr();
@@ -829,7 +857,7 @@
           }
         });
       }).then(function (res) {
-        R.done = true;
+        R.done = true; R.separating = false; stopClock(); if (isFn(R.unsub)) { safe(R.unsub); R.unsub = null; }
         if (R.cancelled) {
           var restored = restore(snap);
           closeDlg();
@@ -844,7 +872,7 @@
         if (isFn(o.onDone)) safe(function () { o.onDone(res); });
         R.resolve(res);
       }, function (err) {
-        R.done = true;
+        R.done = true; R.separating = false; stopClock(); if (isFn(R.unsub)) { safe(R.unsub); R.unsub = null; }
         var restored = restore(snap);
         if (R.cancelled || (err && err.name === 'AbortError') || (err && err.ivCancel)) {
           closeDlg();

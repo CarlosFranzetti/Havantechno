@@ -68,7 +68,7 @@ var fakeDoc = {
 };
 fakeDoc.activeElement = body;
 
-var sb = { console: console, Math: Math, JSON: JSON, Date: Date, setTimeout: setTimeout, clearTimeout: clearTimeout, Float32Array: Float32Array, Uint8Array: Uint8Array, Promise: Promise, devicePixelRatio: 1 };
+var sb = { console: console, Math: Math, JSON: JSON, Date: Date, setTimeout: setTimeout, clearTimeout: clearTimeout, setInterval: setInterval, clearInterval: clearInterval, Float32Array: Float32Array, Uint8Array: Uint8Array, Promise: Promise, devicePixelRatio: 1 };
 sb.window = sb; sb.document = fakeDoc; sb.globalThis = sb;
 sb.OfflineAudioContext = function () {
   this.decodeAudioData = function (ab) { var n = Math.max(1, ab.byteLength >> 2); return Promise.resolve({ duration: n / 48000, sampleRate: 48000, numberOfChannels: 2, length: n, getChannelData: function () { return new Float32Array(n); } }); };
@@ -425,7 +425,9 @@ function toast(t) { toasts.push(String(t)); }
     });
   }).then(function () {
     // Electron path: importTrack separates (D1's Project.importTrack calls shell.separate when given no stems)
-    var shell = { separate: function () { return Promise.resolve({ stems: [] }); }, onSeparateProgress: function () { return function () {}; }, saveFile: function () {} };
+    var sepFn = null, cancels = 0, unsubs = 0;
+    var shell = { separate: function () { return Promise.resolve({ stems: [] }); }, cancelSeparate: function () { cancels++; return Promise.resolve(); },
+                  onSeparateProgress: function (fn) { sepFn = fn; return function () { unsubs++; sepFn = null; }; }, saveFile: function () {} };
     file = { name: 'song.wav', path: '/music/song.wav', bytes: new Uint8Array(4) };
     imports.length = 0;
     var p = IV.importTrack(h, { toast: toast, shell: shell });
@@ -438,6 +440,33 @@ function toast(t) { toasts.push(String(t)); }
       imports[0].onProgress({ stage: 'separate', done: 2, total: 5, note: 'htdemucs 40%' });
       var li = dialog().find(function (n) { return n.tagName === 'LI'; });
       ok(li[1].getAttribute('data-state') === 'run' && /2 of 5/.test(li[1].textContent) && /htdemucs/.test(li[1].textContent), 'separation progress shows in the separate stage');
+      ok(typeof sepFn === 'function', 'the dialog listens to onSeparateProgress itself');
+      sepFn({ stage: 'download', note: 'fetching the model weights', line: 'x' });
+      ok(/download: fetching the model weights/.test(li[1].textContent), 'a download note from the shell shows with its stage');
+      imports[0].onProgress({ stage: 'separate', done: 0, total: 1, note: 'separating song.wav' });
+      ok(!/0 of 1/.test(li[1].textContent), 'no "0 of 1" counter for a one-step stage');
+      ok(/^Elapsed \d+:\d\d/.test(byClass(dialog(), 'iv-elapsed')[0].textContent), 'the run shows an elapsed time');
+      button(/^Cancel$/).click();
+      ok(cancels === 1 && /separator is being stopped/.test(dialog().textContent), 'Cancel while separating calls cancelSeparate and says so');
+      sb.Project._defer.rej(new Error('Separation cancelled'));
+      return p;
+    }).then(function (res) {
+      ok(res === null && !dialog() && unsubs >= 1, 'after a cancelled separation the dialog closes and unsubscribes');
+      imports.length = 0;
+      p = IV.importTrack(h, { toast: toast, shell: shell });
+      return ticks().then(function () { button(/^Separate into stems/).click(); return ticks(); });
+    }).then(function () {
+      sb.Project._defer.rej(new Error('Python 3 was not found. Install it, then run: pip install demucs'));
+      return ticks();
+    }).then(function () {
+      ok(/The import failed: Python 3 was not found\. Install it, then run: pip install demucs/.test(dialog().textContent), 'a shell rejection message is shown as it is');
+      button(/^Close$/).click();
+      return p;
+    }).then(function () {
+      imports.length = 0;
+      p = IV.importTrack(h, { toast: toast, shell: shell });
+      return ticks().then(function () { button(/^Separate into stems/).click(); return ticks(); });
+    }).then(function () {
       sb.Project._defer.res({ saved: { name: 'song.havantechno.json', path: '/music/song.havantechno.json' } });
       return p;
     }).then(function (res) {

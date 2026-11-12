@@ -22,7 +22,7 @@ Read `CLAUDE.md`, `BRIEF.md`, `app/CONTRACT.md`, the Lab Crew `REPORT.md`, `app/
 7. **Toolbar**: `Import…` next to Save/Open and `Report` (disabled, with the reason in its title, until `host.analysis()` returns a report). The System Editor's "+ track" menu gets "Import track…" (calls `App.importTrack` when present, else `ImportView.importTrack`).
 8. **Undo**: every document change goes through one host call (`setReference`, `applyRecreation`, `importTrack`), each one undo step by contract; gain and A/B are live session/document values with no extra undo entries from the UI.
 
-## 15:40 ET (20:40 UTC): built, first checks
+## 15:10 ET (20:10 UTC): built, first checks
 
 Files: `app/ui/import-view.js` (new), `app/ui/import-view.css` (new), `tools/import-view-check.js` (new); edits in `app/ui/app.js`, `app/index.html` and, marked "D2", three places in `app/ui/system-editor.js` (the lane after the TRACKS header, its update and dispose, and the "Import track…" menu item).
 
@@ -35,3 +35,21 @@ Files: `app/ui/import-view.js` (new), `app/ui/import-view.css` (new), `tools/imp
 **Readout.** After Match the readout shows `song −10.8 · ref −6.5 LUFS`; the gain field beside it shows the gain set, and the readout's title gives the section measured and the gain in words.
 
 Checks at this point: `node tools/import-view-check.js` part 1 (stub host) all pass; part 2 (real Host) fails only because D1's `engine/host.js` is mid-edit (`hookReference is not defined` in `Host.create`). Re-test against D1's files before hand-back.
+
+## 15:24 ET (20:24 UTC): re-tested on D1's real calls; coordinator's shell ruling
+
+**Coordinator to D2 (received during the run, quoted):** "D3's shell bridge is committed, so build the Electron branch of the import flow against it. HavantechnoShell.separate(path, {model}) -> Promise<{stems:[{name, path}], model, log, folder, cached?}>; HavantechnoShell.cancelSeparate(); HavantechnoShell.onSeparateProgress(fn) returns an unsubscribe function and delivers {stage, note, done?, total?, line?} (stages include 'download' on a first run). Only one run at a time: a second call rejects as busy. Rejections cross the bridge as a plain Error carrying only a message (no code), so show err.message as it is (the messages name what is missing and the command to install it) and do not branch on a code. A real separation of a 6.4 s file took about 4 minutes in this sandbox, so the progress view must stay honest for minutes: show the latest note, an elapsed time, and a working Cancel that calls cancelSeparate."
+
+What changed for it: the separation runs inside D1's `Project.importTrack` (it calls `shell.separate` itself when it gets a shell and no stems), so "Separate into stems" passes the shell and no stems; "Analyse the mix" passes a copy of the shell without `separate` and `onSeparateProgress` (saving still goes through the shell, the file is decoded once). The dialog subscribes to `onSeparateProgress` itself and shows the latest note or log line with its stage (`download: …`); counters show only when a stage has more than one step (no "0 of 1"); an elapsed clock runs under the stage list ("separation can take several minutes" while separating); Cancel while separating calls `cancelSeparate()`; every rejection message is shown as it is. Not run against a real shell: this sandbox has no Electron window; tested on a stub shell with D3's shapes.
+
+**Against D1's real code (headless Chromium, 1440×900, engine renders only: `tools/out/app-bars-104-136-v3.wav` as the file, its kick, bass and stab solos as stems):** real `Project.importTrack`, `host.analyze`, `setReference`, `reference`, `ab`, `matchLevel`, `setReferenceParam`, `analysis`, `applyRecreation`. Import with stems: six stages progressed, the report opened with 5 elements, the reference lane drew the file under the 34-bar import section; changing the kick to bd808 through the select left one undo entry; A on the keyboard switched to the reference (`host.ab()` = 'reference'); Match measured song −11.1 and ref −11.4 LUFS (BS.1770-4) over the section and set +0.3 dB. A 16-byte non-audio file: the dialog showed D1's "could not decode the audio" message and the project was restored. 0 console or page errors.
+
+**Cancel against the real importTrack:** restored exactly (track names, reference and analysis equal before and after), but it took 27 s, because D1's `importTrack` wraps `onProgress` in try/catch and has no `signal`, so the run cannot stop early; it also saved its file before the restore (the toast says the file stays on disk). **To D1 (again):** honouring `opts.signal` between stages, before `save`, would make Cancel quick and keep the half-import off disk.
+
+**Fixes after looking at the screenshots:** the report said "the mix was analysed as one" for supplied stems (D1 leaves `separator` null then); it now reads `analysis.stems` ("stems supplied: drums, bass, other"). The position and "A/B" ran together and the readout ran into the gain label: the A/B group now has a rule and space on its left, the gain reads "REF [0.3] dB" before Match, and the readout comes last. Bands stored as `[lo, hi]` read "150 Hz–5 kHz band"; `element.loaded.by === 'user'` shows "your choice".
+
+Saved: `docs/screenshots/app-import-report.png`, `docs/screenshots/app-ab.png`.
+
+Checks (run directly, exit codes read): import-view 122 OK exit 0; system-editor 97 exit 0; panels 116 exit 0; faces 2495 exit 0; widgets 157 exit 0; step-view 72 exit 0; browser-check 26 PASS exit 0; `app/engine/selfcheck.js` exit 1 with 2 of 445 failing, both in D1's new Importer step checks ("every hit of the loop on its sixteenth (84 of 96)", "velocity from the hit level"), not in UI code.
+
+Not verified: the Electron branch on a real shell and a real HT-Demucs run; the lane under a song whose bpm changes per section (one bpm is used); screen-reader output (roles and labels are set, not heard).
