@@ -48,7 +48,7 @@
     envMod: P(0, 1, 0.5, '', 'source', 'Open303 measured env-mod scaler and offset (rosic_Open303.cpp 291-313)'),
     decay: P(200, 2000, 400, 'ms', 'source', 'time constant of the filter envelope on normal notes; accented notes use 200 ms (Open303VST.cpp 236, P1)'),
     accent: P(0, 1, 0.6, '', 'source', 'accent gain: up to +1 oct of cutoff sweep and +4 x envelope on the VCA (rosic_Open303.h 372, 380)'),
-    slideTime: P(0, 200, 60, 'ms', 'source', 'glide tau = 0.2 x slideTime, exponential in Hz (Open303; the 60 ms default is prior)'),
+    slideTime: P(0, 200, 60, 'ms', 'source', 'slide RC on the pitch in semitones, tau = 22 ms x slideTime / 60: the default 60 is the stock 22 ms (100k x 0.22 uF; 60 ms is the audible time, Devil Fish manual)'),
     level: P(0, 1.5, 1, '', 'prior', 'output gain')
   };
   var RANGES = ['lo', '32', '16', '8', '4', '2'];
@@ -322,14 +322,16 @@
   }
 
   // ------------------------------------------------------------------ TB-303
-  // Gate (P1 ruling): a normal note holds its gate for its length less half a step; a note with ev.slide holds the gate
+  // Gate: a normal note holds its gate for its length less 41.7 % of a step (58.3 % on a one-step note); a note with ev.slide holds the gate
   // until the next trigger, with a safety release one step after its own length (two steps for a one-step note); the
   // next note then glides from it and retriggers nothing.
+  var GATE303 = 3.5 / 6;
   function plan303(pl, t, ev) {
     var sd = learnStep(pl, t, ev), dur = ev.dur || sd * 0.95 - 0.01;
     var n = Math.max(1, Math.round((dur + 0.01) / (0.95 * sd)));
     var prev = pl.prev, legato = !!(prev && prev.slide && t <= prev.off + 1e-6 && t >= prev.t);
-    var off = ev.slide ? t + (n + 1) * sd : t + Math.max(0.005, (n - 0.5) * sd);
+    // P1 second pass 1.8: the gate is 3.5 of 6 clock pulses, 58.3 % of a step (Whittle, 303-slide.html; measured, medium confidence)
+    var off = ev.slide ? t + (n + 1) * sd : t + Math.max(0.005, (n - 1 + GATE303) * sd);
     pl.prev = { t: t, slide: !!ev.slide, off: off, midi: noteOf(ev, 36), acc: !!ev.accent };
     pl.n++;
     return { legato: legato, off: off, midi: pl.prev.midi, acc: !!ev.accent, vel: velOf(ev), trig: pl.n };
@@ -337,8 +339,8 @@
 
   var BUILD = {};
   BUILD.tb303 = function (inst) {
-    // opts._probe (tools/tb303-bench.js only; not a parameter): a second node output with cutoff, frequency and VCA gain
-    var ctx = inst.ctx, pl = planner(), node = root.Worklets ? root.Worklets.node(ctx, PROC.tb303, inst._probe ? { numberOfOutputs: 2, outputChannelCount: [1, 3], processorOptions: { probe: true } } : null) : null;
+    // opts._probe (tools/tb303-bench.js only; not a parameter): a second node output with cutoff, frequency, VCA gain and the accent wiper voltage
+    var ctx = inst.ctx, pl = planner(), node = root.Worklets ? root.Worklets.node(ctx, PROC.tb303, inst._probe ? { numberOfOutputs: 2, outputChannelCount: [1, 4], processorOptions: { probe: true } } : null) : null;
     inst._plan = pl;
     if (node) {
       var W = buildWorklet(inst, node);
@@ -365,7 +367,7 @@
       var amp = 0.25 * e.vel * (1 + 0.45 + 4 * accG) / (1 + 0.45) * (1 / (1 + 3 * rr));
       var relT = e.acc ? 0.05 : 0.001, decT = e.acc ? 0.2 : P.decay / 1000;
       if (e.legato && v && !v.done) {                         // slide: glide the running voice, extend its gate
-        target(v.o.frequency, f, t, Math.max(0.0002, 0.2 * P.slideTime / 1000));
+        target(v.o.frequency, f, t, Math.max(0.0002, 0.022 * P.slideTime / 60));
         K.cancel(v.g.gain, t); target(v.g.gain, amp, t, 0.005); target(v.g.gain, 0, e.off, relT);
         try { v.o.stop(e.off + relT * 8 + 0.05); } catch (x) {}
         v.rec.end = e.off + 0.1;

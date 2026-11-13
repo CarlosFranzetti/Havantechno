@@ -185,7 +185,7 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
     i303.trigger(1 + 2 * st, { midi: 48, dur: d, step: 2, accent: true });
     var osc3 = count(ctx, 'osc'), o3 = ctx.nodes.filter(function (n) { return n.type_ === 'osc'; })[osc2 - 1];
     ok(osc1 === 1 && osc2 === 2 && osc3 === 2, 'a note slid into keeps the running voice (no new oscillator): ' + [osc1, osc2, osc3]);
-    ok(o3.frequency.calls.some(function (c) { return c[0] === 'setTargetAtTime' && near(c[1], 130.81, 0.1) && near(c[2], 1 + 2 * st, 1e-9) && near(c[3], 0.012, 1e-9); }), 'the slide glides the oscillator to the new pitch with tau 0.2 x slideTime');
+    ok(o3.frequency.calls.some(function (c) { return c[0] === 'setTargetAtTime' && near(c[1], 130.81, 0.1) && near(c[2], 1 + 2 * st, 1e-9) && near(c[3], 0.022, 1e-9); }), 'the slide glides the oscillator to the new pitch with tau 22 ms at slideTime 60 (P1 second pass)');
     var g1 = ctx.nodes.filter(function (n) { return n.type_ === 'gain'; });
     ok(i303._live.length >= 2, 'notes are registered in _live (' + i303._live.length + ')');
     // accent: the accented note's level ramp and filter peak are higher (fresh instrument: two single notes)
@@ -204,7 +204,7 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
     k3.trigger(1, { midi: 36, dur: d, step: 0 }); k3.trigger(1 + st, { midi: 36, dur: d, step: 1 });
     var g3 = c3.nodes.filter(function (n) { return n.type_ === 'gain'; })[2];
     var rel = g3.gain.calls.filter(function (c) { return c[0] === 'setTargetAtTime' && c[1] === 0; })[0];
-    ok(rel && near(rel[2], 1 + 0.5 * st, 1e-6), 'a one-step note is gated for half a step (release at ' + (rel && (rel[2] - 1).toFixed(4)) + ' s)');
+    ok(rel && near(rel[2], 1 + 3.5 / 6 * st, 1e-6), 'a one-step note is gated for 58.3 % of a step (release at ' + (rel && (rel[2] - 1).toFixed(4)) + ' s)');
 
     var md = C.create(ctx, 'modeld', { osc1Wave: 'square', osc3Range: 'lo' });
     ok(md.engine === 'fallback' && md.params.osc1Wave === 'square' && md.params.osc3Range === 'lo', 'modeld builds the fallback; enumerations stored');
@@ -249,11 +249,11 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
   t.trigger(T0 + 3 * st, { midi: 36, dur: 3 * st * 0.95 - 0.01, step: 3 });
   ok(W.trig.at(T0) === 1 && W.trig.at(T0 + st) === 2 && W.trig.at(T0 + 2 * st) === 3 && W.trig.at(T0 + 3 * st) === 4, 'every note writes the next trig value at its time');
   ok(W.pitch.at(T0) === 36 && W.pitch.at(T0 + st) === 40 && W.pitch.at(T0 + 2 * st) === 48, 'pitch written at the note times');
-  ok(W.gate.at(T0) === 1 && W.gate.at(T0 + 0.5 * st - 1e-4) === 1 && W.gate.at(T0 + 0.5 * st + 1e-4) === 0, 'a normal note is gated for half a step');
+  ok(W.gate.at(T0) === 1 && W.gate.at(T0 + 3.5 / 6 * st - 1e-4) === 1 && W.gate.at(T0 + 3.5 / 6 * st + 1e-4) === 0, 'a normal note is gated for 58.3 % of a step (P1 second pass)');
   ok(W.gate.at(T0 + st + 0.5 * st + 1e-3) === 1 && W.gate.at(T0 + 2 * st - 1e-4) === 1, 'a slide note holds its gate into the next note');
   ok(W.slide.at(T0 + st) === 0 && W.slide.at(T0 + 2 * st) === 1 && W.slide.at(T0 + 3 * st) === 0, 'the note after a slide is written legato (slide 1); the others 0');
   ok(W.acc.at(T0 + 2 * st) === 1 && W.acc.at(T0 + st) === 0 && W.acc.at(T0 + 3 * st) === 0, 'accent latched per note');
-  ok(W.gate.at(T0 + 3 * st + 2.5 * st - 1e-3) === 1 && W.gate.at(T0 + 3 * st + 2.5 * st + 1e-3) === 0, 'a three-step tie holds its gate for 2.5 steps');
+  ok(W.gate.at(T0 + 3 * st + (2 + 3.5 / 6) * st - 1e-3) === 1 && W.gate.at(T0 + 3 * st + (2 + 3.5 / 6) * st + 1e-3) === 0, 'a three-step tie holds its gate for 2.583 steps');
   // safety release: a slide with no following note
   var t2 = CW.create(ctx, 'tb303'), n2 = ctx.worklets[ctx.worklets.length - 1], W2 = {};
   n2.parameters.forEach(function (p, k) { W2[k] = p; });

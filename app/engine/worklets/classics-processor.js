@@ -120,25 +120,36 @@ Elliptic.prototype.run = function (x) {
 };
 
 // ================================================================== TB-303
-// Open303's voice (rosic_Open303.h getSample, MIT), with these changes:
-// - the accent sweep RC (Open303 rc2, fixed 15 ms) takes a time constant that grows with the resonance knob, as the
-//   303's second resonance gang sets the accent sweep capacitor's charge resistance; with a slow RC the sweep builds
-//   over consecutive accents (Open303 value at resonance 0, 'prior' above it);
-// - a soft clip inside the ladder's feedback path keeps the top of the resonance range screaming but bounded;
-// - the band-limited oscillator is PolyBLEP at the 4x rate instead of mip-mapped tables; the square is Open303's
-//   tanh-shaped saw reduced to its duty cycle (53 % low, 47 % high).
+// Open303's voice (rosic_Open303.h getSample, MIT) with P1's second-pass corrections (transcripts/P1-303-second-pass.md
+// section 4, applied 2026-11-13 under the coordinator's rulings):
+// 1. accent sweep: the real network (diode and 47k into the Resonance pot's second gang, 100k, a 1 uF capacitor at its
+//    CW end, the wiper through 100k into the filter's summing node), solved per sample; it adds Hz to the cutoff, and
+//    consecutive accents stack through the capacitor's state (Whittle, 303-unique.html; Devil Fish manual, C13);
+// 2. resonance: feedback capped at 15 of the critical 17 (stock maximum between 8.5 and 17), feedback high-pass 95 Hz
+//    (Stinchcombe's SPICE pole 92 Hz, a1k0n about 100 Hz; Open303 150);
+// 3. slide: an RC on the pitch in semitones, tau 22 ms at slideTime 60 (100k x 0.22 uF);
+// 4. VCA: 4 ms delay and 3 ms attack at the note start, 8 ms hold and an 8 ms linear ramp after the gate (the gate
+//    itself, 58.3 % of a step, is set in classics.js); no accent-specific release;
+// 5. accent into the VCA through the 47k / 0.033 uF network (1.55 ms) instead of Open303's 200 Hz de-click.
+// Unchanged: Open303's TB_303 ladder, the measured env-mod mapping, the decay ranges, the square wave, the soft clip in
+// the feedback path (prior), PolyBLEP oscillators at 4x with the elliptic decimator.
 var T303 = {
-  ampDecay: 1.23,                // s, amp envelope decay (Open303 ampEnv.setDecay(1230))
-  normalRelease: 0.001,          // s, amp release (Open303 normalAmpRelease 1 ms)
-  accentRelease: 0.05,           // s (Open303 accentAmpRelease 50 ms)
-  accentDecay: 0.2,              // s, main envelope decay on accented notes (Open303 accentDecay 200 ms; the decay knob is ignored)
-  ampByEnv: 0.45, ampByAccent: 4, // VCA gets 0.45 x MEG (+ 4 x accent x MEG) while the note is on (Open303)
-  slewScale: 0.2,                // pitch slew time constant = 0.2 x slideTime (Open303)
-  sweepTau0: 0.015, sweepTau1: 0.1, // s, accent sweep RC at resonance 0 (Open303 rc2) and 1 (prior)
-  hp1: 44.486, hp2: 24.167, ap: 14.008, fbHp: 150, // Hz (Open303)
+  ampDecay: 1.23,                // s, VEG decay (Open303 ampEnv.setDecay(1230); the manual's "3 to 4 s" read as time to a low level)
+  vcaDelay: 0.004, vcaAttack: 0.003,   // s, gate to audible start, then a linear attack (Devil Fish manual, stock figures; source, medium confidence)
+  vcaHold: 0.008, vcaRamp: 0.008,      // s, full level after the gate falls, then a linear ramp to zero (same source)
+  accentDecay: 0.2,              // s, MEG decay on accented notes (Open303; Devil Fish manual "fixed to 200 ms")
+  ampByEnv: 0.45,                // VCA gets 0.45 x MEG on every note (Open303 calibration, kept as P1 suggests)
+  ampByAccent: 4.15,             // accent x MEG into the VCA (P5: calibrated so accent 0.6 stays near +8 dB peak; Open303 had 4.0 with a 200 Hz de-click)
+  vcaRc: 0.00155,                // s, 47k x 0.033 uF network on the MEG paths into the VCA (Whittle; schematic)
+  slideTau: 0.022 / 60,          // pitch RC tau per ms of slideTime: 60 -> 22 ms (100k x 0.22 uF, Devil Fish manual; schematic)
+  kMax: 15,                      // maximum ladder feedback of the critical 17 (P1 bracket 8.5..17; point: prior)
+  accR1: 47e3, accPot: 100e3, accRm: 100e3, accC: 1e-6,   // accent sweep network (Whittle 303-unique.html; schematic)
+  accentHz: 1260,                // Hz of cutoff per unit of wiper voltage (MEG = 1). Prior: chosen so a single full accent at
+                                 // resonance 0 peaks where the old Open303-style sweep did (2487 Hz at cutoff 500, envMod 0.5)
+  hp1: 44.486, hp2: 24.167, ap: 14.008, fbHp: 95,   // Hz (Open303; feedback high-pass lowered from 150, P1 1.3)
   cutFloor: 200, cutCeil: 20000, // Hz (Open303 TeeBeeFilter clamp)
-  duty: 0.47,                    // square: Open303 -tanh(dB2amp(36.9) x saw + 4.37) is high for 47 % of a period
-  outGain: 0.3                   // calibration: a resonance 0.8 / envMod 0.7 / accent 0.7 line with six accents peaks near 0.85 (P5, measured; was 0.5)
+  duty: 0.47,                    // square: Open303 -tanh(dB2amp(36.9) x saw + 4.37) is high for 47 % of a period (unchanged: no source)
+  outGain: 0.27                  // calibration (P5, measured; 0.3 before the second-pass corrections)
 };
 // Open303 calculateEnvModScalerAndOffset, measured mapping (useMeasuredMapping = true)
 function envMap(cutoff, envMod) {
@@ -172,30 +183,42 @@ class Tb303Processor extends AudioWorkletProcessor {
     var fs = sampleRate, fo = fs * OS;
     this.alive = true;
     // test probe (tools/tb303-bench.js only, not a parameter): a second output carries the instantaneous cutoff (Hz),
-    // oscillator frequency (Hz) and VCA gain per sample
+    // oscillator frequency (Hz), VCA gain and the accent network's wiper voltage per sample
     this.probe = !!(options && options.processorOptions && options.processorOptions.probe);
     this.port.onmessage = (e) => { if (e.data === 'stop') this.alive = false; };
     this.lastTrig = 0; this.gateOn = false; this.idle = true; this.quiet = 0;
-    this.freq = 65.4; this.phase = 0;
+    this.pitchNow = 36; this.freq = 65.4; this.phase = 0;
     this.env = 0; this.envC = Math.exp(-1 / (1 * fs));
-    this.amp = 0; this.ampTarget = 0; this.ampC = Math.exp(-1 / (T303.ampDecay * fs)); this.noteOn = false;
-    this.accentOn = false; this.accentGain = 0; this.sweep = 0; this.velL = 0.85;
+    this.veg = 0; this.vegC = Math.exp(-1 / (T303.ampDecay * fs));
+    this.shape = 0; this.stage = 0; this.stageT = 0; this.shape0 = 0;   // VCA gate shape: 0 off, 1 delay, 2 attack, 3 on, 4 hold, 5 ramp
+    this.accentGain = 0; this.vc = 0; this.vw = 0; this.velL = 0.85;
+    this.megLp = 0; this.megC = 1 - Math.exp(-1 / (T303.vcaRc * fs));
     this.hp1 = new OnePole('hp', T303.hp1, fo); this.fbHp = new OnePole('hp', T303.fbHp, fo);
     this.ap = new OnePole('ap', T303.ap, fs); this.hp2 = new OnePole('hp', T303.hp2, fs);
-    this.declick = new LowPass2(200, Math.SQRT1_2, 1, fs);   // gain 1: Open303's amp2dB(sqrt(0.5)) gain line is a bug (P1)
     this.dec = new Elliptic();
     this.y1 = this.y2 = this.y3 = this.y4 = 0;
-    this.slewC = new Coef(1); this.sweepC = new Coef(1); this.resL = -1; this.rSk = 0;
+    this.slewC = new Coef(1); this.resL = -1; this.rSk = 0; this.accW = -1;
   }
   reset() {
     this.phase = 0; this.y1 = this.y2 = this.y3 = this.y4 = 0;
     this.hp1 = new OnePole('hp', T303.hp1, sampleRate * OS); this.fbHp = new OnePole('hp', T303.fbHp, sampleRate * OS);
     this.dec = new Elliptic();
   }
+  // the accent sweep network for wiper position w (0 = ACW, the diode end): coefficients of the wiper voltage as a
+  // function of the source Va and the capacitor voltage Vc, with the diode conducting or not
+  accentNet(w) {
+    if (w === this.accW) return;
+    this.accW = w;
+    var Ra = w * T303.accPot, Rb = Math.max(500, (1 - w) * T303.accPot), R1 = T303.accR1 + Ra, Rm = T303.accRm;
+    var Gs = 1 / R1, Gb = 1 / Rb, Gm = 1 / Rm, G = Gs + Gb + Gm;
+    this.aOn = { s: Gs / G, c: Gb / G };                  // conducting: Vw = s Va + c Vc
+    this.aOff = Gb / (Gb + Gm);                           // off: Vw = c' Vc
+    this.accRb = Rb;
+  }
   process(inputs, outputs, P) {
     var out = outputs[0] && outputs[0][0];
     if (!out) return this.alive;
-    var n = out.length, fs = sampleRate, fo = fs * OS, i, k;
+    var n = out.length, fs = sampleRate, fo = fs * OS, i, k, dtS = 1 / fs;
     var pr = this.probe && outputs[1] ? outputs[1] : null;
     var pP = P.pitch, pG = P.gate, pT = P.trig, pS = P.slide, pA = P.acc, pV = P.vel, pTu = P.tune, pW = P.wave,
         pC = P.cutoff, pR = P.resonance, pE = P.envMod, pD = P.decay, pAc = P.accent, pSt = P.slideTime;
@@ -204,52 +227,62 @@ class Tb303Processor extends AudioWorkletProcessor {
       if (trig !== this.lastTrig) {                         // a note event at this sample
         this.lastTrig = trig;
         var acc = pv(pA, i) >= 0.5, legato = pv(pS, i) >= 0.5 && this.gateOn;
-        this.accentOn = acc;
-        this.accentGain = acc ? pv(pAc, i) : 0;
+        this.accentGain = acc ? pv(pAc, i) : 0;             // the accent switch: on for the whole accented note
         this.envC = Math.exp(-1 / ((acc ? T303.accentDecay : Math.max(0.01, pv(pD, i) / 1000)) * fs));
-        this.releaseC = Math.exp(-1 / ((acc ? T303.accentRelease : T303.normalRelease) * fs));
         this.velL = pv(pV, i);
-        if (!legato) {                                      // Open303 triggerNote
+        if (!legato) {                                      // trigger: MEG and VEG restart, pitch jumps
           if (this.idle) this.reset();
-          this.freq = mtof(pv(pP, i) + pv(pTu, i) / 100);
+          this.pitchNow = pv(pP, i) + pv(pTu, i) / 100;
           this.env = 1 / this.envC;
-          this.amp = Math.max(this.amp, 0); this.noteOn = true; this.ampStage = 1;
-        }                                                   // else Open303 slideToNote: pitch slews, nothing retriggers
+          this.veg = 1; this.stage = 1; this.stageT = 0; this.shape0 = this.shape;
+        }                                                   // slide: the pitch glides, nothing retriggers
         this.gateOn = true; this.idle = false; this.quiet = 0;
-      } else if (!gate && this.gateOn) {                    // gate off: amp envelope release
-        this.gateOn = false; this.noteOn = false;
-      } else if (gate && !this.gateOn && this.noteOn) this.gateOn = true;
+        if (this.stage >= 4) { this.stage = 3; }            // a legato note re-opens a releasing gate
+      } else if (!gate && this.gateOn) {                    // gate off: hold, then the linear ramp
+        this.gateOn = false; this.stage = 4; this.stageT = 0;
+      }
       if (this.idle) { out[i] = 0; continue; }
-      // pitch slew (Open303 pitchSlewLimiter, a leaky integrator in Hz)
-      var target = mtof(pv(pP, i) + pv(pTu, i) / 100), st = Math.max(0.0002, T303.slewScale * pv(pSt, i) / 1000);
-      this.freq = target + this.slewC.of(st) * (this.freq - target);
-      // main envelope (Open303 DecayEnvelope) and the accent sweep RC
+      // pitch: an RC on the pitch CV in semitones (22 ms at slideTime 60), then the exponential converter
+      var target = pv(pP, i) + pv(pTu, i) / 100, st = Math.max(0.00005, T303.slideTau * pv(pSt, i));
+      this.pitchNow = target + this.slewC.of(st) * (this.pitchNow - target);
+      this.freq = mtof(this.pitchNow);
+      // MEG
       this.env *= this.envC;
-      var res = pv(pR, i), tauS = T303.sweepTau0 + (T303.sweepTau1 - T303.sweepTau0) * res;
-      var sIn = this.accentGain > 0 ? this.env : 0;
-      this.sweep = sIn + this.sweepC.of(tauS) * (this.sweep - sIn);
+      // accent sweep network: source = accent x MEG through the diode while the note is accented
+      var res = pv(pR, i);
+      this.accentNet(res);
+      var va = this.accentGain * this.env, vwOn = this.aOn.s * va + this.aOn.c * this.vc, vw, aa, bb;
+      if (this.accentGain > 0 && va > vwOn) { vw = vwOn; aa = this.aOn.c; bb = this.aOn.s * va; }
+      else { aa = this.aOff; bb = 0; vw = aa * this.vc; }
+      // capacitor: dVc/dt = (Vw - Vc) / (Rb C) with Vw = aa Vc + bb, solved exactly over one sample
+      var tauC = this.accRb * T303.accC / (1 - aa), vss = bb / (1 - aa);
+      this.vc = vss + (this.vc - vss) * Math.exp(-dtS / tauC);
+      this.vw = vw;
       var cut = pv(pC, i), m = envMap(cut, pv(pE, i));
-      var fc = clamp(cut * Math.pow(2, m.scaler * (this.env - m.offset) + this.accentGain * this.sweep), T303.cutFloor, T303.cutCeil);
-      // amp envelope (Open303 AnalogEnvelope: attack 0, decay 1.23 s to 0, release 1 or 50 ms) plus the MEG while on
-      if (this.ampStage === 1) { this.amp = 1; this.ampStage = 2; }
-      else if (this.noteOn) this.amp *= this.ampC;
-      else this.amp *= this.releaseC;
-      var a = this.amp;
-      if (this.noteOn) a += (T303.ampByEnv + this.accentGain * T303.ampByAccent) * this.env;
-      a = this.declick.run(a);
-      // TeeBeeFilter TB_303 coefficients (calculateCoefficientsApprox4, mode TB_303)
+      var fc = clamp(cut * Math.pow(2, m.scaler * (this.env - m.offset)) + T303.accentHz * vw, T303.cutFloor, T303.cutCeil);
+      // VCA: gate shape (delay, linear attack, hold, linear ramp) x (VEG + the MEG paths through the 1.55 ms network)
+      this.stageT += dtS;
+      if (this.stage === 1) { this.shape = this.shape0 * Math.max(0, 1 - this.stageT / T303.vcaDelay); if (this.stageT >= T303.vcaDelay) { this.stage = 2; this.stageT = 0; this.shape0 = this.shape; } }
+      else if (this.stage === 2) { this.shape = this.shape0 + (1 - this.shape0) * Math.min(1, this.stageT / T303.vcaAttack); if (this.stageT >= T303.vcaAttack) { this.stage = 3; this.shape = 1; } }
+      else if (this.stage === 3) this.shape = 1;
+      else if (this.stage === 4) { if (this.stageT >= T303.vcaHold) { this.stage = 5; this.stageT = 0; this.shape0 = this.shape; } }
+      else if (this.stage === 5) { this.shape = this.shape0 * Math.max(0, 1 - this.stageT / T303.vcaRamp); if (this.shape <= 0) { this.stage = 0; this.shape = 0; } }
+      this.veg *= this.vegC;
+      this.megLp += this.megC * ((T303.ampByEnv + T303.ampByAccent * this.accentGain) * this.env - this.megLp);
+      var a = this.shape * (this.veg + this.megLp);
+      // TeeBeeFilter TB_303 coefficients (calculateCoefficientsApprox4, mode TB_303), feedback capped at kMax / 17
       var r = res === this.resL ? this.rSk : (this.resL = res, this.rSk = (1 - Math.exp(-3 * res)) / (1 - Math.exp(-3))), fx = fc / fo * Math.SQRT1_2;
       var b0 = (0.00045522346 + 6.1922189 * fx) / (1 + 12.358354 * fx + 4.4156345 * fx * fx);
       var kf = fx * (fx * (fx * (fx * (fx * (fx + 7198.6997) - 5837.7917) - 476.47308) + 614.95611) + 213.87126) + 16.998792;
       var g = ((kf / 17 - 1) * r + 1) * (1 + r);
-      kf *= r;
+      kf *= r * T303.kMax / 17;
       var dt = this.freq / fo, sq = pv(pW, i) >= 0.5, x = 0, y = 0;
       for (k = 0; k < OS; k++) {
         var ph = this.phase;
         x = sq ? pulse(ph, dt, T303.duty) : -saw(ph, dt);   // Open303 negates the oscillator (falling saw)
         this.phase = ph + dt; if (this.phase >= 1) this.phase -= 1;
         x = this.hp1.run(x);
-        // diode ladder: y0 = in - HP(k y4) (Open303), the feedback soft-clipped (P5)
+        // diode ladder: y0 = in - HP(k y4) (Open303), the feedback soft-clipped (P5, prior)
         var fb = this.fbHp.run(kf * this.y4);
         fb = fb / (1 + Math.abs(fb) * 0.15);
         var y0 = x - fb;
@@ -262,9 +295,9 @@ class Tb303Processor extends AudioWorkletProcessor {
       y = this.hp2.run(this.ap.run(y));
       var o = y * a * this.velL * T303.outGain;
       out[i] = o;
-      if (pr) { pr[0][i] = fc; if (pr[1]) pr[1][i] = this.freq; if (pr[2]) pr[2][i] = a; }
+      if (pr) { pr[0][i] = fc; if (pr[1]) pr[1][i] = this.freq; if (pr[2]) pr[2][i] = a; if (pr[3]) pr[3][i] = vw; }
       // sleep when silent and released (state only; deterministic)
-      if (!this.gateOn && this.amp < 1e-5 && Math.abs(o) < 1e-6) { if (++this.quiet > fs * 0.05) this.idle = true; } else this.quiet = 0;
+      if (!this.gateOn && this.stage === 0 && this.vc < 1e-6 && Math.abs(o) < 1e-6) { if (++this.quiet > fs * 0.05) this.idle = true; } else this.quiet = 0;
     }
     return this.alive;
   }

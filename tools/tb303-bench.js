@@ -75,19 +75,19 @@ function serve() {
 function pageHelper() {
   window.__b64 = function (f) { var u = new Uint8Array(f.buffer, f.byteOffset, f.byteLength), s = '', i; for (i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
   window.__tb = async function (a) {
-    var octx = new OfflineAudioContext(4, Math.ceil(44100 * a.seconds), 44100);
+    var octx = new OfflineAudioContext(5, Math.ceil(44100 * a.seconds), 44100);
     if (!(await Worklets.load(octx))) throw new Error('worklet did not load');
     var o = {}, k; for (k in a.opts) o[k] = a.opts[k]; o._probe = true;
     var inst = Classics.create(octx, 'tb303', o);
     if (inst.engine !== 'worklet') throw new Error('not on the worklet path');
-    // channel 0: the instrument output; 1..3: the probe's cutoff, frequency and VCA gain
-    var sp = octx.createChannelSplitter(3); inst._node.connect(sp, 1);
-    var m2 = octx.createChannelMerger(4); inst.out.connect(m2, 0, 0); sp.connect(m2, 0, 1); sp.connect(m2, 1, 2); sp.connect(m2, 2, 3);
+    // channel 0: the instrument output; 1..4: the probe's cutoff, frequency, VCA gain and (from round 2) accent wiper voltage
+    var nch = inst._node.channelCount && inst._node.numberOfOutputs > 1 ? 4 : 3, sp = octx.createChannelSplitter(4); inst._node.connect(sp, 1);
+    var m2 = octx.createChannelMerger(5); inst.out.connect(m2, 0, 0); sp.connect(m2, 0, 1); sp.connect(m2, 1, 2); sp.connect(m2, 2, 3); sp.connect(m2, 3, 4);
     m2.connect(octx.destination);
     (a.sets || []).forEach(function (s) { inst.set(s[1], s[2], { at: s[0] }); });
     a.notes.forEach(function (n) { inst.trigger(n.t, n); });
     var b = await octx.startRendering();
-    return [0, 1, 2, 3].map(function (c) { return window.__b64(b.getChannelData(c)); });
+    return [0, 1, 2, 3, 4].map(function (c) { return window.__b64(b.getChannelData(c)); });
   };
 }
 function decode(b64) { var buf = Buffer.from(b64, 'base64'); return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4); }
@@ -108,7 +108,7 @@ async function main() {
   if (DEMOS) { var dc = await demos(page); await browser.close(); server.close(); return dc; }
   var R = async function (opts, notes, seconds, sets) {
     var r = await page.evaluate(function (a) { return window.__tb(a); }, { opts: opts, notes: notes, seconds: seconds, sets: sets || [] });
-    return { out: decode(r[0]), fc: decode(r[1]), f: decode(r[2]), a: decode(r[3]) };
+    return { out: decode(r[0]), fc: decode(r[1]), f: decode(r[2]), a: decode(r[3]), vw: decode(r[4]) };
   };
   var STEP = 60 / 126 / 4, D1 = STEP * 0.95 - 0.01;
   // a long note: a priming step at 0.02 s teaches the planner the step, then the note at step 1 is gated for `len` s
@@ -179,6 +179,17 @@ async function main() {
       lastOverPlainOct: r3(Math.log2(per[per.length - 1].peakHz / plain)) };
   }
 
+  // 4b. the accent network alone (probe channel 4, the wiper voltage with MEG = 1): four consecutive full accents at
+  // 130 BPM, as in P1's simulation (second pass 1.6: CW end 0.242 at about 103 ms, then 0.305 / 0.319 / 0.321)
+  res.accentNetwork = {};
+  for (var wr of [0, 0.5, 1]) {
+    var STEP130 = 60 / 130 / 4, nn = [];
+    for (q = 0; q < 4; q++) nn.push({ t: 0.02 + q * STEP130, midi: 36, dur: STEP130 * 0.95 - 0.01, step: q, accent: true });
+    var xn = await R({ resonance: wr, accent: 1 }, nn, 0.02 + 5 * STEP130), pk4 = [];
+    for (q = 0; q < 4; q++) { var b0 = S(0.02 + q * STEP130), vm = 0, vi = b0; for (i = b0; i < b0 + S(STEP130); i++) if (xn.vw[i] > vm) { vm = xn.vw[i]; vi = i; } pk4.push({ wiper: r3(vm), atMs: r1((vi - b0) / SR * 1000) }); }
+    res.accentNetwork['r' + wr] = { resonance: wr, perAccent: pk4, firstPeakMs: pk4[0].atMs, thirdOverFirst: pk4[0].wiper > 0 ? r3(pk4[2].wiper / pk4[0].wiper) : null };
+  }
+
   // 5. slide curve: 36 (slide) -> 48, time to 50 % and 90 % of the Hz distance
   res.slide = {};
   for (var stv of [0, 30, 60, 120, 200]) {
@@ -234,6 +245,10 @@ function printTable(r) {
   for (k in r.accentLevel) { var a = r.accentLevel[k]; console.log('  knob ' + pad(a.knob, 5) + pad(a.peakDb, 6) + '/ ' + a.rmsDb); }
   console.log('\nAccent sweep (cutoff 500, envMod 0.5, decay 400, accent 1): peak cutoff Hz (time to peak ms) per consecutive accent');
   for (k in r.accentSweep) { var s = r.accentSweep[k]; console.log('  res ' + pad(s.resonance, 5) + pad(s.accents + ' acc', 7) + 'plain ' + pad(s.plainPeakHz, 6) + s.perAccent.map(function (p) { return p.peakHz + ' (' + p.toPeakMs + ')'; }).join('  ') + '   last/plain ' + s.lastOverPlainOct + ' oct'); }
+  if (r.accentNetwork) {
+    console.log('\nAccent network alone (wiper voltage, MEG = 1), four accents at 130 BPM: peak (ms after the note)');
+    for (k in r.accentNetwork) { var an = r.accentNetwork[k]; console.log('  res ' + pad(an.resonance, 5) + an.perAccent.map(function (p) { return p.wiper + ' (' + p.atMs + ')'; }).join('  ') + '   third/first ' + an.thirdOverFirst); }
+  }
   console.log('\nSlide 36 -> 48: time to 50 % / 90 % of the Hz distance (ms)');
   for (k in r.slide) { var l = r.slide[k]; console.log('  slideTime ' + pad(l.slideTimeMs, 5) + pad(l.t50Ms, 7) + '/ ' + pad(l.t90Ms, 7) + 'gate held ' + l.gateHeld); }
   console.log('\nGate (fraction of the step): one step ' + r.gate.oneStep + ', tie of two ' + r.gate.tieTwoSteps + ', slid pair ' + r.gate.slidPairFromFirst);
