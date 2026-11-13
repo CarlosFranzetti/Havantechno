@@ -343,7 +343,7 @@ k3(/^Note E$/).fire('click', {});
 ok(c303() && c303()[1] && c303()[1].note === 40 && undoN() === u3 + 1, 'note key E on a rest writes note 40 (E2) in one undo entry (and the section plays the track)');
 r3.update();
 ok(/Step 1: C2/.test(sk3[0].attrs['aria-label']), 'now the pattern shows: step 1 reads C2');
-k3(/^Octave up/).fire('click', {});
+k3(/^Selected step an octave up/).fire('click', {});
 ok(c303()[1].note === 52 && undoN() === u3 + 2, 'UP raises the step an octave, one undo entry');
 k3(/^Accent on/).fire('click', {});
 ok(c303()[1].acc === true && undoN() === u3 + 3, 'ACCENT sets acc, one undo entry');
@@ -359,6 +359,44 @@ k3(/^Make the selected step a rest/).fire('click', {});
 ok(c303()[2] === null, 'REST clears the selected step');
 ed.undo(); host.commit();
 ok(c303()[2] && c303()[2].acc === true, 'undo restores the step');
+// second pass: tie, rest inside a tie, transpose the whole pattern, clear, back and next
+function sel3(n) { sk3[n].fire('click', {}); r3.update(); }
+var ua = undoN();
+sel3(5); k3(/^Note G$/).fire('click', {});                       // step 6 = G2 (43)
+r3.update();
+ok(c303()[5] && c303()[5].note === 43, 'step 6 set to G2');
+sel3(6); var had7 = !!c303()[6];
+k3(/^Tie the selected step/).fire('click', {});
+ok(c303()[5].len === 2 && c303()[6] === null && undoN() === ua + 2, 'TIE on step 7 lengthens step 6 to len 2 and empties step 7, one undo entry (step 7 had a note: ' + had7 + ')');
+r3.update();
+ok(/tie from step 6/.test(sk3[6].attrs['aria-label']) && /tied over 1/.test(sk3[5].attrs['aria-label']), 'the tie reads on both keys (' + sk3[6].attrs['aria-label'] + ')');
+sel3(7); k3(/^Tie the selected step/).fire('click', {});
+ok(c303()[5].len === 3, 'TIE on step 8 extends the same note to len 3');
+sel3(6); k3(/^Make the selected step a rest/).fire('click', {});
+ok(c303()[5].len == null && c303()[6] === null && c303()[7] === null, 'REST inside the tie ends it before that step (len back to 1)');
+sel3(6); k3(/^Tie the selected step/).fire('click', {}); k3(/^Tie the selected step/).fire('click', {});
+ok(c303()[5].len == null, 'TIE twice on the same step ties and unties');
+var before = c303().map(function (c) { return c && c.note; }), ut = undoN();
+k3(/semitone up/).fire('click', {});
+var after = c303().map(function (c) { return c && c.note; });
+ok(before.every(function (n, i) { return n == null ? after[i] == null : after[i] === n + 1; }) && undoN() === ut + 1, 'transpose +1 moves every note of the pattern a semitone, one undo entry');
+k3(/whole pattern an octave down/).fire('click', {});
+ok(c303().every(function (c, i) { return !c || c.note === before[i] - 11; }), 'transpose -OCT moves every note down 12');
+sel3(15); k3(/^Select the next step/).fire('click', {}); r3.update();
+ok(/selected/.test(sk3[0].attrs['aria-label']), 'NEXT wraps from step 16 to step 1');
+k3(/^Select the previous step/).fire('click', {}); r3.update();
+ok(/selected/.test(sk3[15].attrs['aria-label']), 'BACK wraps from step 1 to step 16');
+var uc = undoN();
+k3(/^Clear the whole pattern/).fire('click', {});
+ok(c303().every(function (c) { return c === null; }) && undoN() === uc + 1, 'CLEAR empties the pattern in one undo entry');
+ed.undo(); host.commit();
+ok(c303().some(function (c) { return c !== null; }), 'undo restores the pattern');
+ok(!r3.el.find(function (n) { return /\d+\s*ms\b/.test(n._text || ''); }).length, 'no drawn text claims a gate or slide time');
+// the portrait arrangement has the same controls
+var r3p = P.render(d303, host, { layout: 'portrait' });
+everyRow(r3p, d303.spec, 'HVT-303 portrait');
+ok(r3p.el.children[0].attrs.viewBox === '0 0 560 1188' && ['TIE', 'REST', 'CLEAR', 'NEXT', 'BACK'].every(function (t) { return r3p.el.find(function (n) { return n._text === t; }).length === 1; }), 'portrait: 560 x 1188 with TIE, REST, CLEAR, NEXT, BACK');
+r3p.dispose();
 var L3 = LIVE.n; r3.dispose();
 ok(r3.listenerCount() === 0 && listenersUnder(r3.el) === 0 && LIVE.n < L3, 'HVT-303 dispose removes its listeners');
 // bridge-like host: knobs work, step editing disabled

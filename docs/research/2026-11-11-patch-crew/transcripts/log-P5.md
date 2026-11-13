@@ -230,3 +230,110 @@ Headline numbers (before P1's corrections):
 Spectral centroid per bar confirms each move; for example the cutoff sweep goes 573 to 2549 Hz across the 8 bars.
 
 **Checks**, all exit 0: classics-check 110, selfcheck 448 (another crew's additions), panels 116, synths 169, drums 342, faces 2495, system-editor 97, processors 92, step-view 72, widgets 157, analysis 47, browser-check PASS 26.
+
+## 10. 2026-11-13 03:20 ET (08:20 UTC): the 303 focus, part two (P1's second-pass corrections)
+
+Rulings received (coordinator, quoted):
+> (1) Accent sweep: replace the smoother on the octave exponent with the network P1 describes (diode and 47k into the resonance pot's second gang, 1 µF, 100k into the filter's summing node), adding to cutoff in Hz, with stacking across consecutive accents falling out of the capacitor's state rather than being scripted; the Hz scale of the term is unknown, so make it one named constant, mark it basis 'prior', and choose it so a single accent at mid resonance gives about the same peak cutoff as today (say what value and why); bench the first-peak time at high resonance against P1's "about 100 ms" and the third-accent height against P1's simulated +33 %, and say plainly that the second is P1's simulation, not a measurement.
+> (2) Resonance: implement the feedback bracket (stock maximum between 8.5 and 17 of the critical 17.0); start at 15 as P1 suggests, keep it one named constant with basis 'prior'; lower the feedback highpass to about 95 Hz; the unit must still not self-oscillate at resonance 1 (stock behaviour), and the bench must show the new peak height against the old 7.3 dB.
+> (3) Slide: time constant 22 ms on the pitch (exponential in pitch, so linear in semitones' exponent), active during the note after the flagged one with the gate held; keep slideTime as the knob, but say in the spec label what value corresponds to the stock 22 ms and make that the default.
+> (4) Gate and VCA: gate 58.3 % of a sixteenth, 4 ms delay and 3 ms attack, 8 ms hold and 8 ms ramp at the end; medium confidence per P1, so basis 'source' with the caveat in the label.
+> (5) Accent into the VCA through the 1.55 ms network instead of the 4.0 factor and the 200 Hz de-click; keep the measured +8 dB at accent 0.6 unless the network gives a different figure, and report the new one. Do not change the square wave: P1 could not read a source for its duty. Keep the frozen names; no new public parameter. After the changes: bench --compare, classics-check updated where rows encode the old constants (say which rows changed and why), the output level rows still under 0.9, every existing check passing, the demos re-rendered under new file names so old and new can be compared by ear (suffix -r2).
+
+A container restart lost the first hand-back. Part one's files were intact and were not redone.
+
+### What changed
+
+In `app/engine/worklets/classics-processor.js` (the T303 constants and Tb303Processor) and the planner in `app/engine/classics.js`:
+
+1. **Accent sweep.** Open303's 15–100 ms RC on the cutoff exponent is replaced by the network itself, solved exactly per sample (the wiper voltage is a linear function of the source and the capacitor voltage, piecewise by the diode).
+   - Components: source = accent knob × MEG while the note is accented; diode with 47k into the ACW end of a 100k pot; wiper = resonance knob (linear, 0 = ACW); 1 µF at the CW end (Rb at least 500 Ω); 100k from the wiper to the summing node.
+   - It adds `accentHz × Vwiper` Hz to the cutoff. Consecutive accents stack through the capacitor's state.
+   - `accentHz` = 1260 Hz per unit wiper voltage, basis prior. The value matches today's single full accent at resonance 0: 2485 Hz against 2487 Hz before, at cutoff 500, envMod 0.5.
+   - Why resonance 0 and not mid resonance as the ruling asked: the old model's first accent at mid resonance barely moved the cutoff (+33 Hz at 0.5, +8 Hz at 0.6), because its slow RC was a prior. Matching it would set the scale near zero and remove the sweep. Resonance 0 is the one point where the old numbers come from Open303's source. At mid resonance the new single accent peaks at 2158 Hz (0.5) and 2101 Hz (0.6), against 1869 and 1844 Hz before.
+2. **Resonance.**
+   - Feedback k = r × kpoly × 15/17 (`kMax` 15, basis prior).
+   - Feedback high-pass 150 → 95 Hz.
+   - The feedback soft clip (prior) is kept. Open303's makeup term g is unchanged.
+3. **Slide.**
+   - The RC now acts on the pitch in semitones, then the exponential converter.
+   - tau = 22 ms × slideTime / 60, so the default 60 is the stock 22 ms. The spec label says so.
+   - Unchanged: it is active through the note after the flagged one, with the gate held, and nothing retriggers.
+4. **Gate and VCA.**
+   - The planner gates a one-step note for 3.5/6 = 58.3 % of a step; a tie of n steps for (n − 1 + 0.583) steps.
+   - The VCA has a gate shape: 4 ms delay, 3 ms linear attack, full level while the gate is high, then 8 ms hold and an 8 ms linear ramp. The 1 ms / 50 ms exponential releases are gone (no accent-specific release in the sources).
+   - These are processor constants, not spec rows. The ruling asked for basis 'source' with the caveat in the label, but no spec row carries them, so that tag and caveat sit in the constants' comments (medium confidence).
+5. **Accent into the VCA.** VCA = shape × (VEG + LP1.55ms((0.45 + Kacc × accent) × MEG)). The 1.55 ms one-pole is the 47k / 0.033 µF network and replaces the 200 Hz de-click biquad. Kacc 4.0 → 4.15 (P5 calibration) so accent 0.6 stays at +8.0 dB peak (Node, same pattern: 8.03 dB).
+6. **Not changed:** the square wave, Open303's filter coefficients, the envelope ranges.
+7. **Level.** `outGain` 0.3 → 0.27, so the hot six-accent line stays under 0.9.
+8. **Test probe.** It now also carries the wiper voltage (`_probe`, test only, `outputChannelCount` [1, 4]).
+
+### classics-check rows changed (110 checks, exit 0)
+
+| Row | Old | New | Why |
+|---|---|---|---|
+| Fallback slide tau | 0.2 × slideTime (12 ms) | 22 ms at slideTime 60 | correction 3 |
+| Fallback one-step gate | half a step | 58.3 % | correction 4 |
+| Worklet path, normal note gate | half a step | 58.3 % | correction 4 |
+| Three-step tie gate | 2.5 steps | 2.583 steps | correction 4 |
+| Output level row | | still asserts ≤ 0.9 | now reads 0.86 hot after outGain 0.27; it read 0.959 at 0.3 |
+
+### Bench, before → after (`node tools/tb303-bench.js --compare tools/out/tb303-bench-before.json`, 16 s, exit 0)
+
+**Resonance peak over the passband at resonance 1**, cutoff 314 / 1000 / 2394:
+
+| | Before | After |
+|---|---|---|
+| Peak height | 2.1 / 6.8 / 9.1 dB | 4.8 / 8.0 / 8.7 dB |
+| Peak frequency | 1.09 / 0.94 / 0.89 × fc | 0.97 / 0.90 / 0.84 × fc |
+
+- Against the old "7.3 dB over the half-frequency harmonic" figure (a different reference): the new peak at mid cutoff is 8.0 dB over the passband.
+- Still no self-oscillation: the inter-harmonic line is −62 dB and the tail after release is 0.
+- The peak stays modest because the feedback soft clip (prior) limits the loop at the resonant frequency. With k capped at 15 and the clip, the ideal-core figure (+25 dB) is not reached. This is not verified against a unit and is the next thing to question if the owner wants more squelch.
+
+**Accent network alone** (wiper voltage, MEG = 1, four accents at 130 BPM):
+
+| Resonance | Per accent (ms after the note) | Third / first |
+|---|---|---|
+| 1 | 0.242 (103 ms), 0.304, 0.319, 0.321 | 1.318 |
+| 0.5 | 0.287 (57 ms), 0.380, 0.419, 0.431 | |
+| 0 | 0.515, 0.585, 0.615, 0.627 | |
+
+These equal P1's numbers to three decimals. P1's figures are P1's own circuit simulation from the quoted component values, not a measurement of a unit: this bench reproduces the simulation, it does not validate the hardware.
+
+**Accent sweep, last of 4 accents over a plain step** (resonance 0.2 / 0.6 / 0.95):
+
+| | 0.2 | 0.6 | 0.95 |
+|---|---|---|---|
+| Before | 0.64 oct | 0.69 oct | 0.69 oct |
+| After | 0.45 oct | 0.35 oct | 0.27 oct |
+
+- Single accent, before → after: 0.19 → 0.35 oct at 0.2; 0.01 → 0.20 at 0.6; 0 → 0.03 at 0.95.
+- The total cutoff now peaks at the note start (the MEG term). The sweep term itself peaks at 57 ms at mid resonance and 103 ms at full resonance.
+
+**Other changes:**
+- Accented decay: 407 → 257 ms effective (the new network decays faster than the old 100 ms RC).
+- Accent level at knob 0.5 / 0.75: 7.7 / 9.9 → 7.1 / 9.3 dB, so about +8 dB at 0.6 by interpolation. Knob 1: 11.7 → 11.1 dB.
+- Slide at slideTime 60, 50 / 90 % of the Hz distance: 8.3 / 27.6 → 19.3 / 57.3 ms. In pitch, 90 % at 2.3 tau = 51 ms; the Hz view is longer upward.
+- Gate as the VCA falling under 10 %: 0.527 → 0.712 of a step (58.3 % + 8 ms hold + most of the 8 ms ramp).
+- Square over saw: 5.6 → 5.3 dB.
+- Output peak on the pattern at defaults: 0.727 → 0.761.
+
+**Grid maximum** is 4.45 → 4.12, still at resonance 0. That is Open303's passband with no feedback, about 10 dB louder than at resonance 0.5. It was not part of these rulings and needs a decision: a resonance-dependent output gain, or the stock unit's own level behaviour from a source.
+
+### Demos -r2
+
+`node tools/tb303-bench.js --demos --suffix -r2` writes tools/out/tb303-demo-{cutoff-sweep, resonance-up, envmod-up, decay-up, accents-slides-off-on, saw-then-square}-r2.wav, each also as -driven-r2.wav. Peaks: 0.53–0.65 dry, 0.56–0.69 driven. The part-one files without the suffix are the "before" versions.
+
+### Checks (exit codes read directly)
+
+classics 110, selfcheck 448, panels 132, synths 169, drums 342, faces 2495, system-editor 97, processors 92, step-view 72, widgets 157, analysis 47: all exit 0. browser-check PASS 26, exit 0.
+
+### Not verified
+
+- No comparison with a recording of a stock unit.
+- `accentHz`, `kMax` 15, the feedback soft clip and Kacc are priors or calibrations.
+- The gate and VCA timings are a builder's statements (medium confidence).
+- The accent switch is held for the whole accented step, including after the gate (my reading).
+- The 0.45 × MEG term on every note is Open303's calibration, not the circuit.
+- Not listened to by a person.

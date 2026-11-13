@@ -630,6 +630,31 @@
       return true;
     }
 
+    // several cells of the viewed bar in one edit: listFn(cells16) -> [[index, patch], ...] (empty or undefined: nothing);
+    // one ed.group = one undo entry, then host.commit
+    function editCells(type, listFn) {
+      if (!canEdit(host)) return false;
+      var vw = stepView(type); if (!vw) return false;
+      var ed = safe(function () { return host.editor(); }, null); if (!ed) return false;
+      var start = null, cells = vw.cells, bar = vw.bar;
+      if (!vw.variant || !vw.tr.variants[vw.variant]) {
+        var ks = vw.tr.variants ? Object.keys(vw.tr.variants).sort() : [];
+        if (!ks.length) return false;
+        start = has(vw.tr.variants, 'A') ? 'A' : ks[0];
+        cells = vw.tr.variants[start].cells.slice(0, STEPS).map(function (c) { return c || null; }); bar = 0;
+      }
+      var list = listFn(cells);
+      if (!list || !list.length) return false;
+      var run = function (e) {
+        if (start) e.setPlay(vw.section, vw.track, start);
+        list.forEach(function (it) { e.setStepInSection(vw.section, vw.track, bar * STEPS + it[0], it[1]); });
+        return true;
+      };
+      if (isFn(ed.group)) ed.group(run); else run(ed);
+      safe(function () { host.commit(); });
+      return true;
+    }
+
     var P = {
       host: host, device: device, svg: svg, W: W, H: H, key: key, opts: opts, state: state, layout: layout,
       el: function (tag, a, parent) { return sv(tag, a, parent); },
@@ -641,7 +666,7 @@
       voice: voice, knob: knob, control: control, button: button, slide: slide, addVoice: addVoice,
       choice: choice, toggle: toggle, radio: radio, fader: fader, pval: pval, pwrite: pwrite, options: optionsOf,
       tempoValue: tempoValue, transportToggle: transportToggle, canTransport: canTransport, playStep: playStep,
-      stepView: stepView, editStep: editStep, editCell: editCell, canEdit: function () { return canEdit(host); },
+      stepView: stepView, editStep: editStep, editCell: editCell, editCells: editCells, canEdit: function () { return canEdit(host); },
       listen: listen, onUpdate: function (fn) { updaters.push(fn); }, onDispose: function (fn) { disposers.push(fn); },
       refresh: refreshDevices
     };
@@ -1241,34 +1266,60 @@
   // ------------------------------------------------------------------ HVT-303
   var C303 = { cheek: '#121212', panel: '#c7cace', panelLo: '#b4b7bc', ink: '#161616', orange: '#e8671a', led: '#ff4a1a', ledOff: '#55301c',
     key: '#2a2a2c', keyInk: '#ecebe6', white: '#e9e9e4', black: '#1c1c1e', btn: '#3a3a3d' };
-  // two arrangements of the same controls: 'landscape' (the window, the desk) and 'portrait' (a phone held upright)
+  // Two arrangements of the same controls, after P1's second pass (P1-303-second-pass.md section 3, the procedure card's
+  // front-panel diagram): band 1 = waveform switch, then the six knobs TUNING..ACCENT; band 2 = TEMPO at the far left,
+  // VOLUME at the far right, the model legend between; band 3 = the keys on a black bar: RUN/STOP and CLEAR at the left,
+  // the one-octave key row, then DOWN/UP, ACCENT, SLIDE, the time keys (here TIE and REST) and BACK above WRITE/NEXT at
+  // the far right. Not drawn: the track/pattern-group and mode rotaries, D.C., BAR RESET, FUNCTION, the jacks (this app has
+  // no tracks, groups or modes). Added for a screen: the sixteen step keys and the pattern transpose in band 2.
   var L303 = {
-    landscape: { w: 1200, h: 640, lowTop: 262, brand: [60, 58, 32, 1140, 56, 22], stripe: [210, 42, 560],
-      wave: [104, 168], knobs: [[210, 170], [335, 170], [460, 170], [585, 170], [710, 170], [835, 170]], slide: [960, 170], vol: [1080, 170], sep: 258,
-      info: [60, 272, 1080, 30, 12.5], run: [60, 344, 84, 46], keys: { x0: 160, pitch: 980 / 16, w: 50, h: 48, rows: [342], per: 16 },
-      notes: { x0: 160, y: 432, wk: 56, h: 150, bw: 34, bh: 92 }, fn: { x0: 640, y: 472, pitch: 82, w: 70, h: 46 }, oct: [716, 544], hint: [845, 544],
-      tempo: [1080, 490, 26] },
-    portrait: { w: 560, h: 1090, lowTop: 430, brand: [24, 52, 30, 540, 50, 15], stripe: [24, 66, 300],
-      wave: [70, 152], knobs: [[210, 150], [350, 150], [490, 150], [70, 290], [210, 290], [350, 290]], slide: [70, 392], vol: [490, 290], sep: 426,
-      info: [8, 438, 544, 34, 13], run: [140, 366, 130, 52], keys: { x0: 8, pitch: 68, w: 62, h: 62, rows: [512, 636], per: 8 },
-      notes: { x0: 8, y: 760, wk: 68, h: 170, bw: 42, bh: 104 }, fn: { x0: 8, y: 966, pitch: 109, w: 100, h: 62 }, oct: [140, 1062], hint: [380, 1062],
-      tempo: [400, 392, 26, 'side'] }
+    landscape: { w: 1200, h: 640, band2: [206, 300], band3: 300, bar: [30, 456, 1140, 178], word: [56, 40, 15], model: [760, 268, 36],
+      wave: [92, 142], sep1: 162, sep2: 920, knobs: [[240, 142], [360, 142], [480, 142], [600, 142], [720, 142], [840, 142]], slide: [1000, 142],
+      tempo: [86, 253, 30], vol: [1112, 253, 30], trans: { x0: 236, y: 236, w: 56, h: 38, pitch: 62, legend: [359, 226] },
+      info: [40, 312, 1120, 28, 12.5], keys: { x0: 160, pitch: 980 / 16, w: 50, h: 46, rows: [380], per: 16 },
+      notes: { x0: 160, y: 470, wk: 56, h: 150, bw: 34, bh: 92 },
+      btn: { clear: [40, 470, 100, 34], run: [40, 542, 100, 72], tie: [640, 478, 70, 40], rest: [722, 478, 70, 40], back: [1060, 478, 100, 40],
+             down: [640, 556, 70, 46], up: [722, 556, 70, 46], accent: [804, 556, 70, 46], slide: [886, 556, 70, 46], next: [1060, 532, 100, 72] },
+      legends: [['TIME', 716, 472], ['OCTAVE', 716, 550], ['STEP', 1110, 472]], oct: [990, 600], hint: [990, 620] },
+    portrait: { w: 560, h: 1188, band2: [352, 470], band3: 470, bar: [4, 784, 552, 398], word: [24, 40, 14], model: [540, 42, 26],
+      wave: [70, 152], sep1: 0, sep2: 0, knobs: [[210, 152], [350, 152], [490, 152], [70, 292], [210, 292], [350, 292]], slide: [490, 292],
+      tempo: [56, 412, 28], vol: [504, 412, 28], trans: { x0: 166, y: 396, w: 54, h: 44, pitch: 59, legend: [282, 384] },
+      info: [8, 480, 544, 34, 13], keys: { x0: 8, pitch: 68, w: 62, h: 62, rows: [560, 684], per: 8 },
+      notes: { x0: 8, y: 798, wk: 68, h: 170, bw: 42, bh: 104 },
+      btn: { clear: [8, 992, 100, 56], tie: [117, 992, 100, 56], rest: [226, 992, 100, 56], back: [335, 992, 100, 56], next: [444, 992, 108, 56],
+             down: [8, 1082, 100, 56], up: [117, 1082, 100, 56], accent: [226, 1082, 100, 56], slide: [335, 1082, 100, 56], run: [444, 1082, 108, 56] },
+      legends: [], oct: [140, 1166], hint: [380, 1166] }
   };
+  function tiesOf(cells) {              // cont[i] = index of the note whose len runs through rest step i, else null
+    var cont = [], end = -1, from = -1;
+    for (var i = 0; i < cells.length; i++) {
+      var c = cells[i];
+      if (c && isNum(c.note)) { from = i; end = i + Math.max(1, Math.round(c.len || 1)) - 1; cont.push(null); }
+      else if (!c && i <= end) cont.push(from);
+      else { cont.push(null); if (c) end = -1; }
+    }
+    return cont;
+  }
   Panels.define('hvt303', {
     label: 'HVT-303 bass line synthesizer', size: { w: 1200, h: 640 }, win: { w: 1040 },
-    layouts: { landscape: { w: 1200, h: 640 }, portrait: { w: 560, h: 1090 } },
+    layouts: { landscape: { w: 1200, h: 640 }, portrait: { w: 560, h: 1188 } },
     match: function (d) { return d.kind === 'instrument' && d.type === 'tb303'; },
     build: function (P) {
-      var svg = P.svg, C = C303, host = P.host, L = L303[P.layout === 'portrait' ? 'portrait' : 'landscape'], W = L.w, H = L.h;
+      var svg = P.svg, C = C303, host = P.host, L = L303[P.layout === 'portrait' ? 'portrait' : 'landscape'], W = L.w, H = L.h, wide = W > 600;
+      var px = wide ? 30 : 4, pw = W - 2 * px;
       P.el('rect', { x: 0, y: 0, width: W, height: H, rx: 14, fill: C.cheek }, svg);
-      P.el('rect', { x: W > 600 ? 34 : 4, y: 6, width: W > 600 ? W - 68 : W - 8, height: H - 12, rx: 4, fill: C.panel }, svg);
-      P.el('rect', { x: W > 600 ? 34 : 4, y: L.lowTop, width: W > 600 ? W - 68 : W - 8, height: H - L.lowTop - 6, fill: C.panelLo }, svg);
-      for (var gy = 14; gy < H - 8; gy += 4) P.el('line', { x1: W > 600 ? 34 : 4, x2: W > 600 ? W - 34 : W - 4, y1: gy, y2: gy, stroke: 'rgba(255,255,255,.07)', 'stroke-width': 1 }, svg);   // brushed metal
-      P.text(svg, L.brand[0], L.brand[1], 'HVT-303', { 'text-anchor': 'start', fill: C.ink, 'font-size': L.brand[2], 'font-weight': 800, 'font-style': 'italic' });
-      P.text(svg, L.brand[3], L.brand[4], 'HAVANTECHNO', { 'text-anchor': 'end', fill: '#c8336f', 'font-size': L.brand[5], 'font-weight': 800, 'letter-spacing': 4 });
-      P.el('rect', { x: L.stripe[0], y: L.stripe[1], width: L.stripe[2], height: 4, fill: C.orange }, svg);
+      P.el('rect', { x: px, y: 6, width: pw, height: L.band2[0] - 6, fill: C.panel }, svg);                       // band 1
+      P.el('rect', { x: px, y: L.band2[0], width: pw, height: L.band2[1] - L.band2[0], fill: '#b2b5ba' }, svg);   // band 2
+      P.el('rect', { x: px, y: L.band3, width: pw, height: H - L.band3 - 6, fill: C.panelLo }, svg);               // band 3
+      for (var gy = 10; gy < H - 8; gy += 4) P.el('line', { x1: px, x2: W - px, y1: gy, y2: gy, stroke: 'rgba(255,255,255,.06)', 'stroke-width': 1 }, svg);   // brushed metal
+      P.el('line', { x1: px, x2: W - px, y1: L.band2[0], y2: L.band2[0], stroke: '#8d9095', 'stroke-width': 1.2 }, svg);
+      P.el('line', { x1: px, x2: W - px, y1: L.band3, y2: L.band3, stroke: '#8d9095', 'stroke-width': 1.2 }, svg);
+      P.el('rect', { x: L.bar[0], y: L.bar[1], width: L.bar[2], height: L.bar[3], rx: 4, fill: '#161618' }, svg);   // the black bar behind the keys
+      P.text(svg, L.word[0], L.word[1], 'HAVANTECHNO', { 'text-anchor': 'start', fill: '#c8336f', 'font-size': L.word[2], 'font-weight': 800, 'letter-spacing': 4 });
+      P.text(svg, L.model[0], L.model[1], 'HVT-303', { 'text-anchor': wide ? 'middle' : 'end', fill: C.ink, 'font-size': L.model[2], 'font-weight': 800, 'font-style': 'italic' });
+      if (L.sep1) { P.el('line', { x1: L.sep1, x2: L.sep1, y1: 60, y2: 196, stroke: C.ink, 'stroke-width': 1 }, svg); P.el('line', { x1: L.sep2, x2: L.sep2, y1: 60, y2: 196, stroke: C.ink, 'stroke-width': 1 }, svg); }
 
-      // knob band: waveform switch, the six knobs, slide time trimmer, volume
+      // band 1: waveform switch, the six knobs; the engine's slide time as a trimmer (the original has no such knob)
       var ks = { skirt: '#161616', cap: '#2e2e30', capR: 0.7, pointer: '#f4f4f0', pointerW: 2.8, ticks: 11, tick: C.ink, label: C.ink, edge: '#000', numSize: 8.5 };
       var N10 = ['0', '2', '4', '6', '8', '10'], wx = L.wave[0], wy = L.wave[1];
       P.text(svg, wx - 4, wy - 48, 'WAVEFORM', { fill: C.ink, 'font-size': 10.5, 'font-weight': 700 });
@@ -1276,7 +1327,7 @@
       P.text(svg, wx - 22, wy - 16, 'SAW', { 'text-anchor': 'end', fill: C.ink, 'font-size': 9.5, 'font-weight': 600 });
       P.text(svg, wx - 22, wy + 18, 'SQR', { 'text-anchor': 'end', fill: C.ink, 'font-size': 9.5, 'font-weight': 600 });
       P.toggle(svg, { x: wx, y: wy, w: 14, h: 40, param: 'wave', values: [waves[0], waves[1]], label: 'Waveform saw / square',
-        draw: function (art, on, b) {
+        draw: function (art, on) {
           sv('rect', { x: -9, y: -24, width: 18, height: 48, rx: 3, fill: '#0b0b0b', stroke: '#555' }, art);
           sv('rect', { x: -7, y: on ? 2 : -22, width: 14, height: 20, rx: 2, fill: '#d9d9d4', stroke: '#222' }, art);
         } });
@@ -1286,16 +1337,25 @@
       });
       P.knob(svg, { x: L.slide[0], y: L.slide[1], r: 16, param: 'slideTime', label: 'Slide time', caption: 'SLIDE TIME', captionY: -40, captionSize: 9.5, kind: 'trim',
         style: { skirt: '#9a9a96', edge: '#3a3a38', ticks: 0, slot: true, pointer: '#2a2a28', label: C.ink } });
-      P.knob(svg, { x: L.vol[0], y: L.vol[1], r: 30, param: 'level', label: 'Volume', caption: 'VOLUME', captionY: -58, captionSize: 11, style: ks, numbers: N10 });
-      P.el('line', { x1: W > 600 ? 50 : 8, x2: W > 600 ? W - 50 : W - 8, y1: L.sep, y2: L.sep, stroke: C.ink, 'stroke-width': 1.2 }, svg);
 
-      // step band
-      var st = { sel: 0, oct: 36, sig: '', vw: null, cur: -2, playing: null };
+      // band 2: tempo far left, volume far right (as on the card), the pattern transpose between
+      var T = L.tempo;
+      var tempo = P.knob(svg, { x: T[0], y: T[1], r: T[2], label: 'Tempo', value: P.tempoValue([40, 300]), kind: 'tempo', style: Object.assign({}, ks, { numSize: 8 }) });
+      P.text(svg, T[0] + T[2] + 14, T[1] - 6, 'TEMPO', { 'text-anchor': 'start', fill: C.ink, 'font-size': 10.5, 'font-weight': 700 });
+      var bpm = P.text(svg, T[0] + T[2] + 14, T[1] + 12, '', { 'text-anchor': 'start', fill: C.ink, 'font-size': 12, 'font-weight': 700, 'class': 'pn-bpm' });
+      var V = L.vol;
+      P.knob(svg, { x: V[0], y: V[1], r: V[2], param: 'level', label: 'Volume', style: ks });
+      P.text(svg, V[0] - V[2] - 14, V[1] + 4, 'VOLUME', { 'text-anchor': 'end', fill: C.ink, 'font-size': 10.5, 'font-weight': 700 });
+      var TR = L.trans;
+      P.text(svg, TR.legend[0], TR.legend[1], 'TRANSPOSE PATTERN', { fill: C.ink, 'font-size': 10, 'font-weight': 700 });
+      var tbtn = [['−OCT', -12, 'Transpose the whole pattern an octave down'], ['−1', -1, 'Transpose the whole pattern a semitone down'], ['+1', 1, 'Transpose the whole pattern a semitone up'], ['+OCT', 12, 'Transpose the whole pattern an octave up']].map(function (t, j) {
+        return P.button(svg, { x: TR.x0 + j * TR.pitch, y: TR.y, w: TR.w, h: TR.h, rx: 4, label: t[0], size: 11, fill: C.btn, ink: C.keyInk, aria: t[2], cls: 'pn-trans', onClick: function () { transpose(t[1]); } });
+      });
+
+      // band 3: the info line, the sixteen step keys (a screen's addition), then the keys on the black bar
+      var st = { sel: 0, oct: 36, sig: '', vw: null, cur: -2, playing: null, cont: [] };
       P.el('rect', { x: L.info[0], y: L.info[1], width: L.info[2], height: L.info[3], rx: 2, fill: '#2b2b2d' }, svg);
       var info = P.text(svg, L.info[0] + 12, L.info[1] + L.info[3] / 2 + L.info[4] * 0.36, '', { 'text-anchor': 'start', fill: '#f0efe9', 'font-size': L.info[4], 'font-weight': 600, 'class': 'pn-info' });
-      var ss = P.button(svg, { x: L.run[0], y: L.run[1], w: L.run[2], h: L.run[3], rx: 4, label: 'RUN / STOP', size: 11, fill: C.btn, ink: C.keyInk, aria: 'Start or stop the song', onClick: P.transportToggle });
-      ss.setDisabled(!P.canTransport());
-      var runLed = P.el('circle', { cx: L.run[0] + L.run[2] / 2, cy: L.run[1] - 12, r: 4.5, fill: C.ledOff }, svg);
       var K = L.keys, keys = [];
       for (var i = 0; i < STEPS; i++) (function (i) {
         var ky = K.rows[Math.floor(i / K.per)], kx = K.x0 + K.pitch * (i % K.per) + (K.pitch - K.w) / 2, cx = kx + K.w / 2;
@@ -1306,17 +1366,16 @@
             st.sel = i; st.sig = '';
             if (e && e.shiftKey) cmd('accent'); else if (e && e.altKey) cmd('slide');
           } });
+        var tie = P.el('rect', { x: kx - (K.pitch - K.w) / 2 - 2, y: ky + K.h / 2 - 3, width: (K.pitch - K.w) + 4, height: 6, rx: 3, fill: C.orange, display: 'none', 'pointer-events': 'none' }, svg);
         var sel = P.el('rect', { x: kx - 3, y: ky - 3, width: K.w + 6, height: K.h + 6, rx: 6, fill: 'none', stroke: C.orange, 'stroke-width': 2.6, display: 'none', 'pointer-events': 'none' }, svg);
         var cur = P.el('rect', { x: kx + 4, y: ky + K.h + 4, width: K.w - 8, height: 3, fill: '#ffffff', display: 'none' }, svg);
         var ma = P.text(svg, cx - 10, ky + K.h + 20, 'A', { fill: '#7a7c80', 'font-size': 10, 'font-weight': 800 });
         var ms = P.text(svg, cx + 10, ky + K.h + 20, 'S', { fill: '#7a7c80', 'font-size': 10, 'font-weight': 800 });
-        keys.push({ b: b, nm: nm, led: led, sel: sel, cur: cur, ma: ma, ms: ms });
+        keys.push({ b: b, nm: nm, led: led, sel: sel, cur: cur, ma: ma, ms: ms, tie: tie });
       })(i);
 
-      // lower band: the one-octave note keys, octave and step functions, tempo
       var N = L.notes, wk = N.wk, wx0 = N.x0, lowY = N.y, whites = [0, 2, 4, 5, 7, 9, 11, 12], blacks = [[1, 0], [3, 1], [6, 3], [8, 4], [10, 5]];
       var noteKeys = [];
-      if (W > 600) P.text(svg, wx0 - 14, lowY + 70, 'NOTE', { 'text-anchor': 'end', fill: C.ink, 'font-size': 10, 'font-weight': 700 });
       whites.forEach(function (semi, j) {
         var b = P.button(svg, { x: wx0 + j * wk, y: lowY, w: wk - 4, h: N.h, rx: 3, fill: C.white, aria: 'Note ' + NOTE_NAMES[semi % 12] + (semi === 12 ? ' (octave up)' : ''), cls: 'pn-note',
           onClick: function () { setNote(semi); } });
@@ -1326,40 +1385,75 @@
       blacks.forEach(function (bk) {
         var b = P.button(svg, { x: wx0 + (bk[1] + 1) * wk - N.bw / 2 - 2, y: lowY, w: N.bw, h: N.bh, rx: 3, fill: C.black, aria: 'Note ' + NOTE_NAMES[bk[0]], cls: 'pn-note',
           onClick: function () { setNote(bk[0]); } });
-        noteKeys.push({ semi: bk[0], b: b, fill: C.black });
+        noteKeys.push({ semi: bk[0], b: b, fill: '#2a2a2c' });
       });
-      var F = L.fn, fns = [['DOWN', 'down', 'Octave down'], ['UP', 'up', 'Octave up'], ['ACCENT', 'accent', 'Accent on the selected step'], ['SLIDE', 'slide', 'Slide from the selected step'], ['REST', 'rest', 'Make the selected step a rest']];
+      var FN = { clear: ['CLEAR', 'Clear the whole pattern'], run: ['RUN / STOP', 'Start or stop the song'], tie: ['TIE', 'Tie the selected step to the note before it (press again to untie)'],
+        rest: ['REST', 'Make the selected step a rest'], back: ['BACK', 'Select the previous step'], next: ['NEXT', 'Select the next step'],
+        down: ['DOWN', 'Selected step an octave down'], up: ['UP', 'Selected step an octave up'], accent: ['ACCENT', 'Accent on the selected step'], slide: ['SLIDE', 'Slide from the selected step'] };
       var fbtn = {};
-      fns.forEach(function (f, j) {
-        var b = P.button(svg, { x: F.x0 + j * F.pitch, y: F.y, w: F.w, h: F.h, rx: 4, label: f[0], size: 11, fill: C.btn, ink: C.keyInk, aria: f[2], onClick: function () { cmd(f[1]); } });
-        b.led = P.el('circle', { cx: F.x0 + j * F.pitch + F.w / 2, cy: F.y - 12, r: 4, fill: C.ledOff }, svg);
-        fbtn[f[1]] = b;
+      Object.keys(FN).forEach(function (k) {
+        var r = L.btn[k];
+        var b = P.button(svg, { x: r[0], y: r[1], w: r[2], h: r[3], rx: 4, label: FN[k][0], size: 11, fill: k === 'next' || k === 'run' ? '#55575c' : C.btn, ink: C.keyInk, aria: FN[k][1], cls: 'pn-fn',
+          onClick: k === 'run' ? P.transportToggle : function () { cmd(k); } });
+        if (k === 'accent' || k === 'slide' || k === 'tie' || k === 'run') b.led = P.el('circle', { cx: r[0] + r[2] - 10, cy: r[1] + 10, r: 4, fill: C.ledOff }, svg);
+        fbtn[k] = b;
       });
-      var octTxt = P.text(svg, L.oct[0], L.oct[1], '', { fill: C.ink, 'font-size': 11, 'font-weight': 700 });
-      P.text(svg, L.hint[0], L.hint[1], W > 600 ? 'shift-click a step: accent  ·  alt-click: slide' : 'tap a step, then a note', { fill: '#3c3e42', 'font-size': 10 });
-      var T = L.tempo;
-      var side = T[3] === 'side';
-      P.text(svg, side ? T[0] + T[2] + 14 : T[0], side ? T[1] - 6 : T[1] - T[2] - 22, 'TEMPO', { 'text-anchor': side ? 'start' : 'middle', fill: C.ink, 'font-size': 10.5, 'font-weight': 700 });
-      var tempo = P.knob(svg, { x: T[0], y: T[1], r: T[2], label: 'Tempo', value: P.tempoValue([40, 300]), kind: 'tempo', style: ks });
-      var bpm = P.text(svg, side ? T[0] + T[2] + 14 : T[0], side ? T[1] + 12 : T[1] + T[2] + 22, '', { 'text-anchor': side ? 'start' : 'middle', fill: C.ink, 'font-size': 12, 'font-weight': 700, 'class': 'pn-bpm' });
+      fbtn.run.setDisabled(!P.canTransport());
+      L.legends.forEach(function (lg) { P.text(svg, lg[1], lg[2], lg[0], { fill: '#cfd0d2', 'font-size': 9, 'font-weight': 700, 'letter-spacing': 1 }); });
+      var octTxt = P.text(svg, L.oct[0], L.oct[1], '', { fill: '#e8e8e4', 'font-size': 11, 'font-weight': 700 });
+      P.text(svg, L.hint[0], L.hint[1], wide ? 'click a step, then a note' : 'tap a step, then a note', { fill: '#a8a9ad', 'font-size': 10 });
 
       function cellAt(i) { return st.vw ? st.vw.cells[i] : null; }
       function setNote(semi) {
-        var c = cellAt(st.sel), base = c && isNum(c.note) ? Math.floor(c.note / 12) * 12 : st.oct, n = clamp(base + semi, 0, 127);
+        var c = cellAt(st.sel), base = c && isNum(c.note) ? Math.floor(c.note / 12) * 12 : st.oct, n = clamp(base + semi, 0, 127), i = st.sel;
         st.oct = base;
-        P.editCell(null, st.sel, function (cell) { return cell ? { note: n } : { note: n, vel: DEFAULT_VEL, len: 1 }; });
+        P.editCells(null, function (cells) {
+          var cont = tiesOf(cells), out = [];
+          if (cont[i] != null) out.push([cont[i], { len: i - cont[i] > 1 ? i - cont[i] : null }]);      // a note on a tied step ends the tie there
+          out.push([i, cells[i] ? { note: n } : { note: n, vel: DEFAULT_VEL, len: 1 }]);
+          return out;
+        });
+        st.sig = '';
+      }
+      function transpose(d) {
+        P.editCells(null, function (cells) {
+          var out = [];
+          cells.forEach(function (c, i) { if (c && isNum(c.note)) out.push([i, { note: clamp(c.note + d, 0, 127) }]); });
+          return out;
+        });
+        st.oct = clamp(st.oct + d - (d % 12), 0, 120);
         st.sig = '';
       }
       function cmd(k) {
-        var c = cellAt(st.sel);
+        var c = cellAt(st.sel), i = st.sel;
+        if (k === 'next' || k === 'back') { st.sel = (st.sel + (k === 'next' ? 1 : STEPS - 1)) % STEPS; st.sig = ''; return; }
         if (k === 'down' || k === 'up') {
           var d = k === 'up' ? 12 : -12;
-          if (c && isNum(c.note)) P.editCell(null, st.sel, function (cell) { return cell && isNum(cell.note) ? { note: clamp(cell.note + d, 0, 127) } : undefined; });
+          if (c && isNum(c.note)) P.editCell(null, i, function (cell) { return cell && isNum(cell.note) ? { note: clamp(cell.note + d, 0, 127) } : undefined; });
           else st.oct = clamp(st.oct + d, 0, 120);
         } else if (k === 'accent' || k === 'slide') {
           var f = k === 'accent' ? 'acc' : 'slide';
-          P.editCell(null, st.sel, function (cell) { if (!cell) return undefined; var o = {}; o[f] = cell[f] ? null : true; return o; });
-        } else if (k === 'rest') P.editCell(null, st.sel, function (cell) { return cell ? null : undefined; });
+          P.editCell(null, i, function (cell) { if (!cell) return undefined; var o = {}; o[f] = cell[f] ? null : true; return o; });
+        } else if (k === 'rest') {
+          P.editCells(null, function (cells) {
+            var cont = tiesOf(cells);
+            if (cont[i] != null) return [[cont[i], { len: i - cont[i] > 1 ? i - cont[i] : null }]];     // a rest inside a tie ends the tie before it
+            return cells[i] ? [[i, null]] : [];
+          });
+        } else if (k === 'tie') {
+          P.editCells(null, function (cells) {
+            var cont = tiesOf(cells);
+            if (cont[i] != null) return [[cont[i], { len: i - cont[i] > 1 ? i - cont[i] : null }]];     // already tied: untie from here
+            if (i === 0) return [];
+            var from = (cells[i - 1] && isNum(cells[i - 1].note)) ? i - 1 : cont[i - 1];
+            if (from == null) return [];
+            var out = [[from, { len: i - from + 1 }]];
+            if (cells[i]) out.push([i, null]);
+            return out;
+          });
+        } else if (k === 'clear') {
+          P.editCells(null, function (cells) { var out = []; cells.forEach(function (c2, j) { if (c2) out.push([j, null]); }); return out; });
+        }
         st.sig = '';
       }
       P.onUpdate(function () {
@@ -1368,27 +1462,35 @@
         var sig = (vw ? vw.si + ':' + vw.variant + ':' + vw.bar + ':' + JSON.stringify(vw.cells) : 'none') + '|' + st.sel + '|' + st.oct + '|' + edit;
         if (sig !== st.sig) {
           st.sig = sig;
+          var cells = vw ? vw.cells : [], cont = tiesOf(cells);
+          st.cont = cont;
           keys.forEach(function (k, i) {
-            var c = vw ? vw.cells[i] : null, note = c && isNum(c.note) ? c.note : null;
-            k.nm.textContent = c ? noteName(note != null ? note : st.oct) : '';
-            k.led.setAttribute('fill', c ? C.led : C.ledOff);
+            var c = cells[i] || null, note = c && isNum(c.note) ? c.note : null, tied = cont[i] != null;
+            k.nm.textContent = c ? noteName(note != null ? note : st.oct) : tied ? 'tie' : 'rest';
+            k.nm.setAttribute('fill', c ? C.ink : tied ? C.orange : '#6c6e72');
+            k.nm.setAttribute('font-weight', c ? '700' : '500');
+            k.led.setAttribute('fill', c ? C.led : tied ? '#a8471a' : C.ledOff);
+            k.tie.setAttribute('display', tied ? 'inline' : 'none');
             k.sel.setAttribute('display', i === st.sel ? 'inline' : 'none');
             k.ma.setAttribute('fill', c && c.acc ? C.orange : '#8a8c90');
             k.ms.setAttribute('fill', c && c.slide ? C.orange : '#8a8c90');
             k.b.g.setAttribute('aria-pressed', i === st.sel ? 'true' : 'false');
-            k.b.g.setAttribute('aria-label', 'Step ' + (i + 1) + ': ' + (c ? noteName(note) + (c.acc ? ', accent' : '') + (c.slide ? ', slide' : '') : 'rest') + (i === st.sel ? ' (selected)' : ''));
+            k.b.g.setAttribute('aria-label', 'Step ' + (i + 1) + ': ' + (c ? noteName(note) + (c.acc ? ', accent' : '') + (c.slide ? ', slide' : '') + (c.len > 1 ? ', tied over ' + (Math.round(c.len) - 1) : '') : tied ? 'tie from step ' + (cont[i] + 1) : 'rest') + (i === st.sel ? ' (selected)' : ''));
           });
-          var c = cellAt(st.sel), selNote = c && isNum(c.note) ? c.note : null;
+          var c = cellAt(st.sel), selNote = c && isNum(c.note) ? c.note : null, selTied = cont[st.sel] != null;
           noteKeys.forEach(function (nk) {
-            var lit = selNote != null && ((selNote % 12) === (nk.semi % 12)) && (nk.semi === 12 ? false : true);
+            var lit = selNote != null && (selNote % 12) === (nk.semi % 12) && nk.semi !== 12;
             nk.b.rect.setAttribute('fill', lit ? '#f09a5c' : nk.fill);
             nk.b.setDisabled(!edit);
           });
           fbtn.accent.led.setAttribute('fill', c && c.acc ? C.led : C.ledOff);
           fbtn.slide.led.setAttribute('fill', c && c.slide ? C.led : C.ledOff);
-          ['down', 'up', 'accent', 'slide', 'rest'].forEach(function (k) { fbtn[k].setDisabled(!edit); });
+          fbtn.tie.led.setAttribute('fill', selTied ? C.led : C.ledOff);
+          ['down', 'up', 'accent', 'slide', 'rest', 'tie', 'clear'].forEach(function (k) { fbtn[k].setDisabled(!edit); });
+          ['back', 'next'].forEach(function (k) { fbtn[k].setDisabled(false); });
+          tbtn.forEach(function (b) { b.setDisabled(!edit); });
           octTxt.textContent = 'OCTAVE ' + (Math.floor((selNote != null ? selNote : st.oct) / 12) - 1);
-          var t = 'STEP ' + (st.sel + 1) + '  ·  ' + (c ? noteName(selNote) + (c.acc ? '  ·  accent' : '') + (c.slide ? '  ·  slide' : '') : 'rest') + '   —   ';
+          var t = 'STEP ' + (st.sel + 1) + '  ·  ' + (c ? noteName(selNote) + (c.acc ? '  ·  accent' : '') + (c.slide ? '  ·  slide' : '') + (c.len > 1 ? '  ·  tied over ' + (Math.round(c.len) - 1) : '') : selTied ? 'tie from step ' + (cont[st.sel] + 1) : 'rest') + '   —   ';
           if (!vw) t += P.canEdit() ? 'no pattern' : 'step editing is in the main window';
           else t += 'section ' + vw.section + (vw.variant ? '  ·  pattern ' + vw.variant + (vw.bars > 1 ? '  ·  bar ' + (vw.bar + 1) + '/' + vw.bars : '') : '  ·  not playing here yet');
           info.textContent = t;
@@ -1396,7 +1498,7 @@
         var step = P.playStep();
         if (step !== st.cur) { st.cur = step; keys.forEach(function (k, i) { k.cur.setAttribute('display', i === step ? 'inline' : 'none'); k.led.setAttribute('stroke', i === step ? '#fff' : 'none'); }); }
         var pl = step >= 0 || !!safe(function () { return host.transport.playing; }, false);
-        if (pl !== st.playing) { st.playing = pl; runLed.setAttribute('fill', pl ? C.led : C.ledOff); }
+        if (pl !== st.playing) { st.playing = pl; fbtn.run.led.setAttribute('fill', pl ? C.led : C.ledOff); }
         var bt = isNum(tempo.v) ? (Math.round(tempo.v * 10) / 10).toFixed(1) + ' BPM' : '';
         if (bpm.textContent !== bt) bpm.textContent = bt;
       });

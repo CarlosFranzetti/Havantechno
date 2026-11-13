@@ -2,7 +2,7 @@
 /* tools/tb303-bench.js - repeatable characterisation of `tb303` on the worklet path in headless Chromium (P5, Patch Crew).
  *
  * Usage:   node tools/tb303-bench.js [--compare tools/out/older.json] [--out tools/out/tb303-bench.json]
- *          node tools/tb303-bench.js --demos     (the owner's demo WAVs instead, see demos() below)
+ *          node tools/tb303-bench.js --demos [--suffix -r2]     (the owner's demo WAVs instead, see demos() below)
  * Env:     PLAYWRIGHT_PATH (default /opt/node22/lib/node_modules/playwright), CHROMIUM_PATH (default /opt/pw-browsers/chromium)
  * Exit:    0 measured and written; 2 the harness could not run (no Playwright, no Chromium, no worklet).
  *
@@ -25,7 +25,7 @@ var CHROMIUM_PATH = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium';
 var SR = 44100, F24 = 440 * Math.pow(2, (24 - 69) / 12);
 var args = process.argv.slice(2), arg = function (k) { var i = args.indexOf(k); return i >= 0 ? args[i + 1] : null; };
 var OUT = path.resolve(arg('--out') || path.join(ROOT, 'tools', 'out', 'tb303-bench.json'));
-var CMP = arg('--compare'), DEMOS = args.indexOf('--demos') >= 0;
+var CMP = arg('--compare'), DEMOS = args.indexOf('--demos') >= 0, SUFFIX = arg('--suffix') || '';
 
 // ------------------------------------------------------------------ analysis
 function fft(re, im) {
@@ -193,9 +193,9 @@ async function main() {
   // 5. slide curve: 36 (slide) -> 48, time to 50 % and 90 % of the Hz distance
   res.slide = {};
   for (var stv of [0, 30, 60, 120, 200]) {
-    var xl = await R({ slideTime: stv }, [{ t: 0.02, midi: 36, dur: D1, step: 0, slide: true }, { t: 0.02 + STEP, midi: 48, dur: D1, step: 1 }], 0.5);
+    var xl = await R({ slideTime: stv }, [{ t: 0.02, midi: 36, dur: D1, step: 0, slide: true }, { t: 0.02 + STEP, midi: 48, dur: 4 * STEP, step: 1 }], 0.9);
     var s0 = S(0.02 + STEP), fa = 65.406, fb = 130.813, t50 = null, t90 = null;
-    for (i = s0; i < S(0.5); i++) { var fr = (xl.f[i] - fa) / (fb - fa); if (t50 == null && fr >= 0.5) t50 = (i - s0) / SR; if (t90 == null && fr >= 0.9) { t90 = (i - s0) / SR; break; } }
+    for (i = s0; i < S(0.9); i++) { var fr = (xl.f[i] - fa) / (fb - fa); if (t50 == null && fr >= 0.5) t50 = (i - s0) / SR; if (t90 == null && fr >= 0.9) { t90 = (i - s0) / SR; break; } }
     res.slide['ms' + stv] = { slideTimeMs: stv, t50Ms: t50 == null ? null : r1(t50 * 1000), t90Ms: t90 == null ? null : r1(t90 * 1000), gateHeld: mean(s0 - S(0.004), s0, xl.a) > 0.1 };
   }
 
@@ -313,12 +313,12 @@ async function demos(page) {
       for (j = 0; j < wav.length; j += 0x8000) str += String.fromCharCode.apply(null, wav.subarray(j, j + 0x8000));
       return { peak: pk, rms: Math.sqrt(s / L.length), seconds: buf.duration, wav: btoa(str) };
     }, doc);
-    var file = 'tb303-demo-' + d.name + (drive ? '-driven' : '') + '.wav';
+    var file = 'tb303-demo-' + d.name + (drive ? '-driven' : '') + SUFFIX + '.wav';
     fs.writeFileSync(path.join(dir, file), Buffer.from(r.wav, 'base64'));
     rows.push({ file: file, peak: r3(r.peak), peakDbfs: r1(db(r.peak)), rmsDbfs: r1(db(r.rms)), seconds: r1(r.seconds) });
     console.log('  ' + pad(file, 48) + 'peak ' + pad(r3(r.peak), 7) + '(' + r1(db(r.peak)) + ' dBFS)  rms ' + r1(db(r.rms)) + ' dBFS  ' + r1(r.seconds) + ' s');
   }
-  fs.writeFileSync(path.join(dir, 'tb303-demos.json'), JSON.stringify(rows, null, 1));
+  fs.writeFileSync(path.join(dir, 'tb303-demos' + SUFFIX + '.json'), JSON.stringify(rows, null, 1));
   return 0;
 }
 

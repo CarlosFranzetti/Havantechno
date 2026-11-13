@@ -65,7 +65,7 @@ var panelBox = ids['so-panel'];
 ok(panelBox.find(function (n) { return n.className === 'pn-root'; }).length === 1 && H.panel().key === 'hvt303', 'the real HVT-303 panel is mounted (landscape at 1280 px)');
 ok(panelBox.find(function (n) { return n.tagName === 'SVG'; })[0].attrs.viewBox === '0 0 1200 640', 'landscape arrangement');
 var pr = sb.Panels.render(host.device('track:tb303'), host, { layout: 'portrait' });
-ok(pr.el.children[0].attrs.viewBox === '0 0 560 1090' && pr.el.find(function (n) { return /^Step \d+/.test(n.attrs['aria-label'] || ''); }).length === 16, 'portrait arrangement: 560 x 1090, sixteen steps');
+ok(pr.el.children[0].attrs.viewBox === '0 0 560 1188' && pr.el.find(function (n) { return /^Step \d+/.test(n.attrs['aria-label'] || ''); }).length === 16, 'portrait arrangement: 560 x 1188, sixteen steps');
 var have = {}; pr.el.walk(function (n) { if (n.attrs['data-param']) have[n.attrs['data-param']] = 1; });
 ok(Object.keys(host.device('track:tb303').spec).every(function (p) { return have[p]; }), 'portrait arrangement carries every tb303 spec row');
 pr.dispose();
