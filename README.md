@@ -49,23 +49,38 @@ The archived studio, for comparison:
 
 ## Quick start
 
-Serve the folder over HTTP, then open the studio:
+You need two things on your computer: **Git** and **Node.js** (the steps below were run on Node 22; any current LTS release should do). Nothing else is installed for the browser version.
 
-```bash
-python3 -m http.server 8000
-```
+1. **Get the code, on the `main` branch.** The repository's default branch on GitHub is still an old one, so name `main`:
 
-- Studio: <http://localhost:8000/olde%20Havantechno%20dub%20studio/>. Press **Play**, then click a section to jump to it.
-- Self-check, no browser needed: `node "olde Havantechno dub studio/selfcheck.js"`
+   ```bash
+   git clone -b main https://github.com/CarlosFranzetti/Havantechno.git
+   cd Havantechno
+   ```
 
-The app has not been listened to end to end: every statement about its sound is a measurement (see `docs/research/2026-10-23-build-crew/REPORT.md`, section 5). The new app needs COOP/COEP headers, so it has its own server:
+2. **Start the app's server** and leave that terminal open:
 
-```bash
-node tools/serve.js            # then open http://localhost:8000/app/
-cd app && npm install && npm start   # the Electron desktop app
-node app/engine/selfcheck.js   # engine self-check, 337 checks
-node tools/browser-check.js    # opens the app in headless Chromium, 26 checks
-```
+   ```bash
+   node tools/serve.js
+   ```
+
+   It prints `App: http://localhost:8000/app/index.html`. If port 8000 is taken, run `node tools/serve.js 8080` and use that number below.
+
+3. **Open <http://localhost:8000/app/> in Chrome** (or Edge). Click **Start audio** (browsers only make sound after a click), then **Play**. The Guidance recreation plays; click a section name in the ruler to jump.
+
+4. **Try the instruments.** In the System Editor press **+ track** and pick "TR-808 kit", "Bass line synth (HVT-303)", "Mono synth (HVT-D)" or "Poly synth (HVT-106)". Double-click the new track's device to open its panel in a floating window.
+
+5. **Stop** with Ctrl+C in the terminal.
+
+**Desktop app (optional).** From the repository folder: `cd app`, then `npm install` (downloads Electron, once), then `npm start`.
+
+**Import a track (optional, early).** The **Import…** button takes an audio file and, if you have them, its stems. Splitting a file into stems from inside the desktop app needs Python 3 with the separation packages; the app's message names what is missing and the command to install it.
+
+**Checks, for developers.** `node app/engine/selfcheck.js` (engine, 448 checks), `node tools/browser-check.js` (opens the app in headless Chromium, 26 checks), and the other `tools/*-check.js` files. Each prints `OK` and exits 0.
+
+Nobody has listened to the app end to end yet: every statement about its sound in this repository is a measurement (see `docs/research/`).
+
+**The archived first studio** is a separate page: with the same server running, open <http://localhost:8000/olde%20Havantechno%20dub%20studio/>, press **Play**, then click a section to jump to it. Its self-check: `node "olde Havantechno dub studio/selfcheck.js"`.
 
 Each strip is one synth from the sequencer, with its level, pan, sends, duck depth and synth parameters. Tweak any of
 them while the track plays. The processor rack at the bottom holds the send effects and the master chain.
