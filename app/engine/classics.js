@@ -217,7 +217,7 @@
 
   // ------------------------------------------------------------------ instrument base (as drums.js, no drive stage)
   function makeInst(ctx, type, spec, opts, build) {
-    var inst = { type: type, ctx: ctx, out: null, pre: null, _live: [], engine: ctx ? 'fallback' : 'none' };
+    var inst = { type: type, ctx: ctx, out: null, pre: null, _live: [], engine: ctx ? 'fallback' : 'none', _probe: !!(opts && opts._probe) };
     K.defineParams(inst, spec, function (name, v, o) {
       if (!ctx) return;
       var at = (o && typeof o.at === 'number') ? o.at : ctx.currentTime;
@@ -337,7 +337,8 @@
 
   var BUILD = {};
   BUILD.tb303 = function (inst) {
-    var ctx = inst.ctx, pl = planner(), node = root.Worklets ? root.Worklets.node(ctx, PROC.tb303) : null;
+    // opts._probe (tools/tb303-bench.js only; not a parameter): a second node output with cutoff, frequency and VCA gain
+    var ctx = inst.ctx, pl = planner(), node = root.Worklets ? root.Worklets.node(ctx, PROC.tb303, inst._probe ? { numberOfOutputs: 2, outputChannelCount: [1, 3], processorOptions: { probe: true } } : null) : null;
     inst._plan = pl;
     if (node) {
       var W = buildWorklet(inst, node);

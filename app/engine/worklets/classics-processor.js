@@ -167,10 +167,13 @@ class Tb303Processor extends AudioWorkletProcessor {
       { name: 'slideTime', defaultValue: 60, minValue: 0, maxValue: 2000 }
     ];
   }
-  constructor() {
+  constructor(options) {
     super();
     var fs = sampleRate, fo = fs * OS;
     this.alive = true;
+    // test probe (tools/tb303-bench.js only, not a parameter): a second output carries the instantaneous cutoff (Hz),
+    // oscillator frequency (Hz) and VCA gain per sample
+    this.probe = !!(options && options.processorOptions && options.processorOptions.probe);
     this.port.onmessage = (e) => { if (e.data === 'stop') this.alive = false; };
     this.lastTrig = 0; this.gateOn = false; this.idle = true; this.quiet = 0;
     this.freq = 65.4; this.phase = 0;
@@ -193,6 +196,7 @@ class Tb303Processor extends AudioWorkletProcessor {
     var out = outputs[0] && outputs[0][0];
     if (!out) return this.alive;
     var n = out.length, fs = sampleRate, fo = fs * OS, i, k;
+    var pr = this.probe && outputs[1] ? outputs[1] : null;
     var pP = P.pitch, pG = P.gate, pT = P.trig, pS = P.slide, pA = P.acc, pV = P.vel, pTu = P.tune, pW = P.wave,
         pC = P.cutoff, pR = P.resonance, pE = P.envMod, pD = P.decay, pAc = P.accent, pSt = P.slideTime;
     for (i = 0; i < n; i++) {
@@ -258,6 +262,7 @@ class Tb303Processor extends AudioWorkletProcessor {
       y = this.hp2.run(this.ap.run(y));
       var o = y * a * this.velL * T303.outGain;
       out[i] = o;
+      if (pr) { pr[0][i] = fc; if (pr[1]) pr[1][i] = this.freq; if (pr[2]) pr[2][i] = a; }
       // sleep when silent and released (state only; deterministic)
       if (!this.gateOn && this.amp < 1e-5 && Math.abs(o) < 1e-6) { if (++this.quiet > fs * 0.05) this.idle = true; } else this.quiet = 0;
     }

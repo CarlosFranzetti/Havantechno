@@ -196,3 +196,37 @@ Not verified:
 - Unison detune and per-voice component variance are not built.
 - A full 200-bar render with juno tracks is not timed.
 - The fallback is not measured beyond the Node check.
+
+## 9. 2026-11-12 03:20 ET (08:20 UTC): the 303 focus, part one (bench and demos)
+
+Rulings received (coordinator, quoted): "(a) tools/tb303-bench.js (new, yours): a repeatable characterisation of `tb303` on the worklet path in headless Chromium, writing tools/out/tb303-bench.json and printing a table ... (state how you excite it: the instrument's own saw harmonics or an internal test hook; do not add a public parameter) ... It must run in under two minutes and exit 0; a --compare <older json> option prints what moved. (b) Demos for the owner's ears ... each 8 bars at 126 BPM on one sixteen-step pattern with accents and slides ... Use section automation or direct param scheduling, whichever the engine supports honestly through Host.render, and say which. Also render each once through the engine's saturator at a mild setting ... Rules as before: your files only (classics.js, worklets/, classics-check.js, the new bench), no commits, never git stash/checkout/reset/clean ... quote this message's rulings there." Second message: "Finish part one first (the bench must exist and its JSON be saved as the "before" so --compare has something to compare)".
+
+**Bench.** `node tools/tb303-bench.js` takes about 21 s and exits 0. It writes tools/out/tb303-bench.json; the "before" copy is tools/out/tb303-bench-before.json.
+- Excitation: the instrument's own saw harmonics. Note 24 gives a line every 32.7 Hz. The response is harmonic level + 20 log n, relative to the passband harmonics (60 Hz to 0.3 fc).
+- Time traces come from an internal test probe. `Classics.create(ctx, 'tb303', {_probe: true})` adds a second node output carrying the processor's instantaneous cutoff, oscillator frequency and VCA gain. It is not a parameter and not in the spec; makeInst keeps `inst._probe`. With `--demos` the bench renders the demos instead.
+
+Headline numbers (before P1's corrections):
+- **Resonance peak over the passband**, static fc 271 / 836 / 1954 Hz: 2.1 / 6.8 / 9.1 dB at resonance 1, at 1.09 / 0.94 / 0.89 x fc. It does not self-oscillate: the strongest line between harmonics is -61 dB, and the tail after release is 0.
+- **Response at resonance 0**: -13.4 / -18.3 / -19.3 dB at fc. The 2x to 4x slope is about -18 dB/oct.
+- **Filter decay time constant** against the knob 200 / 400 / 800 / 1400 / 2000 ms: 200 / 400 / 800 / 1400 / 2000 ms (three-point fit on log2 cutoff). Accented notes: 407 ms whatever the knob (accent decay 200 ms plus the 100 ms sweep RC at resonance 0.5).
+- **Accent level** at knob 0 / 0.25 / 0.5 / 0.75 / 1: +0.2 / +4.8 / +7.7 / +9.9 / +11.7 dB peak.
+- **Accent sweep, last of n accents over a plain step** (n = 1 / 2 / 4): resonance 0.2: 0.19 / 0.63 / 0.64 oct; 0.6: 0.01 / 0.58 / 0.69; 0.95: 0 / 0.51 / 0.69. The build-up is there, but the first accent adds almost nothing at high resonance.
+- **Slide**, time to 50 / 90 % of the Hz distance: slideTime 30: 4.1 / 13.8 ms; 60: 8.3 / 27.6; 120: 16.6 / 55.3; 200: 27.7 / 92.1. The gate is held through the slide.
+- **Gate**: 0.527 of a step; a two-step tie 1.528.
+- **Square over saw**: +5.6 dB RMS.
+- **Output peak** on a two-bar accent and slide pattern: defaults 0.727. The grid maximum is 4.45, at cutoff 2394, resonance 0, envMod 1, accent 1. At resonance 0 the Open303 filter loses no passband, so it is about 10 dB louder than at 0.5. This needs a level decision in part two.
+
+**Demos** (tools/out/, `--demos`): rendered through `Host.render` with section automation. Each move is a `ramp` (cutoff, resonance, envMod, decay) or a `set` (wave), applied by the sequencer at each step's time through `inst.set(name, v, {at})`. The master chain is bypassed. The driven versions add a saturator insert on the track: drive 0.06, tone 9 kHz, trim 0.8.
+
+| Demo (each also -driven) | Peak dry | Peak driven | RMS dry / driven |
+|---|---|---|---|
+| tb303-demo-cutoff-sweep | 0.540 | 0.696 | -23.4 / -16.2 dBFS |
+| tb303-demo-resonance-up | 0.531 | 0.655 | |
+| tb303-demo-envmod-up | 0.529 | 0.654 | |
+| tb303-demo-decay-up | 0.519 | 0.586 | |
+| tb303-demo-accents-slides-off-on | 0.519 | 0.624 | |
+| tb303-demo-saw-then-square | 0.660 | 0.621 | |
+
+Spectral centroid per bar confirms each move; for example the cutoff sweep goes 573 to 2549 Hz across the 8 bars.
+
+**Checks**, all exit 0: classics-check 110, selfcheck 448 (another crew's additions), panels 116, synths 169, drums 342, faces 2495, system-editor 97, processors 92, step-view 72, widgets 157, analysis 47, browser-check PASS 26.
