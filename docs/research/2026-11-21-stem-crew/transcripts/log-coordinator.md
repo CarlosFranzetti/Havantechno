@@ -1,0 +1,13 @@
+# Stem Crew: coordinator's log
+
+Times are Eastern Time with UTC in parentheses. Rulings given to agents in messages are copied here when they are given.
+
+## 2026-11-21 15:53 EST (20:53 UTC) — crews formed
+
+The owner, 21 November: "I want a bunch of research and reasoning on how to approach this further. Eventually I do want what I've been asking but I also want the app to separate the elements into audios stems and I want you research how isotope RX 12 does their analysis and what engines a izotope uses and look into as many RE'd or open source sound engines and stem handling audio. Etc. Separately I want you to hunt down the chips and schematics for the different soft synths and see if there are also open source emus if so let's use that. If not let's start reverses engineeering some of it. Improved the audio detection engine and improve my synths so they're closer to arturias methods."
+
+Read as: a research and reasoning round first, no code, in two crews. Stem Crew: S1 iZotope RX and the commercial field (Sonnet), S2 open-source separation and stem handling (Sonnet), S3 the detection engine and a proposed second version of app/analysis (Opus). Circuit Crew: C1 the hardware, part by part, with readable schematics (Sonnet), C2 open emulations and reverse-engineering projects with a use, port or reverse-engineer verdict per instrument (Sonnet), C3 modelling methods, what the makers publish, open tools and a workflow for this project (Opus). The coordinator then writes one strategy for the owner from the six transcripts.
+
+Given in the task messages beyond the briefs: every claim tagged READ, SNIPPET or MEMORY; the Firecrawl search and scrape tools for pages (they fetch from outside the sandbox, so the network allowlist does not block them; they spend the owner's Firecrawl credits, capped at 25 searches and 40 scrapes per researcher) and curl for github; no owner or project name in any query; no ROM images, manuals or schematics saved into the repository; S1 to check whether "RX 12" exists; S3 to attack or support the coordinator's leading idea, analysis by synthesis with the app's own instruments; C3 to rank upgrades to the present engine by audible value per unit of work and to say what "closer to Arturia's methods" can honestly mean.
+
+State: the container was replaced during a break of several days. Everything pushed to main is intact (429a314 at the start of this round); the checkout had come up on GitHub's old default branch and was moved to main. The scratchpad was wiped: the owner's reference recording, its separated stems, the three Roland manuals and the Render Room's source files are gone from this machine and would need to be supplied again when work needs them. The two published pages are unaffected.
