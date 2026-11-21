@@ -9,13 +9,18 @@ was changed. Scratch measurements were made in the session scratchpad, not in th
 - Tags: **READ** = I fetched the page or file and it says so (URL given, figure or words quoted); **SNIPPET** = a search
   result's summary only; **MEMORY** = my own recollection, unverified; **RAN** = I ran it in this sandbox and saw the
   output. Paper titles marked MEMORY may be slightly off in wording or year; they are listed so a later pass can check them.
-- Budget used: 8 searches of 25 (2 failed), 11 Firecrawl scrapes (1 failed) plus 24 raw-GitHub fetches, 35 of 40 pages.
+- Budget before the outage: 8 Firecrawl searches (2 failed), 11 Firecrawl scrapes (1 failed), 24 raw-GitHub fetches.
 - **The Firecrawl account ran out of credits** after 6 searches and 10 scrapes (message: "Insufficient credits ... the
   allowance resets at 2026-11-22T06:40:54.832Z", i.e. 01:40 ET 22 November). After that I used only `curl` on
   raw.githubusercontent.com, as the brief allows. The GitHub API (api.github.com) answered 403 "GitHub access to this
   repository is not enabled for this session", so licences were read from LICENSE files, not from API metadata.
-- Consequence: Part B's paper references are mostly READ only as citations inside library READMEs, or MEMORY. I opened no
-  paper PDF. Softube, Native Instruments, TAL, Cherry Audio and D16 were not reached at all (section 3.4).
+- Consequence: Part B's paper references are mostly READ only as citations inside library READMEs, SNIPPET, or MEMORY.
+  I opened no paper PDF. Softube and TAL rest on SNIPPET; Native Instruments, Cherry Audio and D16 on nothing (2.3).
+- After the coordinator's message (curl to any host that answers, WebSearch summaries as SNIPPET) I tried four paper
+  PDFs by curl. **Refused** by the proxy (`curl: (56) CONNECT tunnel failed, response 403`, or no connection):
+  www.dafx.de, dafx2018.web.ua.pt, www.native-instruments.com, www.eurasip.org. **Answered**: raw.githubusercontent.com,
+  zenodo.org (HTTP 200 on its home page; no paper fetched). Then 3 WebSearch calls (11 searches in all); their results
+  are tagged SNIPPET. Pages fetched in all: 39 of 40.
 - No query carried the owner's name or the project's name.
 
 ## 1. Where the present engine stands (READ, this repository)
@@ -139,12 +144,21 @@ What a method upgrade would replace, from `app/engine/worklets/classics-processo
   stated approach for nonlinear circuits is nodal analysis plus trapezoidal integration with Newton iteration, a good
   initial guess from the previous sample, and oversampling; and his products (The Drop, The Glue) are commercial and
   closed. These papers are public domain: the safest material in this whole list to port.
-- **Softube, Native Instruments, TAL, Cherry Audio, D16**: not reached (credits ran out). MEMORY only, to be checked:
-  Native Instruments employs Vadim Zavalishin and hosts his book "The Art of VA Filter Design" (NI, revisions up to
-  2.1.x, about 2018-2020), the main published account of ZDF/TPT filters including ladder, diode ladder and SKF chapters;
-  Softube's marketing uses "component-level modelling" and it worked with Roland on a few plug-ins; TAL (Patrick Kunz)
-  describes "zero feedback delay" filters on TAL-U-NO-LX and BassLine-101; Cherry Audio and D16 (Phoscyon, a 303) have
-  published no technical papers that I know of. None of these is a method claim this report relies on.
+- **Softube. SNIPPET** (WebSearch summary of MusicTech, MusicRadar, gearnews, KVR, 2021): Model 84 is a Juno-106
+  recreation described as "circuit-modeling on a component level", built from "a fully serviced and highly functioning
+  Juno-106 from 1984", keeping "all the quirks and non-linearities"; a separate "Model 84 Chorus" module exists. No
+  technical detail on the method was in the results.
+- **TAL. SNIPPET** (product listings and reviews of TAL-U-NO-LX): "self resonating zero feedback delay filter (24dB LP),
+  with a filter range up to ~40kHz (depends on the sample rate)"; "meticulously calibrated after a real Juno-60"; one
+  review says it "uses PSpice circuit technology to model the original circuitry" (a reviewer's claim, not TAL's own).
+- **Native Instruments, Cherry Audio, D16 (Phoscyon)**: nothing found (one combined search returned only TAL). MEMORY
+  only: Native Instruments employs Vadim Zavalishin and hosts his book "The Art of VA Filter Design" (revisions up to
+  2.1.x, about 2018-2020), the main published account of ZDF/TPT filters including ladder, diode-ladder and Sallen-Key
+  chapters (the PDF host refused this session); Cherry Audio and D16 have published no technical papers that I know of.
+- **Basis of Part A, plainly**: Arturia's TAE page and two manuals, Arturia's arXiv paper, Roland's 2014 blog post and
+  the Boutique interview, u-he's Diva guide (third-party copy) and Cytomic's paper list are READ. The Cytomic
+  nodal-analysis excerpt, Softube, TAL and the other Arturia manuals are SNIPPET. Everything said about Native
+  Instruments, Cherry Audio, D16, Cytomic's Newton practice and the Mini V / Jup-8 V / Jun-6 V manuals is MEMORY.
 
 ## Part B. The published toolkit
 
@@ -270,9 +284,11 @@ Each item: key references, what it does, when it is the right tool here.
   Device emulation, as derived by Martin Holters and Julian Parker: http://dafx2018.web.ua.pt/papers/DAFx2018_paper_12.pdf";
   "Anti-aliasing/reconstruction filters used by JUNO-60 chorus. Root/Pole analysis borrowed from the above paper", with
   `inputFilterOriginalCutoff = 9900.0f`, `outputFilterOriginalCutoff = 9500.0f` and complex roots such as
-  `{ -10329.2715f, -329.848f }`. MEMORY: the paper is Holters and Parker, "A combined model for a bucket brigade device and
-  its input and output filters", DAFx-18; Raffel and Smith, "Practical modeling of bucket-brigade device circuits",
-  DAFx-10 (BBD as a clocked sample-and-hold with charge-transfer losses).
+  `{ -10329.2715f, -329.848f }`. SNIPPET (WebSearch, dafx.de archive entry): the title is "A Combined Model for a Bucket
+  Brigade Device and its Input and Output Filters", a model that "uses a variable sample rate" and avoids interpolation;
+  the authors and year come from the chowdsp header (READ: Holters and Parker, DAFx2018 paper 12). SNIPPET: "Practical
+  Modeling of Bucket-Brigade Device Circuits" is in the same archive (MEMORY: Raffel and Smith, DAFx-10; a BBD as a
+  clocked sample-and-hold with charge-transfer losses).
 - What: the BBD is a discrete-time system clocked at a rate that changes with the LFO, sitting between two continuous-time
   filters; Holters and Parker model the filters as sums of complex one-poles evaluated at the BBD's own sample instants,
   so the variable clock is exact and alias-free in the way the hardware is. Around it: clock feedthrough (a tone at the
@@ -511,7 +527,7 @@ here, RAN) and SymPy for derivation, hand-port to JS; clang-only WASM held in re
 - Any Arturia technical paper, patent, thesis or engineer interview on TAE; any TAE version history; the Mini V,
   Jup-8 V and Jun-6 V descriptions (not fetched); Acid V's method beyond its feature list.
 - Any Roland paper or patent on ACB, or any detail of its solver; the date of the Boutique interview page.
-- Softube, Native Instruments, TAL, Cherry Audio and D16 statements (Firecrawl credits ran out before these).
+- Native Instruments, Cherry Audio and D16 statements; anything first-hand from Softube or TAL (SNIPPET only).
 - The content of Cytomic's ADC 2020 "From Circuit To Code" slides; Zavalishin's book page; every paper PDF in Part B
   (titles come from library READMEs or memory).
 - Which synth or drum circuits MAME's netlist library contains; the licence file of grame-cncm/faustwasm; the faustlibraries
