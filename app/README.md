@@ -87,12 +87,12 @@ Run on 27 November 2026 by G2 (Pressing Crew) on the working tree with the secon
 
 | Command | Result | Exit |
 |---|---|---|
-| `node app/engine/selfcheck.js` | OK 469 | 0 |
+| `node app/engine/selfcheck.js` | OK 473 | 0 |
 | `node tools/browser-check.js` | PASS (30 checks: the globals now include Presets, Settings, Sampled909 and Assets) | 0 |
 | `node tools/panels-check.js` | OK 202 (19 rows for the 909's voice source) | 0 |
 | `node tools/solo-check.js` | OK 151 (8 rows for the 909 page's source and Solo.boot's `sections`) | 0 |
 | `node tools/system-editor-check.js` | OK 105 (8 rows for the sampled kit) | 0 |
-| every other `tools/*-check.js` | see the coordinator's log for the counts | 0 |
+| the others | analysis 26, classics 131, drums 372, export 51, faces 2499, import-view 122, importer 20, presets 1907, processors 92, rom909 12 (the owner's images are in `local/` on this machine), sampled909 116, shell-files 227, shell-separate 92, step-view 72, synths 169, views 144, widgets 157 | 0 each |
 
 All of them in one go: `for c in app/engine/selfcheck.js tools/*-check.js; do node "$c" || echo "FAILED: $c"; done`. `tools/rom909-check.js` measures the owner's 909 chip images and runs only where they are in the git-ignored `local/` folder.
 

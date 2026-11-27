@@ -8,6 +8,9 @@
  *   --keep-going               with --all: continue after a failure (default already does; exit code is still 1)
  *   --asset-dir <pub>=<src>    copy every file of folder <src> into the bundle under <pub> (sample sets); repeatable
  *   --write-file <pub>=<text>  write a small generated file into the bundle (an asset manifest); repeatable
+ *   --rom-dir <src>            carry the 909 sample ROM images of folder <src> inside a script (assets/tr909-rom-images.js,
+ *                              loaded right after drums.js and handed to Drums.loadRom): the hosting serves no file with a
+ *                              chip-image extension, so the images cannot travel as files the page fetches
  *
  * No dependencies beyond Node and Playwright (found by require('playwright'), then /opt/node-tools).
  * Output (tools/out/ is git-ignored build output): <bundle>/<page>.html (the fragment), copied files,
@@ -312,6 +315,8 @@ function build(pageArg, opts) {
 
   // scripts
   const scriptTags = [], own = [];
+  const ROM_PUB = 'assets/tr909-rom-images.js';
+  let romTagged = false;
   let workletsAbs = null;
   for (const s of pg.scripts) {
     if (s.inline !== undefined) {
@@ -323,6 +328,7 @@ function build(pageArg, opts) {
       if (/\.\./.test(r.pub)) die('".." left in ' + r.pub);
       scriptTags.push('<script' + (s.type ? ' type="' + s.type + '"' : '') + ' src="' + r.pub + '"></script>');
       if (path.basename(r.abs) === 'worklets.js') workletsAbs = r.abs;
+      if (opts.romDir && path.basename(r.abs) === 'drums.js') { scriptTags.push('<script src="' + ROM_PUB + '"></script>'); romTagged = true; }
     }
   }
   if (workletsAbs) {
@@ -333,8 +339,11 @@ function build(pageArg, opts) {
       copy.set(path.relative(APP, abs).split(path.sep).join('/'), abs);
     }
   }
+  if (opts.romDir && !romTagged) die('--rom-dir needs a page that loads drums.js');
   const note = opts.note ? '\n<p class="bundle-note">' + esc(opts.note) + '</p>' : '';
-  const fragment = '<title>' + esc(title) + '</title>\n' + GATE_META + '\n<style>\n' + css + '\n</style>\n' + pg.body + note + '\n' + scriptTags.join('\n') + '\n';
+  const fragment = '<title>' + esc(title) + '</title>\n' + GATE_META + '\n<style>\n' + css + '\n</style>\n' + pg.body + note + '\n' + scriptTags.join('\n') + '\n' +
+    // a page whose framework builds its markup at load puts it after the note: move the note back to the end
+    (note ? '<script>(function () { var n = document.querySelector(".bundle-note"); if (n && n.parentNode) n.parentNode.appendChild(n); })();</script>\n' : '');
 
   // code scans (warnings and hard failures)
   const errors = [];
@@ -378,6 +387,26 @@ function build(pageArg, opts) {
       filesMap[pub] = dest;
       total += fs.statSync(dest).size;
     }
+  }
+  if (opts && opts.romDir) {
+    const srcAbs = path.resolve(opts.romDir);
+    if (!fs.existsSync(srcAbs) || !fs.statSync(srcAbs).isDirectory()) die('--rom-dir source is not a folder: ' + opts.romDir);
+    const b64 = [];
+    for (const f of fs.readdirSync(srcAbs).sort()) {
+      const from = path.join(srcAbs, f), st = fs.statSync(from);
+      if (!st.isFile() || !st.size || st.size % 32768) continue;      // one 32 KB chip, or several joined
+      b64.push(fs.readFileSync(from).toString('base64'));
+    }
+    if (!b64.length) die('--rom-dir holds no 32 KB chip image: ' + opts.romDir);
+    const text = '/* TR-909 sample ROM images carried by this copy of the page (solo-bundle --rom-dir). Drums.loadRom checks each by checksum. */\n' +
+      '(function (root) {\n  var D = root.Drums; if (!D || typeof D.loadRom !== \'function\') return;\n  var IMAGES = ' + JSON.stringify(b64) + ';\n' +
+      '  IMAGES.forEach(function (s) {\n    try { var bin = root.atob(s), u = new Uint8Array(bin.length), i; for (i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); D.loadRom(u, { source: \'bundle\' }); } catch (e) {}\n  });\n' +
+      '})(typeof window !== \'undefined\' ? window : this);\n';
+    const dest = path.join(outDir, ROM_PUB);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, text);
+    filesMap[ROM_PUB] = dest;
+    total += Buffer.byteLength(text);
   }
   for (const [pub, text] of (opts && opts.writeFiles) || []) {
     if (/(^|\/)\.\.(\/|$)/.test(pub)) die('--write-file path must not contain ..');
@@ -556,6 +585,7 @@ function parseArgs(argv) {
       if (k < 1) die('--asset-dir takes <published dir>=<source dir>');
       (o.assetDirs = o.assetDirs || []).push([v.slice(0, k).replace(/^\/+|\/+$/g, ''), v.slice(k + 1)]);
     }
+    else if (a === '--rom-dir') o.romDir = argv[++i];
     else if (a === '--write-file') {                      // --write-file <published path>=<text>: a small generated file (a manifest)
       const v = argv[++i] || '', k = v.indexOf('=');
       if (k < 1) die('--write-file takes <published path>=<text>');
