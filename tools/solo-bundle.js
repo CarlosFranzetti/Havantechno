@@ -6,6 +6,8 @@
  *   node tools/solo-bundle.js --all [--test]
  *   --start-selector "<css>"   tried first when --test looks for the start control
  *   --keep-going               with --all: continue after a failure (default already does; exit code is still 1)
+ *   --asset-dir <pub>=<src>    copy every file of folder <src> into the bundle under <pub> (sample sets); repeatable
+ *   --write-file <pub>=<text>  write a small generated file into the bundle (an asset manifest); repeatable
  *
  * No dependencies beyond Node and Playwright (found by require('playwright'), then /opt/node-tools).
  * Output (tools/out/ is git-ignored build output): <bundle>/<page>.html (the fragment), copied files,
@@ -362,6 +364,29 @@ function build(pageArg, opts) {
     filesMap[pub] = dest;
     total += fs.statSync(dest).size;
   }
+  // extra assets the page loads at run time (sample sets, a manifest): copied as they are, never transformed
+  for (const [pubDir, srcDir] of (opts && opts.assetDirs) || []) {
+    const srcAbs = path.resolve(srcDir);
+    if (!fs.existsSync(srcAbs) || !fs.statSync(srcAbs).isDirectory()) die('--asset-dir source is not a folder: ' + srcDir);
+    if (/(^|\/)\.\.(\/|$)/.test(pubDir)) die('--asset-dir published dir must not contain ..');
+    for (const f of fs.readdirSync(srcAbs).sort()) {
+      const from = path.join(srcAbs, f);
+      if (!fs.statSync(from).isFile()) continue;
+      const pub = pubDir + '/' + f, dest = path.join(outDir, pub);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(from, dest);
+      filesMap[pub] = dest;
+      total += fs.statSync(dest).size;
+    }
+  }
+  for (const [pub, text] of (opts && opts.writeFiles) || []) {
+    if (/(^|\/)\.\.(\/|$)/.test(pub)) die('--write-file path must not contain ..');
+    const dest = path.join(outDir, pub);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, text);
+    filesMap[pub] = dest;
+    total += Buffer.byteLength(text);
+  }
   fs.writeFileSync(path.join(outDir, 'files.json'), JSON.stringify(filesMap, null, 2) + '\n');
   const skeleton = '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n' +
@@ -526,6 +551,16 @@ function parseArgs(argv) {
     else if (a === '--out') o.out = argv[++i];
     else if (a === '--note') o.note = argv[++i];
     else if (a === '--start-selector') o.startSelector = argv[++i];
+    else if (a === '--asset-dir') {                       // --asset-dir <published dir>=<source dir>: every file in it travels with the page
+      const v = argv[++i] || '', k = v.indexOf('=');
+      if (k < 1) die('--asset-dir takes <published dir>=<source dir>');
+      (o.assetDirs = o.assetDirs || []).push([v.slice(0, k).replace(/^\/+|\/+$/g, ''), v.slice(k + 1)]);
+    }
+    else if (a === '--write-file') {                      // --write-file <published path>=<text>: a small generated file (a manifest)
+      const v = argv[++i] || '', k = v.indexOf('=');
+      if (k < 1) die('--write-file takes <published path>=<text>');
+      (o.writeFiles = o.writeFiles || []).push([v.slice(0, k).replace(/^\/+/, ''), v.slice(k + 1)]);
+    }
     else if (a === '--keep-going') { /* default */ }
     else if (a === '-h' || a === '--help') o.help = true;
     else if (a[0] === '-') die('unknown option ' + a);
