@@ -209,19 +209,19 @@
   var uid = 0;
 
   function field(label, control, hint) {
-    var id = control.id || ('sv-f' + (++uid));
+    var id = control.id || ('hvs-f' + (++uid));
     control.id = id; control.setAttribute('id', id);
-    var row = el('div', 'sv-row');
-    row.appendChild(el('label', 'sv-lbl', label, { 'for': id }));
-    var c = el('div', 'sv-ctl');
+    var row = el('div', 'hvs-row');
+    row.appendChild(el('label', 'hvs-lbl', label, { 'for': id }));
+    var c = el('div', 'hvs-ctl');
     c.appendChild(control);
-    if (hint) { var hn = el('p', 'sv-hint', hint); hn.id = id + '-hint'; hn.setAttribute('id', id + '-hint'); control.setAttribute('aria-describedby', id + '-hint'); c.appendChild(hn); row._hint = hn; }
+    if (hint) { var hn = el('p', 'hvs-hint', hint); hn.id = id + '-hint'; hn.setAttribute('id', id + '-hint'); control.setAttribute('aria-describedby', id + '-hint'); c.appendChild(hn); row._hint = hn; }
     row.appendChild(c);
     row._control = control;
     return row;
   }
   function selectOf(options, value, onChange) {
-    var s = el('select', 'sv-select');
+    var s = el('select', 'hvs-select');
     options.forEach(function (o, i) { var op = el('option', null, o.label, { value: String(i) }); s.appendChild(op); });
     function paint(v) { for (var i = 0; i < options.length; i++) if (options[i].value === v || String(options[i].value) === String(v)) { s.value = String(i); return; } }
     paint(value);
@@ -241,7 +241,7 @@
 
   function buildAudio(panel) {
     var h = H.host, av = availability(h);
-    var status = el('p', 'sv-status', '', { role: 'status', 'aria-live': 'polite' });
+    var status = el('p', 'hvs-status', '', { role: 'status', 'aria-live': 'polite' });
     function say(t) { status.textContent = t || ''; }
     function applyAudio() {
       var a = availability(H.host).setAudioOptions;
@@ -257,7 +257,7 @@
       }, function (e) { say('The engine refused: ' + msg(e)); return false; });
     }
 
-    panel.appendChild(el('h3', 'sv-h', 'Output'));
+    panel.appendChild(el('h3', 'hvs-h', 'Output'));
     // output device
     var devOpts = [{ value: '', label: 'Default output' }];
     var cur = get('audio.sinkId');
@@ -266,12 +266,12 @@
     var devRow = field('Output device', devSel, '');
     panel.appendChild(devRow);
     function devHint(t) { hint.textContent = t; }
-    var hint = el('p', 'sv-hint', '', { id: 'sv-devhint' });
-    devSel.setAttribute('aria-describedby', 'sv-devhint');
+    var hint = el('p', 'hvs-hint', '', { id: 'hvs-devhint' });
+    devSel.setAttribute('aria-describedby', 'hvs-devhint');
     devSel.parentNode.appendChild(hint);
     if (!av.outputDevices.ok) { setOff(devSel, true, av.outputDevices.why); devHint(av.outputDevices.why); }
     else {
-      var askBtn = btn('sv-ask', 'Show device names…', 'Ask for microphone access once, which is what lets the browser name the output devices; nothing is recorded');
+      var askBtn = btn('hvs-ask', 'Show device names…', 'Ask for microphone access once, which is what lets the browser name the output devices; nothing is recorded');
       askBtn.hidden = true;
       on(askBtn, 'click', function () { listDevices(true); });
       hint.parentNode.appendChild(askBtn);
@@ -305,14 +305,15 @@
       { value: 'balanced', label: 'Balanced' },
       { value: 'playback', label: 'Playback (most stable, highest latency)' }
     ], 'Latency', 'Lower latency answers knobs and keys faster; higher latency is safer against dropouts on a busy machine.', applyAudio));
+    panel.appendChild(el('p', 'hvs-hint hvs-buffer', 'Buffer size: a browser or Electron page cannot set the device buffer; the latency hint is the nearest control, and the base latency below is what the engine was given.'));
     if (!av.setAudioOptions.ok) {
-      var note = el('p', 'sv-note', av.setAudioOptions.why, { role: 'note' });
+      var note = el('p', 'hvs-note', av.setAudioOptions.why, { role: 'note' });
       panel.appendChild(note);
     }
     panel.appendChild(status);
 
-    panel.appendChild(el('h3', 'sv-h', 'What the engine reports'));
-    var dl = el('dl', 'sv-report');
+    panel.appendChild(el('h3', 'hvs-h', 'What the engine reports'));
+    var dl = el('dl', 'hvs-report');
     var cells = {};
     [['sampleRate', 'Sample rate'], ['baseLatency', 'Base latency'], ['outputLatency', 'Output latency'], ['state', 'State'], ['sinkId', 'Output'], ['worklets', 'Synth engine']].forEach(function (p) {
       dl.appendChild(el('dt', null, p[1]));
@@ -333,36 +334,36 @@
     D.timer = setInterval(function () { if (D && D.tab === 'audio') refreshReport(); }, 700);
 
     var tone = btn('', 'Play test tone', 'Play a 1 kHz tone at -18 dBFS for one second');
-    var toneSay = el('span', 'sv-hint', '', { role: 'status', 'aria-live': 'polite' });
+    var toneSay = el('span', 'hvs-hint', '', { role: 'status', 'aria-live': 'polite' });
     on(tone, 'click', function () { testTone(H.host).then(function (r) { toneSay.textContent = r.ok ? '1 kHz at -18 dBFS, one second.' : r.why; }); });
-    var tr = el('div', 'sv-row sv-inline'); tr.appendChild(tone); tr.appendChild(toneSay);
+    var tr = el('div', 'hvs-row hvs-inline'); tr.appendChild(tone); tr.appendChild(toneSay);
     panel.appendChild(tr);
 
-    panel.appendChild(el('h3', 'sv-h', 'Export defaults'));
+    panel.appendChild(el('h3', 'hvs-h', 'Export defaults'));
     panel.appendChild(settingSelect('export.bitDepth', [{ value: 16, label: '16-bit' }, { value: 24, label: '24-bit' }, { value: 32, label: '32-bit float' }], 'Bit depth', null));
     panel.appendChild(settingSelect('export.sampleRate', rateOptions('Engine rate'), 'Sample rate', null));
-    var tail = el('input', 'sv-num', null, { type: 'number', min: '0', max: '30', step: '0.5' });
+    var tail = el('input', 'hvs-num', null, { type: 'number', min: '0', max: '30', step: '0.5' });
     tail.value = String(get('export.tail'));
     on(tail, 'change', function () { if (!set('export.tail', tail.value)) tail.value = String(get('export.tail')); else tail.value = String(get('export.tail')); });
     panel.appendChild(field('Tail (seconds)', tail, 'Rendered after the last bar so reverb and delay can ring out.'));
   }
 
   function buildView(panel) {
-    panel.appendChild(el('h3', 'sv-h', 'Views'));
+    panel.appendChild(el('h3', 'hvs-h', 'Views'));
     panel.appendChild(settingSelect('view.default', [
       { value: 'last', label: 'The last view used' }, { value: 'system', label: 'System Editor' }, { value: 'step', label: 'Step View' },
-      { value: 'mixer', label: 'Mixer' }, { value: 'clips', label: 'Clips' }
+      { value: 'mixer', label: 'Mixer' }, { value: 'clips', label: 'Sections' }
     ], 'View on start', null));
     panel.appendChild(settingSelect('view.density', [{ value: 'compact', label: 'Compact' }, { value: 'normal', label: 'Normal' }, { value: 'large', label: 'Large' }],
-      'Density', 'Control size and spacing in the toolbar, the mixer, the clip view and the dialogs.'));
+      'Density', 'Control size and spacing in the toolbar, the mixer, the sections grid and the dialogs.'));
     panel.appendChild(settingSelect('view.zoom', [80, 90, 100, 110, 125, 150].map(function (z) { return { value: z, label: z + ' %' }; }),
       'Interface zoom', 'Scales the whole window. The toolbar wraps instead of cutting anything off.'));
-    panel.appendChild(el('h3', 'sv-h', 'Meters'));
+    panel.appendChild(el('h3', 'hvs-h', 'Meters'));
     panel.appendChild(settingSelect('view.meterDecay', [{ value: 6, label: 'Slow (6 dB/s)' }, { value: 12, label: 'Medium (12 dB/s)' }, { value: 20, label: 'Normal (20 dB/s)' }, { value: 48, label: 'Fast (48 dB/s)' }],
       'Meter fall', 'How fast a meter falls after a peak.'));
     panel.appendChild(settingSelect('view.peakHold', [{ value: 0, label: 'Off' }, { value: 1, label: '1 s' }, { value: 1.5, label: '1.5 s' }, { value: 3, label: '3 s' }, { value: -1, label: 'Until clicked' }],
       'Peak hold', 'How long the peak marker and the peak readout stay before they fall.'));
-    panel.appendChild(el('h3', 'sv-h', 'Device windows'));
+    panel.appendChild(el('h3', 'hvs-h', 'Device windows'));
     panel.appendChild(settingSelect('view.deviceOpen', [{ value: 'panel', label: 'The panel (when the device has one)' }, { value: 'controls', label: 'The controls' }],
       'Open on', 'Applies to devices you have not opened before; a window remembers the view you last chose for it.'));
   }
@@ -370,12 +371,12 @@
   function buildAbout(panel) {
     var sh = H.shell || shell();
     var ver = el('dd', null, '…');
-    var dl = el('dl', 'sv-report');
+    var dl = el('dl', 'hvs-report');
     dl.appendChild(el('dt', null, 'Version')); dl.appendChild(ver);
     dl.appendChild(el('dt', null, 'Runs as')); dl.appendChild(el('dd', null, sh ? 'desktop app (Electron)' : 'web page'));
     dl.appendChild(el('dt', null, 'Licence')); dl.appendChild(el('dd', null, 'GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)'));
     dl.appendChild(el('dt', null, 'Source')); dl.appendChild(el('dd', null, 'LICENSE and THIRD_PARTY.md sit at the top of the source folder.'));
-    panel.appendChild(el('h3', 'sv-h', 'Havantechno'));
+    panel.appendChild(el('h3', 'hvs-h', 'Havantechno'));
     panel.appendChild(dl);
     function setVer(v) { ver.textContent = v; }
     var got = sh && isFn(sh.appVersion) ? safe(function () { return sh.appVersion(); }, null) : null;
@@ -384,7 +385,7 @@
       root.fetch('package.json').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { setVer(j && j.version ? j.version + ' (web build)' : 'web build'); }, function () { setVer('web build'); });
     } else setVer('web build');
     var third = btn('', 'Show third-party notices', 'Show THIRD_PARTY.md: code and data from other projects and their licences');
-    var pre = el('pre', 'sv-pre', '');
+    var pre = el('pre', 'hvs-pre', '');
     pre.hidden = true;
     on(third, 'click', function () {
       if (!pre.hidden) { pre.hidden = true; third.textContent = 'Show third-party notices'; return; }
@@ -432,21 +433,21 @@
     if (!doc) return false;
     if (D) { showTab(tab || D.tab); safe(function () { D.tabs[D.tab].focus(); }); return true; }
     var prev = doc.activeElement;
-    var overlay = el('div', 'sv-modal');
-    var dlg = el('div', 'sv-dlg', null, { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'sv-title' });
-    var head = el('div', 'sv-head');
-    head.appendChild(el('h2', 'sv-title', 'Settings', { id: 'sv-title' }));
-    var x = btn('sv-x', 'Close', 'Close settings (Esc)');
+    var overlay = el('div', 'hvs-modal');
+    var dlg = el('div', 'hvs-dlg', null, { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'hvs-title' });
+    var head = el('div', 'hvs-head');
+    head.appendChild(el('h2', 'hvs-title', 'Settings', { id: 'hvs-title' }));
+    var x = btn('hvs-x', 'Close', 'Close settings (Esc)');
     head.appendChild(x);
-    var list = el('div', 'sv-tabs', null, { role: 'tablist', 'aria-label': 'Settings sections' });
-    var body = el('div', 'sv-body');
+    var list = el('div', 'hvs-tabs', null, { role: 'tablist', 'aria-label': 'Settings sections' });
+    var body = el('div', 'hvs-body');
     D = { overlay: overlay, dlg: dlg, tabs: {}, panels: {}, prevFocus: prev, timer: 0, tab: null };
     TABS.forEach(function (t) {
-      var b = el('button', 'sv-tab', t.label, { role: 'tab', id: 'sv-tab-' + t.id, 'aria-controls': 'sv-panel-' + t.id, type: 'button' });
+      var b = el('button', 'hvs-tab', t.label, { role: 'tab', id: 'hvs-tab-' + t.id, 'aria-controls': 'hvs-panel-' + t.id, type: 'button' });
       b.type = 'button';
       on(b, 'click', function () { showTab(t.id); });
       list.appendChild(b);
-      var p = el('div', 'sv-panel', null, { role: 'tabpanel', id: 'sv-panel-' + t.id, 'aria-labelledby': 'sv-tab-' + t.id });
+      var p = el('div', 'hvs-panel', null, { role: 'tabpanel', id: 'hvs-panel-' + t.id, 'aria-labelledby': 'hvs-tab-' + t.id });
       D.tabs[t.id] = b; D.panels[t.id] = p;
       body.appendChild(p);
     });
@@ -458,9 +459,9 @@
       n = (n + ids.length) % ids.length;
       showTab(ids[n]); D.tabs[ids[n]].focus();
     });
-    var foot = el('div', 'sv-foot');
-    foot.appendChild(el('span', 'sv-hint', 'Changes are saved as you make them.'));
-    var done = btn('sv-done', 'Done', 'Close settings (Esc)');
+    var foot = el('div', 'hvs-foot');
+    foot.appendChild(el('span', 'hvs-hint', 'Changes are saved as you make them.'));
+    var done = btn('hvs-done', 'Done', 'Close settings (Esc)');
     foot.appendChild(done);
     dlg.appendChild(head); dlg.appendChild(list); dlg.appendChild(body); dlg.appendChild(foot);
     overlay.appendChild(dlg);
@@ -487,7 +488,10 @@
     var d = D; D = null;
     if (d.timer) clearInterval(d.timer);
     if (d.overlay.parentNode) d.overlay.parentNode.removeChild(d.overlay);
-    if (d.prevFocus && isFn(d.prevFocus.focus)) safe(function () { d.prevFocus.focus(); });
+    // focus back where it was; when that element is gone (the view rebuilt), to the toolbar's Settings button
+    var back = d.prevFocus && doc.body && isFn(doc.body.contains) && doc.body.contains(d.prevFocus) ? d.prevFocus : null;
+    if (!back && isFn(doc.querySelector)) back = safe(function () { return doc.querySelector('#frame button[aria-haspopup="dialog"]'); }, null);
+    if (back && isFn(back.focus)) safe(function () { back.focus(); });
     return true;
   }
 

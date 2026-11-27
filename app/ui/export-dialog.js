@@ -81,7 +81,7 @@
         return Promise.resolve(sh.pickDirectory({ title: 'Export to a folder' })).then(function (d) { dir = d || null; w.dir = dir; return !!dir; });
       },
       onFile: function (f) {
-        var rec = { name: fileName(song, f.name), seconds: f.seconds, peak: f.peak, path: null };
+        var rec = { name: fileName(song, f.name), seconds: f.seconds, peak: f.peak, lufs: f.lufs != null ? f.lufs : f.loudness, path: null };
         w.files.push(rec);
         var bytes = f.bytes;
         if (mode === 'folder') {
@@ -122,12 +122,12 @@
     var song = cleanName(safe(function () { return host.document().name; }, '')) || 'havantechno';
 
     var prev = doc.activeElement;
-    var overlay = el('div', 'sv-modal');
-    var dlg = el('div', 'sv-dlg xd-dlg', null, { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'xd-title' });
-    var head = el('div', 'sv-head');
-    head.appendChild(el('h2', 'sv-title', 'Export audio', { id: 'xd-title' }));
-    var body = el('div', 'sv-body xd-body');
-    var foot = el('div', 'sv-foot');
+    var overlay = el('div', 'hvs-modal');
+    var dlg = el('div', 'hvs-dlg xd-dlg', null, { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'xd-title' });
+    var head = el('div', 'hvs-head');
+    head.appendChild(el('h2', 'hvs-title', 'Export audio', { id: 'xd-title' }));
+    var body = el('div', 'hvs-body xd-body');
+    var foot = el('div', 'hvs-foot');
     dlg.appendChild(head); dlg.appendChild(body); dlg.appendChild(foot);
     overlay.appendChild(dlg);
     var R = { running: false, cancelled: false, done: false, abort: null, resolve: null };
@@ -176,7 +176,7 @@
     });
     on(overlay, 'keyup', function (ev) { if (ev.stopPropagation) ev.stopPropagation(); });
     function setFoot(list) { clear(foot); list.forEach(function (b) { foot.appendChild(b); }); }
-    var status = el('p', 'sv-status', '', { role: 'status', 'aria-live': 'polite' });
+    var status = el('p', 'hvs-status', '', { role: 'status', 'aria-live': 'polite' });
     function say(t) { status.textContent = t || ''; }
 
     // ---- the form
@@ -189,9 +189,9 @@
       w.appendChild(r); w.appendChild(el('span', null, label));
       return { el: w, input: r };
     }
-    function fieldset(legend) { var f = el('fieldset', 'xd-fs'); f.appendChild(el('legend', 'sv-h', legend)); return f; }
+    function fieldset(legend) { var f = el('fieldset', 'xd-fs'); f.appendChild(el('legend', 'hvs-h', legend)); return f; }
     function sel(options, value, label) {
-      var s = el('select', 'sv-select', null, { 'aria-label': label });
+      var s = el('select', 'hvs-select', null, { 'aria-label': label });
       options.forEach(function (op, i) { s.appendChild(el('option', null, op.label, { value: String(i) })); });
       for (var i = 0; i < options.length; i++) if (String(options[i].value) === String(value)) s.value = String(i);
       s._val = function () { return options[parseInt(s.value, 10) || 0].value; };
@@ -209,6 +209,7 @@
       var id = 'xd-t-' + (++uid);
       var w = el('label', 'xd-opt xd-chk', null, { 'for': id, 'data-fam': t.family || 'utility' });
       var c = el('input', null, null, { type: 'checkbox', id: id, value: t.name });
+      c.value = t.name;
       w.appendChild(c); w.appendChild(el('span', null, t.name));
       pickBox.appendChild(w);
       return c;
@@ -218,7 +219,7 @@
     master.checked = false;
     var masterW = el('label', 'xd-opt xd-chk', null, { 'for': 'xd-master' });
     masterW.appendChild(master); masterW.appendChild(el('span', null, 'Stems through the master chain (EQ, glue, limiter)'));
-    var masterHint = el('p', 'sv-hint', '');
+    var masterHint = el('p', 'hvs-hint', '');
     fsWhat.appendChild(masterW); fsWhat.appendChild(masterHint);
     body.appendChild(fsWhat);
 
@@ -228,13 +229,13 @@
     var sSec = radio('span', 'section', 'One section', false);
     var sBars = radio('span', 'bars', 'Bars', false);
     var secSel = sel(sections.map(function (s) { return { value: s.name, label: s.name + ' (bars ' + ((s.start || 0) + 1) + '–' + ((s.start || 0) + (s.bars || 0)) + ')' }; }), sections[0] ? sections[0].name : '', 'Section');
-    var fromIn = el('input', 'sv-num', null, { type: 'number', min: '1', max: String(Math.max(1, total)), step: '1', 'aria-label': 'First bar' });
-    var toIn = el('input', 'sv-num', null, { type: 'number', min: '1', max: String(Math.max(1, total)), step: '1', 'aria-label': 'Last bar (included)' });
+    var fromIn = el('input', 'hvs-num', null, { type: 'number', min: '1', max: String(Math.max(1, total)), step: '1', 'aria-label': 'First bar' });
+    var toIn = el('input', 'hvs-num', null, { type: 'number', min: '1', max: String(Math.max(1, total)), step: '1', 'aria-label': 'Last bar (included)' });
     var pb = safe(function () { return host.transport.pos().bar; }, 0) || 0;
     fromIn.value = String(pb + 1); toIn.value = String(Math.min(Math.max(1, total), pb + 2));
     fsSpan.appendChild(sSong.el);
     var secRow = el('div', 'xd-line'); secRow.appendChild(sSec.el); secRow.appendChild(secSel); fsSpan.appendChild(secRow);
-    var barRow = el('div', 'xd-line'); barRow.appendChild(sBars.el); barRow.appendChild(fromIn); barRow.appendChild(el('span', 'sv-hint', 'to')); barRow.appendChild(toIn); fsSpan.appendChild(barRow);
+    var barRow = el('div', 'xd-line'); barRow.appendChild(sBars.el); barRow.appendChild(fromIn); barRow.appendChild(el('span', 'hvs-hint', 'to')); barRow.appendChild(toIn); fsSpan.appendChild(barRow);
     if (!sections.length) { sSec.input.disabled = true; secSel.disabled = true; }
     body.appendChild(fsSpan);
 
@@ -242,13 +243,13 @@
     var fsFmt = fieldset('Format');
     var bitSel = sel([{ value: 16, label: '16-bit' }, { value: 24, label: '24-bit' }, { value: 32, label: '32-bit float' }], setting('export.bitDepth', 24), 'Bit depth');
     var rateSel = sel(RATES.map(function (r) { return { value: r, label: r ? (r / 1000) + ' kHz' : 'Engine rate' }; }), setting('export.sampleRate', 0), 'Sample rate');
-    var tailIn = el('input', 'sv-num', null, { type: 'number', min: '0', max: '30', step: '0.5', 'aria-label': 'Tail in seconds' });
+    var tailIn = el('input', 'hvs-num', null, { type: 'number', min: '0', max: '30', step: '0.5', 'aria-label': 'Tail in seconds' });
     tailIn.value = String(setting('export.tail', 2));
-    function labeled(text, c) { var w = el('label', 'xd-f'); w.appendChild(el('span', 'sv-lbl', text)); w.appendChild(c); return w; }
+    function labeled(text, c) { var w = el('label', 'xd-f'); w.appendChild(el('span', 'hvs-lbl', text)); w.appendChild(c); return w; }
     var fmtRow = el('div', 'xd-line');
     fmtRow.appendChild(labeled('Bit depth', bitSel)); fmtRow.appendChild(labeled('Sample rate', rateSel)); fmtRow.appendChild(labeled('Tail (s)', tailIn));
     fsFmt.appendChild(fmtRow);
-    fsFmt.appendChild(el('p', 'sv-hint', '16-bit files are dithered by the engine; 32-bit float keeps peaks above 0 dBFS. The reference track is never exported.'));
+    fsFmt.appendChild(el('p', 'hvs-hint', 'Dither (TPDF) applies at 16-bit only. 32-bit float keeps peaks above 0 dBFS. Every file has the same length and starts at the span’s first bar, so stems line up on the grid. The reference track is never exported.'));
     body.appendChild(fsFmt);
     body.appendChild(status);
 
@@ -316,7 +317,15 @@
       safe(function () { cancelBtn.focus(); });
       var p, wr = null;
       try {
-        if (av.via === 'project') p = root.Project.exportAudio(Object.assign({ host: host, shell: shell }, opts));
+        if (av.via === 'project') {
+          // Project.exportAudio writes the files and resolves [{name, path?}]; its onFile hook (called after each write)
+          // gives the length, peak and any loudness the Host measured, merged into the result by name
+          var meta = {};
+          opts.onFile = function (f) { meta[f.name] = { seconds: f.seconds, peak: f.peak, lufs: f.lufs != null ? f.lufs : f.loudness }; };
+          p = Promise.resolve(root.Project.exportAudio(Object.assign({ host: host, shell: shell }, opts))).then(function (list) {
+            return (list || []).map(function (f) { var m = meta[f.name] || {}; return { name: f.name, path: f.path || null, seconds: f.seconds != null ? f.seconds : m.seconds, peak: f.peak != null ? f.peak : m.peak, lufs: m.lufs }; });
+          });
+        }
         else {
           wr = writer(song, shell);
           p = wr.prepare().then(function (ok) {
@@ -335,7 +344,7 @@
         if (R.cancelled) return;
         R.running = false;
         if (!res || !res.length) { say('Not saved: no folder or file was chosen.'); showResult(null); return; }
-        R.result = res.map(function (f) { return { name: f.name, path: f.path || null, seconds: f.seconds, peak: f.peak }; });
+        R.result = res.map(function (f) { return { name: f.name, path: f.path || null, seconds: f.seconds, peak: f.peak, lufs: f.lufs != null ? f.lufs : f.loudness }; });
         showResult(R.result);
         toast('Exported ' + R.result.length + ' file' + (R.result.length === 1 ? '' : 's'));
       }, function (e) {
@@ -353,11 +362,14 @@
         var t = el('table', 'xd-res');
         var cap = el('caption', null, list.length + ' file' + (list.length === 1 ? '' : 's'));
         t.appendChild(cap);
-        var hr = el('tr'); ['File', 'Length', 'Peak'].forEach(function (h) { hr.appendChild(el('th', null, h, { scope: 'col' })); }); t.appendChild(hr);
+        // loudness only when the engine measured it (integrated LUFS, as read; no target is implied)
+        var hasL = list.some(function (f) { return typeof f.lufs === 'number' && isFinite(f.lufs); });
+        var hr = el('tr'); ['File', 'Length', 'Peak'].concat(hasL ? ['Loudness'] : []).forEach(function (h) { hr.appendChild(el('th', null, h, { scope: 'col' })); }); t.appendChild(hr);
         list.forEach(function (f) {
           var r = el('tr');
           var c0 = el('td', null, f.name); if (f.path) c0.title = f.path;
           r.appendChild(c0); r.appendChild(el('td', null, secs(f.seconds))); r.appendChild(el('td', null, dbfs(f.peak)));
+          if (hasL) r.appendChild(el('td', null, typeof f.lufs === 'number' && isFinite(f.lufs) ? f.lufs.toFixed(1) + ' LUFS' : '—'));
           t.appendChild(r);
         });
         body.insertBefore(t, status);
@@ -369,13 +381,13 @@
         Array.prototype.slice.call(body.children).forEach(function (c) { if (c.tagName === 'TABLE') body.removeChild(c); else c.hidden = false; });
         say(''); setFoot([cancelForm, go]); sync(); safe(function () { go.focus(); });
       });
-      var done = btn('sv-done', 'Close', 'Close (Esc)');
+      var done = btn('hvs-done', 'Close', 'Close (Esc)');
       on(done, 'click', function () { finish(R.result || null); });
       setFoot([again, done]);
       safe(function () { done.focus(); });
     }
 
-    var go = btn('sv-done xd-go', 'Export', 'Render and save the files');
+    var go = btn('hvs-done xd-go', 'Export', 'Render and save the files');
     var cancelForm = btn('', 'Cancel', 'Close without exporting (Esc)');
     on(go, 'click', run);
     on(cancelForm, 'click', cancel);

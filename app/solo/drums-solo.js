@@ -63,8 +63,7 @@
       sections: [{ name: 'A', bars: 1, play: pa }, { name: 'B', bars: 1, play: pb }] };
   }
 
-  var help = (M808 ? 'Turn INSTRUMENT SELECT (or tap a voice\'s name tile) to choose the voice, then tap the sixteen keys: a lit key is a hit. '
-                   : 'Tap a voice under the keys (INST) to choose it, then tap the sixteen keys: a lit key is a hit. ') +
+  var help = 'Choose a voice (' + (M808 ? 'INSTRUMENT SELECT or a name tile' : 'INST under the keys') + '; on a phone the voice buttons), then tap the sixteen keys: a lit key is a hit. ' +
     'Shift-click (or select AC) for accents. PTN 1 to 8 pick a pattern, A, B and A▸B pick the variation that plays (A▸B: A then B). ' +
     'CLR VOICE and CLR PTN clear what the keys show, COPY A▸B copies the pattern\'s A onto its B, MUTE silences a voice' + (M808 ? '' : ', SHUFFLE delays the off-beats') +
     '. Patterns 1 to 6: ' + GROOVES.map(function (g, i) { return (i + 1) + ' ' + g[0]; }).join(', ') + '; 7 and 8 start empty. Ctrl+Z undoes an edit.';
@@ -91,7 +90,7 @@
   var PR = root.Presets;
   if (PR && typeof PR.menu === 'function' && typeof PR.list === 'function' && PR.patterns && api.el && api.el.bar) {
     var g = doc.createElement('div'); g.className = 'so-group so-menu'; g.setAttribute('aria-label', 'Kits and patterns');
-    var b = doc.createElement('button'); b.type = 'button'; b.className = 'so-btn'; b.id = 'so-presets'; b.textContent = 'Kits & patterns';
+    var b = doc.createElement('button'); b.type = 'button'; b.className = 'so-btn'; b.setAttribute('id', 'so-presets'); b.textContent = 'Kits & patterns';
     b.setAttribute('aria-label', 'Kits and patterns: load, save, copy as text, paste text');
     g.appendChild(b); api.el.bar.appendChild(g);
     var menuObj = null;

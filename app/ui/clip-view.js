@@ -1,4 +1,6 @@
-/* ClipView (global ClipView), Pressing Crew V2: the arrangement's sections seen as a grid of clips.
+/* ClipView (global ClipView), Pressing Crew V2: the "Sections" view, the arrangement's sections seen as a grid.
+ * Named Sections in the interface, not Clips (coordinator's ruling after R2 1.8): it is a section matrix; free clip
+ * launching (single cells with queued and playing states and a back-to-arrangement control) is not in the engine.
  *
  *   var view = ClipView.mount(el, host);   // el = the view area below the control bar
  *   view.update();                         // every animation frame: the playing section and the looped one
@@ -48,9 +50,9 @@
 
   function mount(container, host) {
     var S = { disposed: false, focus: null, menu: null, selected: null, playing: null, loop: null, cells: {}, heads: {} };
-    var rootEl = el('section', 'cv-view', null, { role: 'region', 'aria-label': 'Clips' });
+    var rootEl = el('section', 'cv-view', null, { role: 'region', 'aria-label': 'Sections' });
     var head = el('div', 'cv-head');
-    head.appendChild(el('h2', 'cv-title', 'Clips'));
+    head.appendChild(el('h2', 'cv-title', 'Sections'));
     head.appendChild(el('p', 'cv-note', NOTE, { role: 'note' }));
     var loopBtn = btn('cv-loopoff', 'Loop: off', 'End the section loop');
     loopBtn.setAttribute('aria-pressed', 'false');

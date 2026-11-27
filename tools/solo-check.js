@@ -271,5 +271,44 @@ seqJ.scheduleStep(0, 0, true);
 ok(tj.length === 1 && tj[0].notes && tj[0].notes.join() === '58,61,65' && tj[0].dur > seqJ.stepSec() * 1.5, 'HVT-106: the sequencer triggers the juno once with ev.notes = the chord, held over the tie');
 ok(pJ.el.find(function (n) { return n.attrs['data-midi'] != null; }).length === 49, 'HVT-106 landscape: the 49-key keyboard');
 
+// ================================================================= HVT-808 and HVT-909 (Showroom Crew W3: 808.html, 909.html, drums-solo.js)
+// The whole kit as tracks; the song is the pattern bank (variants A..P, sections A and B); the real machine panel.
+[['808', ['bd', 'sd', 'lt', 'mt', 'ht', 'lc', 'mc', 'hc', 'rs', 'cl', 'cp', 'ma', 'cb', 'cy', 'oh', 'ch']], ['909', ['bd', 'sd', 'lt', 'mt', 'ht', 'rs', 'cp', 'ch', 'oh', 'cr', 'rd']]].forEach(function (mk) {
+  var m = mk[0], kit = mk[1].map(function (v) { return v + m; }), T = 'HVT-' + m, file = m + '.html';
+  var html = fs.readFileSync(path.join(SOLO, file), 'utf8'), refs = [];
+  html.replace(/<(?:script|link)[^>]+(?:src|href)="([^"]+)"/g, function (x, u) { refs.push(u); return x; });
+  ok(refs.every(function (u) { return !/^(https?:)?\/\//.test(u) && u.charAt(0) !== '/' && fs.existsSync(path.join(SOLO, u)); }), T + ': every file the page names is relative and exists (' + refs.join(' ') + ')');
+  ok(['../engine/drums.js', '../engine/host.js', '../ui/panels.js', 'solo.js', 'drums-solo.js'].every(function (u) { return refs.indexOf(u) >= 0; }) && new RegExp('data-machine="' + m + '"').test(html), T + ': the real engine, Host, panel and framework; body data-machine=' + m);
+  ok(new RegExp('<title>' + T + '</title>').test(html) && !MARKS.test(html + fs.readFileSync(path.join(SOLO, 'drums-solo.js'), 'utf8')), T + ': title ' + T + ', no maker marks');
+  var ga = N.prototype.getAttribute;
+  N.prototype.getAttribute = function (k) { return k === 'data-machine' && this.tagName === 'BODY' ? m : ga.call(this, k); };
+  var g = boot(file, 1280);
+  N.prototype.getAttribute = ga;
+  var A = g.sb['HVT' + m], host = A.host(), d = host.document();
+  ok(d.tracks.map(function (t) { return t.name; }).join() === kit.join() && d.tracks.every(function (t) { return t.type === t.name && t.kind === 'drum'; }), T + ': the whole kit as tracks (' + kit.length + ')');
+  ok(d.sections.length === 2 && d.sections[0].name === 'A' && d.sections[1].name === 'B' && kit.every(function (t) { return d.sections[0].play[t] === 'A' && d.sections[1].play[t] === 'B'; }), T + ': sections A and B play pattern 1\'s A and B on every voice');
+  ok(d.tracks.every(function (t) { return Object.keys(t.variants).join('') === 'ABCDEFGHIJKL'; }), T + ': six stored grooves as variants A..L (slot k = 2k-1, 2k)');
+  ok(A.grooves.length === 6 && A.grooves.every(function (gr, i) {
+    var a = d.tracks.map(function (t) { return JSON.stringify(t.variants['ABCDEFGHIJKL'.charAt(i * 2)]); }).join(), b = d.tracks.map(function (t) { return JSON.stringify(t.variants['ABCDEFGHIJKL'.charAt(i * 2 + 1)]); }).join();
+    return a !== b && d.tracks.some(function (t) { return t.variants['ABCDEFGHIJKL'.charAt(i * 2)].cells.some(Boolean); });
+  }), T + ': every groove has hits, and its A and B differ');
+  var box = g.reg['so-panel'], pn = A.panel();
+  ok(pn && pn.key === 'hvt' + m && box.find(function (n) { return n.tagName === 'SVG'; })[0].attrs.viewBox === (m === '808' ? '0 0 1200 760' : '0 0 1200 720'), T + ': the real hvt' + m + ' panel, landscape at 1280 px');
+  var M = A.machine();
+  ok(M && M.bank() && M.slot() === 0, T + ': the panel\'s machine sees the bank, pattern 1');
+  ok(!g.reg['so-patterns'] || !g.reg['so-patterns'].parentNode, T + ': the bar\'s pattern buttons are removed (the slots are on the panel)');
+  ok(!!g.sb.Presets === !!g.reg['so-presets'], T + ': the Kits & patterns button follows the Presets global (' + (g.sb.Presets ? 'present' : 'absent') + ')');
+  var u0 = host.editor()._undo.length, keys = lab(pn.el, /^Step \d+/);
+  M.setMode('A'); M.select(kit[2]); pn.update();
+  keys[7].fire('click', {});
+  var lt = host.document().tracks[2].variants.A.cells;
+  ok(lt[7] && host.editor()._undo.length === u0 + 1, T + ': a step key on the page adds a ' + kit[2] + ' hit to pattern 1 A, one undo entry');
+  g.reg['so-undo'].fire('click');
+  ok(!host.document().tracks[2].variants.A.cells[7], T + ': the bar\'s Undo takes it back');
+  var pp = g.sb.Panels.render(host.device('track:' + kit[0]), host, { layout: 'portrait' });
+  ok(pp.el.children[0].attrs.viewBox.split(' ')[2] === '560' && lab(pp.el, /^Step \d+/).length === 16 && lab(pp.el, /^Pattern \d$/).length === 8, T + ': portrait for phones: 560 wide, sixteen keys, eight slots');
+  pp.dispose();
+});
+
 console.log('OK: ' + passed + ' checks passed');
 process.exit(0);

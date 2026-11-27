@@ -34,7 +34,10 @@ module.exports = {
     identity: hasCert ? undefined : '-',
     hardenedRuntime: hasCert,
     notarize: hasCert ? undefined : false,
-    gatekeeperAssess: false
+    gatekeeperAssess: false,
+    entitlements: 'build/entitlements.mac.plist',
+    entitlementsInherit: 'build/entitlements.mac.plist',
+    extendInfo: { NSMicrophoneUsageDescription: 'Havantechno asks for audio access only so that it can list your audio output devices by name. It does not record.' }
   },
   win: { target: [{ target: 'nsis', arch: ['x64'] }] },
   nsis: { oneClick: false, perMachine: false, allowToChangeInstallationDirectory: true },

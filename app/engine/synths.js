@@ -1062,6 +1062,7 @@
     var def = BUILD[type];
     if (!def && root.Drums && typeof root.Drums.has === 'function' && root.Drums.has(type)) return root.Drums.create(ctx, type, opts);   // TR-808/909 voices (drums.js)
     if (!def && root.Classics && typeof root.Classics.has === 'function' && root.Classics.has(type)) return root.Classics.create(ctx, type, opts);   // tb303, modeld (classics.js)
+    if (!def && root.Sampled909 && typeof root.Sampled909.has === 'function' && root.Sampled909.has(type)) return root.Sampled909.create(ctx, type, opts);   // bd909s ... rd909s (sampled909.js)
     if (!def) {
       try { if (typeof console !== 'undefined' && console.warn) console.warn('[Synths] unknown instrument "' + type + '"'); } catch (e) {}
       def = { spec: { level: { min: 0, max: 1.5, value: 1 } }, build: function () {} };

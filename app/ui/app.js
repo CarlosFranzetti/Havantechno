@@ -19,7 +19,7 @@
     { id: 'system', label: 'System Editor', global: 'SystemEditor', key: '1' },
     { id: 'step', label: 'Step View', global: 'StepView', key: '2' },
     { id: 'mixer', label: 'Mixer', global: 'MixerView', key: '3' },
-    { id: 'clips', label: 'Clips', global: 'ClipView', key: '4' }
+    { id: 'clips', label: 'Sections', global: 'ClipView', key: '4' }
   ];
 
   // ------------------------------------------------------------------ helpers
@@ -477,7 +477,7 @@
     seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'View');
     B.viewBtns = {};
     VIEWS.forEach(function (v) {
-      var b = button('', v.label, v.label + ' (Ctrl/Cmd+' + v.key + ' or Alt+' + v.key + '; Tab switches it with ' + (v.id === 'system' ? 'Step View' : v.id === 'step' ? 'the System Editor' : v.id === 'mixer' ? 'Clips' : 'the Mixer') + ')');
+      var b = button('', v.label, v.label + ' (Ctrl/Cmd+' + v.key + ' or Alt+' + v.key + '; Tab switches it with ' + (v.id === 'system' ? 'Step View' : v.id === 'step' ? 'the System Editor' : v.id === 'mixer' ? 'Sections' : 'the Mixer') + ')');
       b.setAttribute('aria-pressed', 'false');
       b.setAttribute('data-view-switch', v.id);
       if (!viewAvailable(v.id)) { b.disabled = true; b.title = v.label + ': its file did not load'; }

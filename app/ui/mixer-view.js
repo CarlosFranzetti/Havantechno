@@ -23,7 +23,7 @@
 
   var FAM_ORDER = ['drums', 'bass', 'keys', 'fx'];
   var FAM_LABEL = { drums: 'DRUMS', bass: 'BASS', keys: 'KEYS', fx: 'FX', dynamics: 'DYNAMICS', time: 'TIME', tone: 'TONE', utility: 'OTHER' };
-  var DB_MIN = -60, DB_MAX = 6, FADER_LEN = 168;
+  var DB_MIN = -60, DB_MAX = 6, FADER_LEN = 168;   // the fader and meter length: from the view's height at build (fitLength)
 
   function isFn(f) { return typeof f === 'function'; }
   function has(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
@@ -157,7 +157,7 @@
 
     function fader(path, label) {
       return bound('slider', {
-        path: path, label: label, min: DB_MIN, max: DB_MAX, step: 0.1, home: 0, orientation: 'v', length: FADER_LEN, size: 'strip',
+        path: path, label: label, min: DB_MIN, max: DB_MAX, step: 0.1, home: 0, orientation: 'v', length: S.len, size: 'strip',
         format: fmtDb, toUi: gainToDb, toEngine: dbToGain
       });
     }
@@ -203,7 +203,7 @@
       var fm = el('div', 'mx-fm');
       var f = fader(t.name + '.gain', t.name + ' level');
       s.controls.push(f);
-      s.meter = makeMeter(t.name + ' meter', FADER_LEN);
+      s.meter = makeMeter(t.name + ' meter', S.len);
       s.meterId = deviceExists('track:' + t.name + ':channel') ? 'track:' + t.name + ':channel' : 'track:' + t.name;
       fm.appendChild(f.el); fm.appendChild(s.meter.el);
       strip.appendChild(fm);
@@ -232,10 +232,10 @@
       var fm = el('div', 'mx-fm');
       if (dev && dev.spec && has(dev.spec, 'mix')) {
         var f = bound('slider', { path: 'send.' + sd.name + '.mix', label: sd.name + ' return level (wet mix)', min: DB_MIN, max: 0, step: 0.1, home: gainToDb(dev.spec.mix.value || 0.25),
-                                  orientation: 'v', length: FADER_LEN, size: 'strip', format: fmtDb, toUi: function (g) { return Math.min(0, gainToDb(g)); }, toEngine: function (db) { return Math.min(1, dbToGain(db)); } });
+                                  orientation: 'v', length: S.len, size: 'strip', format: fmtDb, toUi: function (g) { return Math.min(0, gainToDb(g)); }, toEngine: function (db) { return Math.min(1, dbToGain(db)); } });
         s.controls.push(f); fm.appendChild(f.el);
       } else fm.appendChild(el('span', 'mx-none', 'no level'));
-      s.meter = makeMeter(sd.name + ' return meter', FADER_LEN);
+      s.meter = makeMeter(sd.name + ' return meter', S.len);
       s.meterId = s.id;
       fm.appendChild(s.meter.el);
       strip.appendChild(fm);
@@ -258,7 +258,7 @@
       });
       strip.appendChild(gr);
       var fm = el('div', 'mx-fm');
-      s.meter = makeMeter('Master meter', FADER_LEN);
+      s.meter = makeMeter('Master meter', S.len);
       s.meterId = 'master';
       fm.appendChild(s.meter.el);
       fm.appendChild(el('span', 'mx-none', 'The engine has no master volume: set track faders, or the limiter’s ceiling in its window.'));
@@ -274,7 +274,13 @@
     function signature(tracks, sends) {
       return tracks.map(function (t) { return t.name + '/' + t.family; }).join(',') + '|' + sends.map(function (x) { return x.name; }).join(',');
     }
+    // faders as tall as the view allows (the strip above the fader is about 470 px), 140..320 px
+    function fitLength() {
+      var r = safe(function () { return rootEl.getBoundingClientRect(); }, null), hgt = r && r.height > 0 ? r.height : 0;
+      return hgt ? Math.max(140, Math.min(320, Math.round(hgt - 560))) : FADER_LEN;
+    }
     function build() {
+      S.len = fitLength();
       var tracks = isFn(host.tracks) ? safe(function () { return host.tracks(); }, []) : [];
       var sends = isFn(host.sends) ? safe(function () { return host.sends(); }, []) : [];
       tracks = tracks || []; sends = sends || [];
@@ -367,7 +373,7 @@
       }
       if (S.master && isFn(host.meter) && S.frame % 3 === 0) {
         var g = safe(function () { return host.meter('master:glue'); }, null), l = safe(function () { return host.meter('master:limiter'); }, null), mm = safe(function () { return host.meter('master'); }, null);
-        function grText(x) { return x && typeof x.reduction === 'number' ? (-Math.abs(x.reduction)).toFixed(1) + ' dB' : '—'; }
+        function grText(x) { if (!x || typeof x.reduction !== 'number') return '—'; var r = -Math.abs(x.reduction); return (r > -0.05 ? '0.0' : r.toFixed(1)) + ' dB'; }
         var gt = grText(g), lt = grText(l), ct = mm && typeof mm.correlation === 'number' ? mm.correlation.toFixed(2) : '—';
         if (S.master.gr.glue.textContent !== gt) S.master.gr.glue.textContent = gt;
         if (S.master.gr.limiter.textContent !== lt) S.master.gr.limiter.textContent = lt;
@@ -381,6 +387,9 @@
 
     build();
     if (isFn(host.on)) { host.on('document', onDocument); host.on('bypass', onBypass); }
+    var resizeT = 0;
+    function onResize() { if (resizeT) clearTimeout(resizeT); resizeT = setTimeout(function () { resizeT = 0; if (!S.disposed && Math.abs(fitLength() - S.len) >= 16) build(); }, 200); }
+    if (isFn(root.addEventListener)) root.addEventListener('resize', onResize);
     return {
       el: rootEl,
       update: update,
@@ -389,6 +398,7 @@
       strips: function () { return S.strips; },
       dispose: function () {
         S.disposed = true;
+        if (isFn(root.removeEventListener)) root.removeEventListener('resize', onResize);
         if (isFn(host.off)) { safe(function () { host.off('document', onDocument); host.off('bypass', onBypass); }); }
         if (rootEl.parentNode) rootEl.parentNode.removeChild(rootEl);
       }

@@ -481,7 +481,7 @@ async function testBundle(b, opts) {
         const pr = await page.evaluate(pageProbe);
         r.info.handle = pr.handle; r.info.engine = pr.engine;
         if (!pr.handle) r.problems.push('no framework global with host() found on window (HVT303 today)');
-        else if (pr.engine === 'worklet') { /* good */ }
+        else if (pr.engine === 'worklet' || pr.engine === 'webaudio') { /* good: 'webaudio' is a page whose instruments are plain nodes by design (the drum machines) */ }
         else if (pr.engine === 'fallback' || pr.engine === 'approx') r.problems.push('engine is the approximate fallback (' + pr.engine + ')');
         else r.problems.push('engine kind unreadable or not worklet: ' + pr.engine);
         // sound: several meter reads over two seconds (the first read attaches the analyser and returns 0)

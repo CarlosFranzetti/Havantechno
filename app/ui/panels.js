@@ -1002,6 +1002,9 @@
       if (pos().sectionName === m) safe(function () { tr.loop(m); });
       else { safe(function () { tr.loop(null); }); st.pending = m; }        // finish this bar, then stay in the other
     }
+    // the pending loop is set when the other section starts (the Host's 'section' event), or by update() when the frame sees it
+    function settle(e) { if (st.pending && e && e.name === st.pending) { var m2 = st.pending; st.pending = null; safe(function () { host.transport.loop(m2); }); } }
+    if (isFn(host.on)) { safe(function () { host.on('section', settle); }); P.onDispose(function () { if (isFn(host.off)) safe(function () { host.off('section', settle); }); }); }
 
     // ---- mute (the engine's track mute: not in the document, no undo entry)
     function tracksOf(type) { return kit().filter(function (k) { return k.type === type; }).map(function (k) { return k.name; }); }
@@ -1121,7 +1124,7 @@
   function muteButton(P, M, parent, o) {
     var C = o.C, b = P.button(parent, { x: o.x, y: o.y, w: o.w, h: o.h, rx: 2, label: o.label || 'MUTE', size: o.size || 8.5, fill: C.btn, ink: C.btnInk, stroke: C.edge,
       cls: 'pn-mute', aria: 'Mute', onClick: function () { M.toggleMute(o.type()); } });
-    var led = P.el('circle', { cx: o.led === false ? -99 : 6, cy: o.h / 2, r: 2.6, fill: C.ledOff }, b.g);
+    var led = P.el('circle', { cx: o.led === false ? -99 : Math.min(10, o.w * 0.12), cy: o.h / 2, r: 2.6, fill: C.ledOff }, b.g);
     var last = '';
     P.onUpdate(function () {
       var t = o.type(), on = M.muted(t), pres = t !== AC && M.present(t), sig = t + on + pres;
@@ -1296,7 +1299,7 @@
       for (var sx = 60; sx < 1200; sx += 270) P.el('circle', { cx: sx, cy: 14, r: 3.2, fill: '#8a8a8a' }, svg);
       P.el('rect', { x: 18, y: 30, width: 1164, height: 446, rx: 4, fill: C.face, stroke: '#000', 'stroke-width': 1 }, svg);
       // wordmark (Havantechno's own) top left over the select; model name in the strip below the voices
-      P.text(svg, 30, 58, 'HAVANTECHNO', { 'text-anchor': 'start', fill: '#ff5fa2', 'font-size': 19, 'font-weight': 800, 'letter-spacing': 3 });
+      P.text(svg, 30, 62, 'HAVANTECHNO', { 'text-anchor': 'start', fill: '#ff5fa2', 'font-size': 19, 'font-weight': 800, 'letter-spacing': 3 });
 
       // ---- left block: instrument select, tempo
       var lb = P.g(svg, { 'class': 'pn-left' });
@@ -1369,7 +1372,7 @@
           colState.push(cs); return;
         }
         // per-column mute (the voice the column shows)
-        muteButton(P, M, g, { x: x + 8, y: 58, w: colW - 16, h: 17, C: MC, type: function () { return colVoice(ci); } });
+        muteButton(P, M, g, { x: x + 8, y: 38, w: colW - 16, h: 17, C: MC, type: function () { return colVoice(ci); } });
         col.voices.forEach(function (v, vi) {
           var vg = P.g(g, { 'class': 'pn-voice', 'data-voice': v });
           col.knobs.forEach(function (k, ri) {
@@ -2282,6 +2285,7 @@
       K(120, 332, 'modMix', 'MOD MIX', { numbers: ['OSC3', '', '', '', '', 'NOISE'] });
       R(198, 120, 'oscMod', 'OSC MOD', C.orange);
       R(198, 240, 'filterMod', 'FILT MOD', C.orange);
+      R(198, 340, 'priority', 'LOW/LAST', C.ivory, P.options(null, 'priority', ['low', 'last']).slice(0, 2));   // note priority (engine row added 26 Nov)
       // OSCILLATOR BANK
       group('osc'); section(236, 600, 'OSCILLATOR BANK');
       var RL = { lo: 'LO', 32: "32'", 16: "16'", 8: "8'", 4: "4'", 2: "2'" };

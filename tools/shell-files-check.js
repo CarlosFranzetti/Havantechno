@@ -209,6 +209,11 @@ async function main() {
   ['shell:pickDirectory', 'shell:writeFile', 'shell:copyFile', 'shell:appVersion'].forEach(function (ch) { ok(mainSrc.indexOf("'" + ch + "'") >= 0, 'main.js handles ' + ch); });
   ok(/shell:writeFile'[\s\S]{0,200}fromMain\(e\)/.test(mainSrc) && /shell:copyFile'[\s\S]{0,200}fromMain\(e\)/.test(mainSrc) && /shell:pickDirectory'[\s\S]{0,200}fromMain\(e\)/.test(mainSrc), 'the three handlers check the caller is the main window');
 
+  var pm = /var ALLOWED_PERMISSIONS = (\[[^\]]*\]);/.exec(mainSrc);
+  eq(pm ? JSON.parse(pm[1].replace(/'/g, '"')) : null, ['media', 'speaker-selection', 'midi', 'midiSysex'], 'main.js allows exactly four permissions');
+  ok(/setPermissionRequestHandler/.test(mainSrc) && /setPermissionCheckHandler/.test(mainSrc) && /ownOrigin\(url\)/.test(mainSrc), 'both permission handlers test the origin');
+  ok(/mediaTypes\.indexOf\('video'\)/.test(mainSrc) && /mediaType === 'video'/.test(mainSrc), 'video is refused in both handlers');
+
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(bad ? 'FAILED: ' + bad + ' of ' + n + ' checks' : 'OK: ' + n + ' checks passed');
   process.exit(bad ? 1 : 0);

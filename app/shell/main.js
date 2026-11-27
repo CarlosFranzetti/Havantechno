@@ -10,7 +10,7 @@
  *   chosen in a dialog during this run and inside <userData>. appVersion() answers app.getVersion().
  * - Permissions: only the app's own origin (the havantechno://app scheme, or HAVANTECHNO_URL in development) is granted
  *   'media' (audio only, never video: device labels for the output-device list), 'speaker-selection' (setSinkId) and
- *   'midi' (no sysex). Everything else, and every other origin, is denied (installPermissions below).
+ *   'midi' and 'midiSysex' (Electron 45 reports even a plain requestMIDIAccess() as midiSysex: observed). Everything else, and every other origin, is denied (installPermissions below).
  * - IPC: openFile, saveFile, appDataPath, readAppData, writeAppData, openDeviceWindow,
  *   closeDeviceWindow, setDeviceWindowsVisible. Bounds of the main window and of each device window
  *   are remembered in <userData>/window-state.json. */
@@ -123,9 +123,10 @@ function registerAppProtocol() {
 
 // ------------------------------------------------------------------ permissions
 // Granted to the app's own origin and nothing else: 'media' (audio only: enumerateDevices shows device labels once an
-// audio permission exists), 'speaker-selection' (setSinkId, the output device) and 'midi' (not 'midiSysex'). A request
+// audio permission exists), 'speaker-selection' (setSinkId, the output device), 'midi' and 'midiSysex' (observed under
+// Electron 45: a plain requestMIDIAccess() arrives as 'midiSysex', and without it MIDI is refused). A request
 // for video, or for any other permission or origin, is denied. The check handler answers synchronous queries.
-var ALLOWED_PERMISSIONS = ['media', 'speaker-selection', 'midi'];
+var ALLOWED_PERMISSIONS = ['media', 'speaker-selection', 'midi', 'midiSysex'];
 function ownOrigin(url) { return sameOrigin(url); }
 function installPermissions(ses) {
   ses.setPermissionRequestHandler(function (wc, permission, callback, details) {

@@ -228,7 +228,7 @@
     ['Brassy saws', { osc1Range: '8', osc1Wave: 'saw', osc2Range: '8', osc2Wave: 'saw', osc2Detune: 0.15, osc3Range: '16', osc3Wave: 'saw', osc3Detune: -0.1,
       mixOsc1: 7, mixOsc2: 7, mixOsc3: 4, cutoff: -0.5, emphasis: 2, contour: 6, fAttack: 2.5, fDecay: 5, fSustain: 4, attack: 1, decay: 5, sustain: 9, level: 0.7 }],
     ['Whistle lead', { osc1Range: '4', osc1Wave: 'tri', mixOsc1: 8, mixOsc2: 0, mixOsc3: 0, cutoff: 2, emphasis: 7, contour: 1, keyTrack1: 1, keyTrack2: 1,
-      fDecay: 4, fSustain: 6, attack: 0.5, decay: 5, sustain: 9, glide: 3, glideOn: 1, level: 0.8 }],
+      fDecay: 4, fSustain: 6, attack: 0.5, decay: 5, sustain: 9, glide: 3, glideOn: 1, level: 1.1 }],
     ['Noise snap', { osc1Range: '16', osc1Wave: 'saw', mixOsc1: 6, mixOsc2: 0, mixOsc3: 0, mixNoise: 6, noiseType: 'white', cutoff: -2, emphasis: 5, contour: 8,
       fAttack: 0, fDecay: 1.5, fSustain: 0, attack: 0, decay: 2, sustain: 0, level: 0.9 }],
     ['Slow filter pad', { osc1Range: '8', osc1Wave: 'saw', osc2Range: '8', osc2Wave: 'saw', osc2Detune: 0.12, osc3Range: '8', osc3Wave: 'saw', osc3Detune: -0.14,
@@ -245,7 +245,7 @@
     ['Glass keys', { saw: false, pulse: true, pwm: 0.2, pwmMode: 'manual', sub: 0, cutoff: 0.7, resonance: 0.3, envAmt: 0.3, vcfKey: 0.7, attack: 0, decay: 0.45,
       sustain: 0.3, release: 0.35, chorus: 1, vcaMode: 'env', voiceMode: 'poly', range: 8, level: 0.8 }],
     ['Unison bass', { voiceMode: 'unison', range: 16, saw: true, pulse: false, sub: 0.6, cutoff: 0.42, resonance: 0.25, envAmt: 0.45, attack: 0, decay: 0.35,
-      sustain: 0.4, release: 0.15, chorus: 0, vcaMode: 'env', level: 0.5 }],
+      sustain: 0.4, release: 0.15, chorus: 0, vcaMode: 'env', level: 0.9 }],
     ['Pulse brass', { saw: false, pulse: true, pwm: 0.7, pwmMode: 'env', sub: 0.1, cutoff: 0.45, resonance: 0.1, envAmt: 0.5, attack: 0.3, decay: 0.5, sustain: 0.7,
       release: 0.3, chorus: 1, vcaMode: 'env', voiceMode: 'poly', range: 8, level: 0.75 }],
     ['Chord stab', { saw: true, pulse: false, sub: 0, cutoff: 0.5, resonance: 0.2, envAmt: 0.6, attack: 0, decay: 0.38, sustain: 0, release: 0.3, chorus: 2, hpf: 2,
@@ -1237,8 +1237,11 @@
 
     function place() {
       var r = safe(function () { return button.getBoundingClientRect(); }, null); if (!r) return;
-      var vw = root.innerWidth || 1024, vh = root.innerHeight || 768;
-      pop.style.left = Math.max(8, Math.min(Math.round(r.left), vw - Math.max(pop.offsetWidth || 240, 220) - 8)) + 'px';
+      // the visible width: on a phone the layout viewport can be wider than the screen
+      var de = d.documentElement, vv = root.visualViewport;
+      var vw = Math.min(root.innerWidth || 1024, (de && de.clientWidth) || Infinity, (vv && vv.width) || Infinity), vh = Math.min(root.innerHeight || 768, (vv && vv.height) || Infinity);
+      pop.style.maxWidth = Math.max(200, Math.min(340, vw - 16)) + 'px';
+      pop.style.left = Math.max(8, Math.min(Math.round(r.left), vw - Math.max(pop.offsetWidth || 240, 200) - 8)) + 'px';
       var below = vh - r.bottom - 8, above = r.top - 8;
       if (below < 200 && above > below) { pop.style.top = ''; pop.style.bottom = Math.round(vh - r.top + 4) + 'px'; pop.style.maxHeight = Math.round(above) + 'px'; }
       else { pop.style.bottom = ''; pop.style.top = Math.round(r.bottom + 4) + 'px'; pop.style.maxHeight = Math.round(Math.max(160, below)) + 'px'; }

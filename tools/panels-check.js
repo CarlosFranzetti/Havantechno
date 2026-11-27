@@ -543,5 +543,122 @@ if (dJ) {
   rP.dispose();
 }
 
+// ==================================================================== machine functions (Showroom Crew W3)
+// A machine page's song: every kit track holds variants A..; sections 'A' and 'B' play slot 1's A and B. The panel's bank:
+// slot k = variants LET[2k] / LET[2k+1]; modes = the transport's loop; accent row = cell.acc on every hit of a step.
+(function () {
+  function bankDoc(kit, extra) {
+    var pa = {}, pb = {};
+    kit.forEach(function (t) { pa[t] = 'A'; pb[t] = 'B'; });
+    return { v: 1, name: 'bank', bpm: 120, swing: 0, key: 'C', progression: [], sends: {},
+      tracks: kit.map(function (t) { return { name: t, type: t, inst: t, kind: 'drum', family: 'drums', gain: 0.8, variants: { A: (extra[t] || ['................'])[0], B: (extra[t] || ['', '................'])[1] || '................' } }; }),
+      sections: [{ name: 'A', bars: 1, play: pa }, { name: 'B', bars: 1, play: pb }] };
+  }
+  var K8 = ['bd808', 'sd808', 'lt808', 'mt808', 'ht808', 'lc808', 'mc808', 'hc808', 'rs808', 'cl808', 'cp808', 'ma808', 'cb808', 'cy808', 'oh808', 'ch808'];
+  var hb = sb.Host.create({ doc: bankDoc(K8, { bd808: ['x...x...x...x...', 'x...x...x...x.x.'], sd808: ['....x.......x...', '....x.......x...'] }) });
+  function U() { return hb.editor()._undo.length; }
+  function cellsB(t, L) { var tr = sb.Panels.util.findTrack(hb.document(), t); return tr.variants[L] ? tr.variants[L].cells.slice(0, 16) : null; }
+  var rb8 = P.render(hb.device('track:bd808'), hb, { layout: 'landscape' }), Mb = rb8.kit.machine;
+  rb8.update();
+  ok(Mb && Mb.bank() === true && Mb.slot() === 0 && Mb.mode() === 'AB', 'W3 808: the panel sees the bank (sections A and B), pattern 1, mode A then B');
+  var kb8 = function () { return rb8.el.find(function (n) { return /^Step \d+/.test(n.attrs['aria-label'] || ''); }); };
+  ok(kb8().length === 16 && rb8.el.find(function (n) { return n.attrs['class'] === 'pn-btn pn-slot'; }).length === 8, 'W3 808: sixteen keys and eight pattern slots');
+  var modeBtn = function (re) { return rb8.el.find(function (n) { return /pn-mode/.test(n.attrs['class'] || '') && re.test(n.attrs['aria-label'] || ''); })[0]; };
+  modeBtn(/^Variation A$/).fire('click', {});
+  ok(Mb.mode() === 'A' && hb.transport.loopSection === 'A', 'W3 808: A loops section A');
+  var u = U();
+  kb8()[1].fire('click', {});
+  ok(cellsB('bd808', 'A')[1] && !cellsB('bd808', 'B')[1] && U() === u + 1, 'W3 808: in A a key writes variant A only, one undo entry');
+  modeBtn(/^Variation B$/).fire('click', {});
+  ok(Mb.mode() === 'B' && hb.transport.loopSection === 'B', 'W3 808: B loops section B');
+  rb8.update(); kb8()[3].fire('click', {});
+  ok(cellsB('bd808', 'B')[3] && !cellsB('bd808', 'A')[3], 'W3 808: in B a key writes variant B');
+  modeBtn(/^Play A then B$/).fire('click', {});
+  ok(Mb.mode() === 'AB' && hb.transport.loopSection === null, 'W3 808: A then B lets the song loop (both sections)');
+  // copy A to B
+  modeBtn(/^Variation A$/).fire('click', {});
+  u = U();
+  rb8.el.find(function (n) { return /^Copy variation A onto B/.test(n.attrs['aria-label'] || ''); })[0].fire('click', {});
+  ok(JSON.stringify(cellsB('bd808', 'A')) === JSON.stringify(cellsB('bd808', 'B')) && JSON.stringify(cellsB('sd808', 'A')) === JSON.stringify(cellsB('sd808', 'B')) && U() === u + 1, 'W3 808: COPY A>B makes every voice\'s B equal its A, one undo entry');
+  // accent row
+  Mb.select('AC'); rb8.update();
+  ok(/accent/i.test(rb8.el.find(function (n) { return n.attrs['class'] === 'pn-info'; })[0].textContent), 'W3 808: AC selected, the info line says accent');
+  u = U();
+  kb8()[4].fire('click', {});                     // bd and sd both hit on step 5
+  ok(cellsB('bd808', 'A')[4].acc === true && cellsB('sd808', 'A')[4].acc === true && cellsB('bd808', 'A')[4].vel === 1 && U() === u + 1, 'W3 808: an accent-row key accents every hit on its step, one undo entry');
+  rb8.update();
+  ok(kb8()[4].attrs['aria-pressed'] === 'true' && kb8()[5].attrs['aria-pressed'] === 'false', 'W3 808: the accent row shows on the keys');
+  u = U(); kb8()[5].fire('click', {});
+  ok(U() === u, 'W3 808: an accent on a step with no hit is not stored (the accent lives on the hits)');
+  Mb.select('ch808'); rb8.update(); kb8()[4].fire('click', {});
+  ok(cellsB('ch808', 'A')[4] && cellsB('ch808', 'A')[4].acc === true, 'W3 808: a new hit on a lit accent step is accented');
+  kb8()[6].fire('click', { shiftKey: true });
+  ok(cellsB('ch808', 'A')[6] && cellsB('ch808', 'A')[6].acc === true, 'W3 808: Shift-click makes an accented hit');
+  // clear voice, clear pattern
+  u = U();
+  rb8.el.find(function (n) { return /^Clear the selected voice/.test(n.attrs['aria-label'] || ''); })[0].fire('click', {});
+  ok(cellsB('ch808', 'A').every(function (c) { return !c; }) && cellsB('bd808', 'A').some(Boolean) && U() === u + 1, 'W3 808: CLR VOICE clears the selected voice only, one undo entry');
+  u = U();
+  rb8.el.find(function (n) { return /^Clear the pattern/.test(n.attrs['aria-label'] || ''); })[0].fire('click', {});
+  ok(cellsB('bd808', 'A').every(function (c) { return !c; }) && cellsB('bd808', 'B').some(Boolean) && U() === u + 1, 'W3 808: CLR PTN clears the edited variation (A) of every voice, B stays, one undo entry');
+  hb.editor().undo(); hb.commit();
+  ok(cellsB('bd808', 'A').some(Boolean), 'W3 808: undo brings the pattern back');
+  // slots
+  u = U();
+  rb8.el.find(function (n) { return n.attrs['aria-label'] === 'Pattern 3'; })[0].fire('click', {});
+  var d8 = hb.document();
+  ok(K8.every(function (t) { return d8.sections[0].play[t] === 'E' && d8.sections[1].play[t] === 'F' && sb.Panels.util.findTrack(d8, t).variants.E && sb.Panels.util.findTrack(d8, t).variants.F; }) && U() === u + 1,
+    'W3 808: slot 3 makes section A play variant E and B play F on every kit track (made empty), one undo entry');
+  ok(Mb.slot() === 2, 'W3 808: the panel reads slot 3 back from the document');
+  // mute
+  var mbd = rb8.el.find(function (n) { return /^Mute Bass Drum/.test(n.attrs['aria-label'] || ''); })[0];
+  mbd.fire('click', {}); rb8.update();
+  ok(hb.getParam('bd808.mute') === true && /muted/.test(mbd.attrs['aria-label']), 'W3 808: a column MUTE mutes the track');
+  mbd.fire('click', {});
+  ok(hb.getParam('bd808.mute') === false, 'W3 808: and unmutes it');
+  ok(rb8.el.find(function (n) { return /^Mute /.test(n.attrs['aria-label'] || ''); }).length === 11, 'W3 808: eleven column mutes (not the accent column)');
+  rb8.dispose();
+  // portrait (phones)
+  var rp8 = P.render(hb.device('track:sd808'), hb, { layout: 'portrait' });
+  var vb8 = rp8.el.children[0].attrs.viewBox.split(' ');
+  ok(vb8[2] === '560' && +vb8[3] > 900 && +vb8[3] < 1300, 'W3 808 portrait: 560 wide (' + vb8.join(' ') + ')');
+  ok(rp8.el.find(function (n) { return /^Step \d+/.test(n.attrs['aria-label'] || ''); }).length === 16 && rp8.el.find(function (n) { return /pn-inst/.test(n.attrs['class'] || ''); }).length === 17, 'W3 808 portrait: sixteen keys and seventeen voice buttons (AC + 16)');
+  var have8 = {}; rp8.el.walk(function (n) { if (n.attrs['data-param'] && /^SD /.test(n.attrs['aria-label'] || '')) have8[n.attrs['data-param']] = 1; });
+  ok(Object.keys(hb.device('track:sd808').spec).filter(function (k) { return typeof hb.device('track:sd808').spec[k].min === 'number'; }).every(function (k) { return have8[k]; }), 'W3 808 portrait: every sd808 param has a knob');
+  ok(!/Roland|TR-808|Rhythm Composer/i.test(rp8.el.textContent) && /HVT-808/.test(rp8.el.textContent), 'W3 808 portrait: HVT-808, no maker marks');
+  rp8.el.find(function (n) { return n.attrs['aria-label'] === 'Select Cow Bell'; })[0].fire('click', {}); rp8.update();
+  ok(/^CB/.test(rp8.el.find(function (n) { return n.attrs['class'] === 'pn-info'; })[0].textContent), 'W3 808 portrait: a voice button selects the voice');
+  var Lp = LIVE.n; rp8.dispose();
+  ok(rp8.listenerCount() === 0 && LIVE.n < Lp, 'W3 808 portrait: dispose removes its listeners');
+
+  // 909: shuffle and the accent row on the INST row; portrait
+  var K9 = ['bd909', 'sd909', 'lt909', 'mt909', 'ht909', 'rs909', 'cp909', 'ch909', 'oh909', 'cr909', 'rd909'];
+  var h9 = sb.Host.create({ doc: bankDoc(K9, { bd909: ['x...x...x...x...', 'x...x...x...x...'] }) });
+  var r9b = P.render(h9.device('track:bd909'), h9, { layout: 'landscape' });
+  var shf = r9b.el.find(function (n) { return n.attrs.role === 'slider' && n.attrs['aria-label'] === 'Shuffle'; })[0];
+  var hu = h9.editor()._undo.length;
+  shf.focus(); shf.fire('keydown', { key: 'ArrowUp' }); shf.fire('keyup', {}); shf.fire('keydown', { key: 'ArrowUp' }); shf.fire('keyup', {});
+  ok(Math.abs(h9.swing() - 0.4) < 1e-9 && h9.document().swing === 0.4 && h9.editor()._undo.length === hu + 2 && shf.attrs['aria-valuetext'] === '3', 'W3 909: SHUFFLE steps by a fifth (position 3 = swing 0.4), into the document, one undo entry a press');
+  ok(r9b.el.find(function (n) { return /^Mute /.test(n.attrs['aria-label'] || ''); }).length === 11 && r9b.el.find(function (n) { return n.attrs['aria-label'] === 'Select accent'; }).length === 1, 'W3 909: eleven mutes and AC on the INST row');
+  r9b.dispose();
+  var r9p = P.render(h9.device('track:bd909'), h9, { layout: 'portrait' });
+  ok(r9p.el.children[0].attrs.viewBox.split(' ')[2] === '560' && r9p.el.find(function (n) { return n.attrs['aria-label'] === 'Shuffle'; }).length === 1 && r9p.el.find(function (n) { return /pn-inst/.test(n.attrs['class'] || ''); }).length === 12, 'W3 909 portrait: 560 wide, shuffle, twelve voice buttons');
+  r9p.dispose();
+
+  // a song without the A/B sections (the main app): slots and A / B act on the section played, A then B is off
+  var hs = sb.Host.create();
+  hs.editor().group(function (e) { ['bd808', 'sd808'].forEach(function (t) { e.addTrack({ name: t, type: t, inst: t, family: 'drums', gain: 0.8, variants: { A: 'x...x...x...x...' } }); }); });
+  var secN = hs.document().sections[0].name;
+  hs.editor().setPlay(secN, 'bd808', 'A'); hs.commit();
+  var rs = P.render(hs.device('track:bd808'), hs), Ms = rs.kit.machine;
+  ok(Ms.bank() === false && Ms.canMode('AB') === false, 'W3 song: no bank, A then B is off');
+  var us = hs.editor()._undo.length;
+  rs.el.find(function (n) { return n.attrs['aria-label'] === 'Pattern 2'; })[0].fire('click', {});
+  ok(hs.document().sections[0].play.bd808 === 'C' && hs.document().sections[0].play.sd808 === 'C' && hs.editor()._undo.length === us + 1, 'W3 song: slot 2 makes the current section play variant C on the kit tracks, one undo entry');
+  Ms.setMode('B');
+  ok(hs.document().sections[0].play.bd808 === 'D', 'W3 song: B makes it play the slot\'s B (D)');
+  rs.dispose();
+})();
+
 timers.forEach(clearTimeout);
 console.log('OK: ' + passed + ' checks passed');
