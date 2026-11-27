@@ -79,11 +79,19 @@
     var r = (inst && ACC808[inst.type]) || 1, g = (inst && OUT808[inst.type]) || 1;
     return velOf(ev) * g * (ev && ev.accent ? 1 : 1 / r);
   }
-  // 909: ev.step 0 / 1 / 2 = weak / normal / accent as absolute dB gains (-18 / -9 / 0). Without ev.step the accent
-  // flag is 6 dB (manual, scope p. 9) over an unaccented hit at half scale.
+  // 909 level (E1, 2026-11-26): the machine has three per-step levels, weak / normal / accent = -18 / -9 / 0 dB (B3).
+  // The sequencer's ev.step is the song's ABSOLUTE step number (round robin), not a level, so it is never read here.
+  // - ev.level909 0 / 1 / 2 (direct callers, the checks and the scorer): that level x velocity, as the old ev.step reading.
+  // - otherwise from the event: ev.accent -> 0 dB; velocity under WEAK909 (0.5) -> the weak level -18 dB; else the normal
+  //   level -9 dB, trimmed by velocity below the sequencer's default 0.85 (vel / 0.85, so 0.5 gives -13.6 dB).
+  //   The accent is therefore 9 dB over a normal hit (B3 read about 6 dB by eye from the scope; the step ladder rules).
+  var WEAK909 = 0.5, VREF909 = 0.85;
   function ampOf9(ev) {
-    if (ev && typeof ev.step === 'number' && ev.step === ev.step) return velOf(ev) * dbToGain(STEP_DB[clamp(Math.round(ev.step), 0, 2)]);
-    return velOf(ev) * (ev && ev.accent ? 1 : 0.5);
+    if (ev && typeof ev.level909 === 'number' && ev.level909 === ev.level909) return velOf(ev) * dbToGain(STEP_DB[clamp(Math.round(ev.level909), 0, 2)]);
+    if (ev && ev.accent) return dbToGain(STEP_DB[2]);
+    var v = velOf(ev);
+    if (v < WEAK909) return dbToGain(STEP_DB[0]);
+    return dbToGain(STEP_DB[1]) * Math.min(1, v / VREF909);
   }
   function P(min, max, value, unit, basis, label) {
     var o = { min: min, max: max, value: value, unit: unit || '' };
@@ -958,7 +966,7 @@
       if (r) { o.loaded.push(k); if (!r.verified) o.verified = false; }
     }
     if (!o.loaded.length) o.verified = false;
-    o.auto = autoState;
+    o.fetch = autoState;                                             // loadRomsFrom: 'off' (never asked), 'loading', 'loaded', 'absent'
     return o;
   }
   // a voice's ROM buffer on a context (null when its chip is not loaded): window, cymbal envelope, ZOH at 4x, low-pass, decimate
@@ -982,33 +990,36 @@
     if (c.bufs[key] === undefined) { try { c.bufs[key] = renderRom(ctx, type); } catch (e) { c.bufs[key] = null; } }
     return c.bufs[key];
   }
-  // Pages: fetch the three chips from a folder (default: local/roms/tr909/ at the repository root, found relative to this
-  // script). A missing file is no error in code: the synthesized voices stay. The browser itself still prints one
-  // "404" line in the console for the first missing file (the hat ROM is asked first; the others only if it exists),
-  // unless the server answers an empty 204 for a missing file under /local/ (requested of tools/serve.js and
-  // tools/browser-check.js, log-E1.md). A page can opt out with window.HVT_NO_ROM_AUTOLOAD = true before this script.
+  // Pages: Drums.loadRomsFrom(baseUrl) fetches the three chips from a folder, ONLY when a caller asks (nothing is fetched
+  // at load, at create or at start). Without an argument the base is app/assets/tr909-rom/, resolved from this script's
+  // own URL as worklets.js does: the committed place planned for when the owner makes the repository private (until then
+  // the files live in the git-ignored local/roms/tr909/, and a caller passes that folder). A missing file resolves to
+  // "absent" for that chip; a failed fetch never throws (the browser itself still logs a 404 line when asked for a
+  // missing file). Resolves to Drums.romStatus() plus {asked: base, chips: per-file results}.
   var autoState = 'off', scriptUrl = null;
   try { if (typeof document !== 'undefined' && document.currentScript && document.currentScript.src) scriptUrl = document.currentScript.src; } catch (e) {}
-  function loadRomFrom(base) {
-    if (typeof fetch !== 'function') return Promise.resolve({ ok: false, error: 'no fetch', chips: [] });
+  function defaultRomBase() {
+    try { if (scriptUrl) return new URL('../assets/tr909-rom/', scriptUrl).href; } catch (e) {}
+    return 'assets/tr909-rom/';
+  }
+  function loadRomsFrom(base) {
+    base = (typeof base === 'string' && base) ? base.replace(/\/?$/, '/') : defaultRomBase();
+    var done = function (chips) { var st = romStatus(); st.asked = base; st.results = chips; return st; };
+    if (typeof fetch !== 'function') return Promise.resolve(done([]));
     var url = function (f) { try { return new URL(f, base).href; } catch (e) { return base + f; } };
     var get = function (k) {
-      return fetch(url(ROMCHIPS[k].file)).then(function (r) { return r && r.ok ? r.arrayBuffer() : null; }, function () { return null; })
-        .then(function (ab) { return ab && ab.byteLength ? loadOne(new Uint8Array(ab), { source: url(ROMCHIPS[k].file) }) : { chip: null, ok: false, missing: k }; });   // 404, or an empty 204 from a server that hides missing local files
+      var u = url(ROMCHIPS[k].file);
+      var p;
+      try { p = fetch(u); } catch (e) { p = Promise.resolve(null); }
+      return Promise.resolve(p).then(function (r) { return r && r.ok ? r.arrayBuffer() : null; }, function () { return null; })
+        .then(function (ab) { return ab && ab.byteLength ? loadOne(new Uint8Array(ab), { source: u }) : { chip: k, ok: false, absent: true, file: ROMCHIPS[k].file }; },
+              function () { return { chip: k, ok: false, absent: true, file: ROMCHIPS[k].file }; });
     };
     autoState = 'loading';
-    return get('hat').then(function (h) {
-      if (!h.ok && h.missing) { autoState = 'none'; return { ok: false, chips: [h], error: 'no ROM at ' + base }; }
-      return Promise.all([get('crash'), get('ride')]).then(function (rest) {
-        var all = [h].concat(rest), okN = all.filter(function (p) { return p.ok; }).length;
-        autoState = okN ? 'loaded' : 'none';
-        return { ok: okN > 0, chips: all };
-      });
-    }).catch(function (e) { autoState = 'none'; return { ok: false, error: String(e && e.message), chips: [] }; });
-  }
-  var autoPromise = null;
-  if (scriptUrl && typeof fetch === 'function' && !root.HVT_NO_ROM_AUTOLOAD && /^https?:/.test(scriptUrl)) {
-    try { autoPromise = loadRomFrom(new URL('../../local/roms/tr909/', scriptUrl).href); } catch (e) { autoPromise = null; }
+    return Promise.all([get('hat'), get('crash'), get('ride')]).then(function (all) {
+      autoState = all.some(function (p) { return p.ok; }) ? 'loaded' : 'absent';
+      return done(all);
+    }, function () { autoState = 'absent'; return done([]); });
   }
 
   function hat909(open) {
@@ -1089,8 +1100,7 @@
     METAL: METAL, STEP_DB: STEP_DB.slice(),
     pulseCoeffs: pulseCoeffs,
     // the owner's TR-909 sample ROMs (hats, crash, ride): see the ROM section above
-    loadRom: loadRom, unloadRom: unloadRom, romStatus: romStatus, loadRomFrom: loadRomFrom,
-    romReady: function () { return autoPromise || Promise.resolve(null); },
+    loadRom: loadRom, unloadRom: unloadRom, romStatus: romStatus, loadRomsFrom: loadRomsFrom, romBase: defaultRomBase,
     romHash: function (b) { var u = bytesOf(b); return u ? { crc32: crc32(u), sha1: sha1(u), size: u.length } : null; },
     ROMCHIPS: ROMCHIPS, ROMWIN: ROMWIN, decodeRom: function (b) { var u = bytesOf(b); return u ? decodeRom(u) : null; }
   };

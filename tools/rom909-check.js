@@ -10,7 +10,7 @@
  * 2. the 6-bit decoding from the data: per data line, how often it is 1 and how often it toggles; the mean step between
  *    neighbouring samples under each candidate mapping (D0..D5 or D2..D7; offset binary or two's complement); the idle code
  * 3. where each sound starts and ends in its chip (first and last sample 2 codes or more from silence; RMS per 1 K block)
- * 4. (Chromium, worklet-free: plain Web Audio) the engine's ROM voices at their defaults, measured beside the two sample
+ * 4. (Chromium, plain Web Audio, after Drums.loadRomsFrom('/local/roms/tr909/')) the engine's ROM voices at their defaults, measured beside the two sample
  *    packs the owner supplied: app/assets/tr909-robroy/ (HHCD*, HHOD*, CSHD*, RIDED*) and local/samples/tr909-pack/
  *    (909 Hat_closed, Hat_open, Crash, Ride): spectral centroid, the strongest line above 1 kHz, the time from the peak to
  *    -20 dB, and the length to -60 dB. Recordings of one unit through one sampler are a reference, not the truth.
@@ -136,11 +136,10 @@ function browserPart() {
     browser = b; return b.newPage();
   }).then(function (page) {
     return page.goto('http://127.0.0.1:' + server.address().port + '/app/index.html').then(function () {
-      return page.waitForFunction(function () { return !!(window.Drums && window.Drums.romReady); });
+      return page.waitForFunction(function () { return !!(window.Drums && window.Drums.loadRomsFrom); });
     }).then(function () {
       return page.evaluate(async function () {
-        await Drums.romReady();
-        var st = Drums.romStatus(), out = { auto: st.auto, loaded: st.loaded, verified: st.verified, v: {} };
+        var st0 = Drums.romStatus().fetch, st = await Drums.loadRomsFrom('/local/roms/tr909/'), out = { before: st0, auto: st.fetch, loaded: st.loaded, verified: st.verified, v: {} };
         var types = ['ch909', 'oh909', 'cr909', 'rd909'];
         var runs = [];
         types.forEach(function (t) { runs.push([t, 1, null], [t, 0, null]); });
@@ -149,7 +148,7 @@ function browserPart() {
           var rom = runs[i][1], o = { rom: rom };
           if (typeof runs[i][2] === 'number') o.tune = runs[i][2]; else if (runs[i][2] === 'dmax') o.decay = 1;
           var oc = new OfflineAudioContext(1, 44100 * 1.6, 44100), inst = Drums.create(oc, runs[i][0], o);
-          inst.out.connect(oc.destination); inst.trigger(0.01, { vel: 1, step: 2 });
+          inst.out.connect(oc.destination); inst.trigger(0.01, { vel: 1, accent: true });
           var b = await oc.startRendering(), d = b.getChannelData(0), pk = 0;
           for (var k = 0; k < d.length; k++) pk = Math.max(pk, Math.abs(d[k]));
           out.v[runs[i][0] + (rom ? '' : ':synth') + (runs[i][2] == null ? '' : ':' + runs[i][2])] = { pk: pk, x: Array.prototype.slice.call(d) };
@@ -157,8 +156,8 @@ function browserPart() {
         return out;
       });
     }).then(function (r) {
-      console.log('4. the engine\'s voices (defaults, accent step, vel 1) beside the sample packs (Chromium)');
-      ok(r.auto === 'loaded' && r.loaded.length === 3 && r.verified, 'the page picked the three ROMs up by itself from local/roms/tr909/ (Drums.romStatus().auto = ' + r.auto + ')');
+      console.log('4. the engine\'s voices (defaults, accented, vel 1) beside the sample packs (Chromium)');
+      ok(r.before === 'off' && r.auto === 'loaded' && r.loaded.length === 3 && r.verified, 'nothing fetched before asked (' + r.before + '); Drums.loadRomsFrom("/local/roms/tr909/") loads and verifies the three chips (' + r.auto + ')');
       ok(['ch909', 'oh909', 'cr909', 'rd909'].every(function (t) { return r.v[t].pk > 0.05 && r.v[t].pk < 1; }), 'every ROM voice sounds and peaks under 1.0 (' + ['ch909', 'oh909', 'cr909', 'rd909'].map(function (t) { return t + ' ' + r.v[t].pk.toFixed(2); }).join(', ') + ')');
       var rows = [];
       var add = function (name, x, sr) { var m = measure(x, sr); m.name = name; rows.push(m); };

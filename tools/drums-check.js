@@ -66,6 +66,7 @@ function load() {
 var EXPECT808 = ['bd808', 'sd808', 'cp808', 'ch808', 'oh808', 'cy808', 'cb808', 'lt808', 'mt808', 'ht808', 'lc808', 'mc808', 'hc808', 'rs808', 'cl808', 'ma808'];
 var EXPECT909 = ['bd909', 'sd909', 'lt909', 'mt909', 'ht909', 'rs909', 'cp909', 'ch909', 'oh909', 'cr909', 'rd909'];
 var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
+var pendingAsync = [];
 
 // ------------------------------------------------------------------ 1. module, types, specs
 console.log('1. module, types and specs');
@@ -245,8 +246,11 @@ console.log('7. kick pitch tracks, hold and step levels');
   var lo = D.create(new RecCtx(), 'bd909'); lo.set('tune', 0); lo.set('decay', 0);
   ok(lo.get('tune') === 0.007 && lo.get('decay') === 0.0155, 'bd909 Tune and Decay clamp at 7 ms and 15.5 ms');
   // step levels
-  var amps = [0, 1, 2].map(function (s) { var cx = new RecCtx(), q = D.create(cx, 'bd909'); q.trigger(0, { vel: 1, step: s }); return peakRamp(cx); });
-  ok(near(amps[1] / amps[0], Math.pow(10, 9 / 20), 1e-6) && near(amps[2] / amps[1], Math.pow(10, 9 / 20), 1e-6) && JSON.stringify(D.STEP_DB) === '[-18,-9,0]', '909 step levels weak / normal / accent are -18 / -9 / 0 dB');
+  var amps = [0, 1, 2].map(function (s) { var cx = new RecCtx(), q = D.create(cx, 'bd909'); q.trigger(0, { vel: 1, level909: s }); return peakRamp(cx); });
+  ok(near(amps[1] / amps[0], Math.pow(10, 9 / 20), 1e-6) && near(amps[2] / amps[1], Math.pow(10, 9 / 20), 1e-6) && JSON.stringify(D.STEP_DB) === '[-18,-9,0]', '909 step levels weak / normal / accent are -18 / -9 / 0 dB (ev.level909 0 / 1 / 2)');
+  var fromEv = [{ vel: 1, accent: true }, { vel: 1 }, { vel: 0.85 }, { vel: 0.4 }, { vel: 1, step: 2 }, { vel: 1, step: 0 }].map(function (e) { var cx = new RecCtx(), q = D.create(cx, 'bd909'); q.trigger(0, e); return peakRamp(cx); });
+  ok(near(fromEv[0], amps[2], 1e-12) && near(fromEv[1], amps[1], 1e-12) && near(fromEv[2], fromEv[1], 1e-12) && near(fromEv[3], amps[0], 1e-12), 'without level909 the level comes from the event: accent 0 dB, normal -9 dB (vel >= 0.85), weak -18 dB under vel 0.5');
+  ok(near(fromEv[4], fromEv[1], 1e-12) && near(fromEv[5], fromEv[1], 1e-12), 'ev.step (the sequencer\'s absolute step number) no longer changes the 909 level');
   // bd808
   var c8 = new RecCtx(), b8 = D.create(c8, 'bd808'); b8.trigger(1, { vel: 1 });
   var f8 = osc0(c8).frequency.calls, s8 = f8.filter(function (x) { return x[0] === 'setValueAtTime'; })[0], t8 = f8.filter(function (x) { return x[0] === 'setTargetAtTime'; });
@@ -286,7 +290,7 @@ console.log('7. kick pitch tracks, hold and step levels');
   ok(filtersOfType('cp909').indexOf('highpass:185') >= 0 && D.spec('rs909').decay.value === 0.005, 'cp909 high-pass 185 Hz, rs909 ringing 5 ms');
   ok(D.spec('bd909').clickDecay.value === 0.0007 && D.spec('bd909').tune.value === 0.007 && D.spec('bd909').decay.max === 0.35 && D.spec('bd909').tune.max === 0.04 && D.spec('lt909').decay.min === 0.038 && D.spec('lt909').decay.max === 0.38, 'bd909 click 0.7 ms, Tune up to 40 ms, Decay up to 350 ms; tom decay 38 to 380 ms');
   var a9 = [false, true].map(function (acc) { var cx = new RecCtx(), q = D.create(cx, 'bd909'); q.trigger(0, { vel: 1, accent: acc }); return peakAny(cx); });
-  ok(near(a9[1] / a9[0], 2, 1e-6), '909 accent is 6 dB (x2)');
+  ok(near(a9[1] / a9[0], Math.pow(10, 9 / 20), 1e-6), '909 accent is the accent level, 9 dB over a normal hit (E1: the step ladder; B3 read about 6 dB by eye on the scope)');
   // toms: the 909 hold and tune endpoints
   var ct = new RecCtx(), tm = D.create(ct, 'lt909', { decay: 0.15 }); tm.trigger(0, {});
   var tg9 = ct.nodes.filter(function (n) { return n.type_ === 'gain'; }).map(function (n) { return n.gain.calls.filter(function (x) { return x[0] === 'setTargetAtTime' && x[3] === 0.15; })[0]; }).filter(Boolean)[0];
@@ -348,7 +352,7 @@ console.log('9. TR-909 sample ROMs (synthetic images; real ones: tools/rom909-ch
   }
   var H = img('hat'), C = img('crash');
   var st0 = R.romStatus();
-  ok(st0.loaded.length === 0 && st0.verified === false && st0.auto === 'off' && st0.chips.hat.size === 32768 && st0.chips.hat.expect.crc32 === '2aaae11b', 'no ROM loaded by default (no auto-load outside a page); romStatus lists the three chips and their expected checksums');
+  ok(st0.loaded.length === 0 && st0.verified === false && st0.fetch === 'off' && st0.chips.hat.size === 32768 && st0.chips.hat.expect.crc32 === '2aaae11b', 'no ROM loaded by default (no auto-load outside a page); romStatus lists the three chips and their expected checksums');
   var h1 = R.romHash(new Uint8Array([49, 50, 51, 52, 53, 54, 55, 56, 57])), h2 = R.romHash(new Uint8Array([97, 98, 99]));
   ok(h1.crc32 === 'cbf43926' && h1.sha1 === 'f7c3bc1d808e04732adf679965ccc34ca7ae3441' && h2.sha1 === 'a9993e364706816aba3e25717850c26c9cd0d89d', 'CRC32 and SHA-1 give the standard test vectors ("123456789", "abc")');
   var bad = R.loadRom(new Uint8Array(1000)), fw = R.loadRom(new Uint8Array(8192)), notb = R.loadRom('nope');
@@ -405,8 +409,52 @@ console.log('9. TR-909 sample ROMs (synthetic images; real ones: tools/rom909-ch
   var n = R.unloadRom();
   var c4 = new RecCtx(44100, false), ch4 = R.create(c4, 'ch909'); ch4.trigger(0, {});
   ok(n === 2 && R.romStatus().loaded.length === 0 && c4.bufs[c4.bufs.length - 1].sampleRate === 30000, 'Drums.unloadRom() is the way back: the synthesized buffers play again');
+  // loadRomsFrom: nothing fetched until asked; a missing file is "absent"; a fetch that throws or rejects never throws
+  var S2 = load(), asked = [];
+  S2.fetch = function (u) { asked.push(u); if (/c43/.test(u)) return Promise.resolve({ ok: true, arrayBuffer: function () { return Promise.resolve(H.buffer.slice(0)); } }); if (/c42/.test(u)) throw new Error('boom'); return Promise.resolve({ ok: false, status: 404 }); };
+  var S3 = vm.createContext({ console: console, Math: Math, Float32Array: Float32Array, WeakMap: WeakMap, Promise: Promise, fetch: S2.fetch });
+  S3.window = S3; S3.globalThis = S3;
+  ['core', 'drums'].forEach(function (f) { vm.runInContext(fs.readFileSync(path.join(ENGINE, f + '.js'), 'utf8'), S3, { filename: f + '.js' }); });
+  var cS = new RecCtx(44100, false), iS = S3.Drums.create(cS, 'ch909'); iS.trigger(0, {});
+  ok(asked.length === 0 && S3.Drums.romStatus().fetch === 'off', 'nothing is fetched at load, at create or at a hit');
+  pendingAsync.push(S3.Drums.loadRomsFrom('roms/').then(function (st) {
+    var res = st.results;
+    ok(asked.length === 3 && asked[0] === 'roms/hn61256p__c43.ic69' && st.asked === 'roms/' && st.fetch === 'absent', 'loadRomsFrom asks for the three chips in the given folder once');
+    ok(res[0].chip === null && res[0].ok === false && /checksum/.test(res[0].error) && res[1].absent && res[2].absent && st.loaded.length === 0, 'an unverified hat image is refused, a throwing fetch and a 404 are "absent", no exception');
+    ok(/^assets\/tr909-rom\/$|tr909-rom\/$/.test(S3.Drums.romBase()), 'the default base is app/assets/tr909-rom/ (resolved from the script URL in a page): ' + S3.Drums.romBase());
+  }));
   console.log('   real ROM images: ' + (fs.existsSync(path.join(__dirname, '..', 'local', 'roms', 'tr909')) ? 'present in local/roms/tr909/: run node tools/rom909-check.js' : 'not on this machine (tools/rom909-check.js skips)'));
 })();
 
-console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks failed' : 'OK: ' + checks + ' checks passed');
-process.exit(fails ? 1 : 0);
+// ------------------------------------------------------------------ 10. accent through the real Sequencer
+console.log('10. 909 accent through the Sequencer (not a direct trigger)');
+(function () {
+  var sbS = sandbox();
+  ['core', 'synths', 'drums', 'worklets', 'classics', 'processors', 'songdoc', 'sequencer', 'song', 'host'].forEach(function (f) { vm.runInContext(fs.readFileSync(path.join(ENGINE, f + '.js'), 'utf8'), sbS, { filename: f + '.js' }); });
+  async function levels(accSteps) {
+    var host = sbS.Host.create({ context: new RecCtx(44100, false) }), ed = host.editor(), cells = [], q;
+    await host.start();
+    for (q = 0; q < 16; q++) cells.push(q % 4 === 0 ? { vel: 0.85, acc: accSteps.indexOf(q + 1) >= 0 || undefined } : null);
+    ed.addTrack({ name: 'k9', inst: 'bd909', kind: 'drum', variants: { A: { bars: 1, cells: cells } } });
+    ed.doc.sections.forEach(function (sec) { ed.setPlay(sec.name, 'k9', 'A'); });
+    host.commit();
+    var seq = host.engine(), tr = seq.tracks.k9, out = {}, orig = tr.inst.trigger;
+    tr.inst.trigger = function (t, e) { var n0 = tr.inst._live.length; orig(t, e); var v = tr.inst._live[tr.inst._live.length - 1], m = 0;
+      if (tr.inst._live.length > n0 && v) v.nodes.forEach(function (n) { if (n.gain) n.gain.calls.forEach(function (c) { if (c[0] === 'linearRampToValueAtTime' && c[1] > m) m = c[1]; }); });
+      out[(e.step % 16) + 1] = { amp: m, step: e.step, accent: e.accent }; };
+    seq.scheduleAll(0, 2, 0);
+    return out;
+  }
+  pendingAsync.push((async function () {
+  var plain = await levels([]), acc = await levels([5, 9]);
+  var r5 = 20 * Math.log10(acc[5].amp / plain[5].amp), r9 = 20 * Math.log10(acc[9].amp / plain[9].amp), r1 = 20 * Math.log10(plain[1].amp / plain[13].amp);
+  ok(plain[1] && plain[5] && plain[9] && plain[13] && acc[5].accent === true, 'a bd909 drum track plays steps 1, 5, 9 and 13 through Host and Sequencer (ev.step ' + [plain[1].step, plain[5].step, plain[9].step].join(', ') + ')');
+  ok(near(r5, 9, 1e-6) && near(r9, 9, 1e-6), 'cell.acc on steps 5 and 9 raises them by the accent step (' + r5.toFixed(2) + ' and ' + r9.toFixed(2) + ' dB)');
+  ok(near(r1, 0, 1e-9) && near(acc[1].amp, plain[1].amp, 1e-12), 'unaccented hits are level whatever their absolute step number (step 1 against step 13: ' + r1.toFixed(2) + ' dB)');
+  })());
+})();
+
+Promise.all(pendingAsync).then(function () {
+  console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks failed' : 'OK: ' + checks + ' checks passed');
+  process.exit(fails ? 1 : 0);
+}, function (e) { console.log('FAIL exception ' + (e && e.stack)); process.exit(1); });

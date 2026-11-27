@@ -173,7 +173,7 @@ function optsOf(key) {
 }
 function evOf(key) {
   if (key === 'acc') return { vel: 1, accent: true };
-  if (/^step\d(-d0)?$/.test(key)) return { vel: 1, step: parseInt(key.slice(4), 10) };
+  if (/^step\d(-d0)?$/.test(key)) return { vel: 1, level909: parseInt(key.slice(4), 10) };   // E1 2026-11-26: the ladder via ev.level909 (ev.step is the sequencer's absolute step)
   return { vel: 1 };
 }
 function secsOf(voice) {
