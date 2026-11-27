@@ -73,6 +73,14 @@ function parsePage(html) {
     const src = attr('<s ' + m[1] + '>', 'src');
     out.scripts.unshift(src ? { src } : { inline: m[2] });
   }
+  // the host wraps the fragment in its own <body>, so attributes on the page's <body> (data-machine on the drum pages)
+  // are set by a first inline script instead
+  const bodyAttrs = (/<body\b([^>]*)>/i.exec(html) || [0, ''])[1];
+  const sets = [];
+  for (const m of bodyAttrs.matchAll(/([a-zA-Z_:][-\w:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    sets.push('document.body.setAttribute(' + JSON.stringify(m[1]) + ', ' + JSON.stringify(m[2] != null ? m[2] : m[3]) + ');');
+  }
+  if (sets.length) out.scripts.unshift({ inline: sets.join(' ') });
   return out;
 }
 

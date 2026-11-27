@@ -1,6 +1,7 @@
 # log-E1: engine builder (HVT-D note priority, HVT-106 bucket-brigade chorus, HVT-909 sample ROMs)
 
-Started 2026-11-26 19:26 ET (00:26 UTC, 27 November); this log written 19:50 ET (00:50 UTC).
+Started 2026-11-26 19:26 ET (00:26 UTC, 27 November); written 19:50 ET (00:50 UTC), revised 20:15 ET (01:15 UTC) after
+the coordinator's second message (opt-in ROM loading, the 909 accent bug).
 
 The owner's three decisions, as the coordinator's brief quotes them:
 
@@ -159,19 +160,30 @@ tracked file. The only ROM-derived numbers are statistics in this log (bit perce
     `{allowUnverified: true, chip: 'hat'|'crash'|'ride'}` is passed (the size cannot tell the chips apart); it then plays
     flagged `verified: false`.
 - `Drums.romStatus()` returns, per chip: loaded, verified, part, ic, file, expected and actual hashes, voices, source; plus
-  `auto` ('off', 'loading', 'loaded' or 'none').
+  `fetch` ('off', 'loading', 'loaded' or 'absent').
 - `Drums.unloadRom(chip?)` is the way back to the synthesized buffers.
-- `Drums.loadRomFrom(baseUrl)` returns a Promise.
-- `Drums.romReady()` returns the auto-load's Promise.
+- `Drums.loadRomsFrom(baseUrl?)` returns a Promise of the status (below). `Drums.romBase()` gives the default folder.
 - `Drums.romHash(bytes)`, `Drums.decodeRom(bytes)`, and the tables `Drums.ROMCHIPS` and `Drums.ROMWIN`.
 - New spec row `rom` on ch909, oh909, cr909 and rd909: P(0, 1, 1), basis manual. 1 plays the ROM when its chip is
   loaded; 0 plays the synthesized buffer. With no ROM loaded the synthesized buffer plays either way, so the default sound
   of a machine without ROMs is unchanged.
-- Auto-load: in a page, drums.js takes its own script URL and fetches `../../local/roms/tr909/<MAME file name>`, which is
-  `local/roms/tr909/` at the repository root.
-  - It asks for the hat chip first and the other two only if the hat chip is there.
-  - A missing file is silent in code, and so is an empty 204 answer.
-  - `window.HVT_NO_ROM_AUTOLOAD = true`, set before the script loads, turns it off.
+- Loading is OPT-IN (the coordinator's second message, 20:05 ET; this replaced a first version that fetched at module
+  load).
+  - Nothing is fetched at load, at create or at start.
+  - `Drums.loadRomsFrom(baseUrl) -> Promise<status>` fetches the three chips by their MAME file names from `baseUrl`. A
+    missing file, a 404 or a fetch that throws or rejects resolves to `{chip, absent: true}` for that chip and never
+    throws. The status is `romStatus()` plus `asked` and per-file `results`, and `romStatus().fetch` reads 'off',
+    'loading', 'loaded' or 'absent'.
+  - Without an argument the base is `app/assets/tr909-rom/`, resolved from the script's own URL as worklets.js does
+    (`Drums.romBase()`). That is the committed location planned for when the owner makes the repository private: one move
+    of the three files under their present names finishes the job.
+  - Until then the files stay in `local/roms/tr909/` and a caller passes that folder.
+- Which pages should call it, after the owner's decision on the private repository: the 909 page and the app's 909 kit.
+  - The call: `Drums.loadRomsFrom()` once the folder is committed, or `Drums.loadRomsFrom('../local/roms/tr909/')`, with
+    the path adjusted to the page's depth, while the files live in local/.
+  - Call it on the page's audio start, not at load, so a machine without the files sees one 404 only when the owner has
+    asked for the ROMs.
+  - No other page (303, HVT-D, HVT-106, 808) should call it.
 
 ### What the owner's ROMs show (`node tools/rom909-check.js`; it prints numbers only)
 
@@ -261,8 +273,11 @@ HHCDA, Hat_open = HHODA, Crash = CSHD4, Ride = RIDED4; the measures are identica
   - `rom: 0` playing the synthesized buffer, an unloaded chip staying synthesized, an array with one bad image;
   - `unloadRom` as the way back.
 - `tools/rom909-check.js` is OPTIONAL. It skips with a note when `local/roms/tr909/` is absent. With the owner's files it
-  checks identification, the decoding evidence, the regions, the page's own auto-load (`romStatus().auto === 'loaded'`),
-  the voices' peaks under 1.0, and prints the table above. 12 checks, exit 0.
+  checks identification, the decoding evidence and the regions. In Chromium it checks that nothing is fetched before
+  `Drums.loadRomsFrom('/local/roms/tr909/')`, then that the call loads and verifies the three chips, and the voices' peaks
+  under 1.0. It prints the table above. 12 checks, exit 0.
+- drums-check section 9 also covers `loadRomsFrom` with a stub fetch: nothing fetched at load or at a hit; three
+  requests; an unverified image refused; a throwing fetch and a 404 both "absent"; the default base `tr909-rom/`.
 
 ### For the interface owner (a file menu; via the coordinator)
 
@@ -279,36 +294,67 @@ HHCDA, Hat_open = HHODA, Crash = CSHD4, Ride = RIDED4; the measures are identica
 
 ### For the shell owner (Electron)
 
-The page fetch works when the app is served over http(s) from the repository. From `file://` or the packaged app it does
-not: `/^https?:/` is tested, so the auto-load stays off there. The shell needs to:
+`Drums.loadRomsFrom()` fetches relative to the script, so it works wherever the app's files are served (the packaged
+`app/` folder once `app/assets/tr909-rom/` holds the files).
 
-1. Read the three files from the app's data folder (suggested: `app.getPath('userData')/roms/tr909/`, plus the
-   repository's `local/roms/tr909/` in a development run).
-2. Pass their bytes to the page: preload `ipcRenderer.invoke('roms:tr909')` returning `[ArrayBuffer, …]`, then
-   `Drums.loadRom(list)` after drums.js has loaded. No hashing is needed in the shell; drums.js checks.
-3. Never bundle the files into the build. Build tooling must exclude `local/` (it is git-ignored already).
+- To read the owner's own copy from the app's data folder instead:
+  1. read `app.getPath('userData')/roms/tr909/<three MAME names>` in the main process;
+  2. hand the bytes over through the preload (`ipcRenderer.invoke('roms:tr909')` returning `[ArrayBuffer, …]`);
+  3. call `Drums.loadRom(list)`. No hashing is needed in the shell: drums.js checks.
+- While the repository is public the files must not be bundled: the build must exclude `local/`.
 
-### For the owners of tools/serve.js and tools/browser-check.js
+### Removed request
 
-On a machine WITHOUT the ROMs, the auto-load's one request for `local/roms/tr909/hn61256p__c43.ic69` gets a 404. Chromium
-logs that as a console error ("Failed to load resource"), which code cannot suppress.
-
-- With `node -r <a preload that answers 404 for /local/>`, `tools/browser-check.js` fails 2 checks ("no console errors",
-  "all app files load"). On this machine, with the ROMs present, it passes 26 of 26.
-- Requested: both servers answer an empty `204` for a missing path under `/local/`. drums.js treats an empty body as
-  "absent", so the probe is then silent everywhere.
-- Until then, a page can set `window.HVT_NO_ROM_AUTOLOAD = true`.
+The first version asked the owners of tools/serve.js and tools/browser-check.js to answer 204 for missing /local/ files.
+That is withdrawn: with opt-in loading nothing is fetched unless asked. `node tools/browser-check.js` passes 26 of 26
+both with the ROMs present and with /local/ hidden by a preload.
 
 ### drums-score
 
-- With the ROMs present (this machine): PASS 80, FAIL 25, exit 1.
-- With /local/ hidden (the same preload): PASS 86, FAIL 19, exit 1, the recorded baseline.
-- The 6 extra failures are rows written for the synthesized buffers, run on the ROM voices:
-  - "sample clock from fold-over (30 kHz)" for ch909, oh909, cr909 and rd909. The ROM path's reconstruction filter removes
-    the fold-over the row looks for. The row reads 38.5 to 40 kHz.
-  - "decay time constant at min / max" for ch909 and "at max" for oh909. The recordings carry their own decay under the
-    VCA.
-- The score's owner may want to set `rom: 0` for those rows, or add ROM rows.
+- With opt-in loading the scorer plays the synthesized buffers again: PASS 86, FAIL 19, exit 1, the recorded baseline.
+- Before the change, when the page auto-loaded the ROMs, it read 80 / 25. The 6 extra rows were the synthesized buffers'
+  "sample clock from fold-over" rows and three hat "decay time constant" rows, run on ROM voices.
+- One line edited in `tools/drums-score.js` (`evOf`, the render keys `step0..2` and `step0..2-d0`): they now pass
+  `{vel: 1, level909: N}` instead of `{vel: 1, step: N}`. These keys feed every "step ladder" row: bd909, sd909, the
+  three toms, rs909, cp909, ch909, oh909, cr909 and rd909, plus the two "at drive 0" ladder rows each for bd909, sd909 and
+  the toms. No other row changed.
+
+## 4. The 909 accent bug (the coordinator's second message)
+
+- Cause, as W3 traced it: `ampOf9` read `ev.step` (0 / 1 / 2) as the weak / normal / accent level. The sequencer puts the
+  song's absolute step number there.
+- Fixed in drums.js. `ev.step` is no longer read. The level now comes from:
+  - `ev.level909` 0 / 1 / 2, for direct callers: that level x velocity, the old formula;
+  - otherwise `ev.accent`: 0 dB;
+  - otherwise velocity under **0.5** (WEAK909): the weak level, -18 dB;
+  - otherwise the normal level, -9 dB, trimmed by vel / 0.85 below the sequencer's default 0.85 (vel 0.5 gives -13.6 dB).
+- So a sequenced accent is 9 dB over a normal hit. B3 read about 6 dB by eye from the scope; the step ladder decides here.
+  drums-check's row "909 accent is 6 dB" became "9 dB".
+- A direct trigger without accent or level909 changed from 0.5 (-6 dB) to -9 dB.
+- New checks (drums-check):
+  - section 7: the level from the event (accent, normal, weak at vel 0.4), and `ev.step` 0 and 2 no longer changing it;
+  - section 10: a bd909 drum track on a started `Host` with the real `Sequencer` (`scheduleAll`), steps 1, 5, 9 and 13 at
+    vel 0.85, then `cell.acc` on steps 5 and 9. Those two rise by 9.00 dB, and unaccented hits are level at every absolute
+    step number.
+  - The ladder rows use `level909`.
+- 808: no voice reads `ev.step`. `ampOf` uses `ev.accent` (the ACC808 ratios) and velocity only. There is no other
+  `ev.step` in drums.js.
+- **Fix for app/engine/sampled909.js (K1), to pass on.**
+  - Lines 212 and 386 read `ev.step` as the 909 level, the same bug: every sequenced hit from step 2 on is "accent", steps
+    0 and 1 are -18 and -9 dB, and `cell.acc` does nothing.
+  - Replace both with drums.js's rule. Line 386 becomes:
+
+    ```
+    if (typeof ev.level909 === 'number') return velOf(ev) * dbToGain(STEP_DB[clamp(Math.round(ev.level909), 0, 2)]);
+    if (ev.accent) return dbToGain(STEP_DB[2]);
+    if (velOf(ev) < 0.5) return dbToGain(STEP_DB[0]);
+    return dbToGain(STEP_DB[1]) * Math.min(1, velOf(ev) / 0.85);
+    ```
+
+  - Line 212's `hi` (the accent-sample choice) becomes
+    `ev.level909 != null ? Math.round(ev.level909) >= 2 : !!ev.accent`.
+  - Update its header comment (line 26) to match.
+  - Its checks should move any `step: 0|1|2` ladder input to `level909`.
 
 ### Not verified, plainly
 
@@ -327,14 +373,15 @@ logs that as a console error ("Failed to load resource"), which code cannot supp
 | Command | Result | Exit |
 |---|---|---|
 | `node tools/classics-check.js` | OK, 131 checks (was 110 at P5) | 0 |
-| `node tools/drums-check.js` | OK, 363 checks (was 342) | 0 |
+| `node tools/drums-check.js` | OK, 372 checks (was 342) | 0 |
 | `node app/engine/selfcheck.js` | OK, 469 checks | 0 |
 | `node tools/panels-check.js` | OK, 183 checks | 0 |
 | `node tools/solo-check.js` | OK, 143 checks | 0 |
 | `node tools/presets-check.js` | OK, 1907 checks | 0 |
 | `node tools/tb303-bench.js` | written | 0 |
-| `node tools/browser-check.js` | PASS, 26 checks | 0 |
-| `node tools/drums-score.js` | 80 pass, 25 fail with the ROMs; 86 / 19 with /local/ hidden | 1 |
+| `node tools/synths-check.js` | OK, 169 checks | 0 |
+| `node tools/browser-check.js` | PASS, 26 checks (also with /local/ hidden) | 0 |
+| `node tools/drums-score.js` | 86 pass, 19 fail (the baseline) | 1 |
 | `node tools/rom909-check.js` | OK, 12 checks | 0 |
 | `node tools/juno-bench.js` | written | 0 |
 

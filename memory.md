@@ -13,7 +13,7 @@ This file is the project's working memory. The first part, **Now**, is rewritten
 - A single-instrument page for the 303 (`app/solo/303.html`), published for the owner.
 - Checks: `node app/engine/selfcheck.js` (448) and `tools/*-check.js`; `tools/tb303-bench.js` measures the 303; `tools/drums-score.js` scores the drums against the manuals (86 pass, 19 fail).
 
-**Published pages (private to the owner).** Playable HVT-303: https://claude.ai/artifact/CK2Y94feFhT1N68CmY33Fh . Render Room (renders to listen to): https://claude.ai/artifact/D9a1XyaKNManzV714jEUzj .
+**Published pages (private to the owner).** Playable instruments: HVT-303 https://claude.ai/artifact/CK2Y94feFhT1N68CmY33Fh , HVT-D https://claude.ai/artifact/GGVMp2gh9LHXaVBTxhWa4T , HVT-106 https://claude.ai/artifact/XcP8dCgjCuCsgDJ7wXXqF4 , HVT-808 https://claude.ai/artifact/QMD7Xk4yr5MfZuTgnkjzXk , HVT-909 https://claude.ai/artifact/VjyMn1eweUDvBAz8vbBHyB . Each is built from a page under `app/solo/` with `node tools/solo-bundle.js --all --test` and republished from `tools/out/bundles/<name>/`. Render Room (renders to listen to): https://claude.ai/artifact/D9a1XyaKNManzV714jEUzj .
 
 **In progress (26 November).** Showroom Crew: a page per instrument with a step sequencer, presets and pattern save and load, also in the app. Pressing Crew: the next version (0.2): audio export of the arrangement and of single tracks, audio tracks, a mixer and a clip view, settings, packaged builds for macOS, Windows and Linux; research for 0.3 (hosting VST and AU plug-ins). Briefs: `docs/research/2026-11-26-showroom-crew/BRIEF.md`, `docs/research/2026-11-26-pressing-crew/BRIEF.md`.
 
@@ -30,6 +30,8 @@ This file is the project's working memory. The first part, **Now**, is rewritten
 - Times shown to the owner are Eastern Time.
 
 **Lost and needed again.** The cloud machine has been replaced more than once and its scratch folder wiped: the Guidance recording and the three Roland manuals must be uploaded again when work needs them.
+
+**Decided by the owner on 26 November.** Computer: a Mac with an Apple chip. Builds: an automatic build with installers on a draft release is approved (the workflow is in `.github/workflows/build.yml`; the first run still waits for a go). Separation models with non-commercial or missing licences: optional, labelled downloads. The 909's ROM: wanted; the owner supplied the ROM images and two sample sets. The Rob Roy set is in `app/assets/tr909-robroy/` under its own terms; the ROM images and the unlicensed pack are in the git-ignored `local/` folder until the owner makes the repository private (the owner's choice), then they are committed. HVT-D note priority: a switch, lowest note by default. HVT-106 chorus: realistic with a hiss control. The app's new name: **Recut** (not applied yet: one change after the running work lands).
 
 **Waiting on the owner.** The list is the last page of the transcript PDF of 26 November and `docs/plans/2026-11-21-strategy.md` section 6: files to upload, which computer, whether builds may be published, optional model downloads, the 909's ROM, the name, HVT-D note priority, the Juno's chorus noise, GitHub's default branch, and listening.
 
