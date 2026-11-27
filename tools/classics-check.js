@@ -103,7 +103,7 @@ var FROZEN = {
   modeld: ['tune', 'glide', 'glideOn', 'modMix', 'modAmount', 'oscMod', 'filterMod', 'osc1Range', 'osc1Wave', 'osc2Range', 'osc2Wave', 'osc2Detune',
            'osc3Range', 'osc3Wave', 'osc3Detune', 'osc3Keys', 'mixOsc1', 'mixOsc2', 'mixOsc3', 'mixNoise', 'noiseType', 'mixFeedback',
            'cutoff', 'emphasis', 'contour', 'keyTrack1', 'keyTrack2', 'fAttack', 'fDecay', 'fSustain', 'attack', 'decay', 'sustain',
-           'decaySwitch', 'level'],
+           'decaySwitch', 'level', 'priority'],
   juno: ['tune', 'bend', 'portamento', 'voiceMode', 'lfoRate', 'lfoDelay', 'lfoAuto', 'dcoLfo', 'pwm', 'pwmMode', 'pulse', 'saw', 'sub', 'noise', 'range',
          'hpf', 'cutoff', 'resonance', 'envAmt', 'vcfLfo', 'vcfKey', 'vcaMode', 'attack', 'decay', 'sustain', 'release', 'chorus', 'chorusNoise', 'level']
 };
@@ -309,7 +309,8 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
   ok(jn._live.length === 0 && [0, 1, 2, 3, 4, 5].every(function (v) { return JW['gate' + v].at(6.31) === 0; }), 'juno panic closes every gate and clears _live');
 
   // Model D: single triggering, last-note priority, pitch return, slide
-  var m = CW.create(ctx, 'modeld', { osc3Wave: 'revsaw', noiseType: 'pink' }), mn = ctx.worklets[ctx.worklets.length - 1], M = {};
+  ok(CW.spec('modeld').priority.value === 'low' && JSON.stringify(CW.spec('modeld').priority.options) === '["low","last"]' && CW.spec('modeld').priority.basis === 'source', 'modeld priority row: low (default, as the hardware) or last');
+  var m = CW.create(ctx, 'modeld', { osc3Wave: 'revsaw', noiseType: 'pink', priority: 'last' }), mn = ctx.worklets[ctx.worklets.length - 1], M = {};
   mn.parameters.forEach(function (p, k) { M[k] = p; });
   ok(m.engine === 'worklet' && mn.name === 'hvt-modeld' && M.osc3Wave.value === 1 && M.noiseType.value === 1 && mn.opts.processorOptions.seed > 0, 'modeld runs on its node; enumerations as indexes; a fixed noise seed');
   m.trigger(1, { midi: 48, dur: 0.5, step: 0 });
@@ -324,6 +325,34 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
   ok(M.slide.at(3 + st) === 1 && M.gate.at(3 + st - 1e-3) === 1, 'ev.slide makes the next note legato with the gate held');
   m.panic();
   ok(m._live.length === 0, 'Model D panic clears _live');
+
+  // Model D, priority 'low' (the default): overlapping note sets, the return to a held note, single triggering
+  var lw = CW.create(ctx, 'modeld'), ln_ = ctx.worklets[ctx.worklets.length - 1], L = {};
+  ln_.parameters.forEach(function (p, k) { L[k] = p; });
+  ok(lw.params.priority === 'low', 'a new modeld plays lowest-note priority');
+  lw.trigger(1, { midi: 48, dur: 1.0, step: 0 });                     // C3 held 1.0 .. 2.0
+  lw.trigger(1.2, { midi: 55, dur: 0.3, step: 2 });                   // G3 over it: inaudible change
+  ok(L.pitch.at(1.25) === 48 && L.slide.at(1.2) === 1 && L.trig.at(1.2) !== L.trig.at(1.1), 'a higher note over a held one: the lower keeps sounding, no retrigger (slide 1)');
+  lw.trigger(1.4, { midi: 43, dur: 0.3, step: 4 });                   // G2 under both: it sounds, legato
+  ok(L.pitch.at(1.45) === 43 && L.slide.at(1.4) === 1, 'a lower note takes over, legato');
+  ok(L.pitch.at(1.71) === 48 && L.pitch.at(1.69) === 43, 'releasing the lowest returns to the next lowest still held (C3; G3 ended at 1.5)');
+  ok(L.gate.at(1.99) === 1 && L.gate.at(2.01) === 0, 'the gate stays up while any note is held and falls with the last');
+  lw.trigger(2.5, { midi: 60, dur: 0.6, step: 8 });                   // C4 held 2.5 .. 3.1
+  lw.trigger(2.6, { midi: 52, dur: 0.3, step: 9 });                   // E3 2.6 .. 2.9
+  lw.trigger(2.7, { midi: 57, dur: 0.6, step: 10 });                  // A3 2.7 .. 3.3
+  ok(L.slide.at(2.5) === 0 && L.pitch.at(2.55) === 60 && L.pitch.at(2.65) === 52 && L.pitch.at(2.75) === 52 && L.pitch.at(2.95) === 57 && L.pitch.at(3.2) === 57, 'three overlapping notes: C4, then E3 (lowest), A3 over E3 changes nothing, E3 off returns to A3 (lowest of C4 and A3)');
+  ok(L.gate.at(3.29) === 1 && L.gate.at(3.31) === 0 && L.slide.at(2.6) === 1 && L.slide.at(2.7) === 1, 'one trigger for the phrase; the gate falls at the last note off');
+  lw.trigger(4, { notes: [55, 48, 52], dur: 0.2, step: 16 });         // a chord: one trigger, the lowest note
+  ok(L.pitch.at(4.05) === 48 && L.slide.at(4) === 0, 'a chord event plays its lowest note on one trigger');
+  // out of time order: a pattern note already scheduled at 5.1, an audition arrives for 5.0 (Host.audition at currentTime)
+  lw.trigger(5.1, { midi: 50, dur: 0.1, step: 24 });
+  lw.trigger(5.0, { midi: 45, dur: 0.25 });
+  ok(L.pitch.at(5.02) === 45 && L.pitch.at(5.12) === 45 && L.pitch.at(5.22) === 45 && L.gate.at(5.24) === 1 && L.gate.at(5.26) === 0 && L.slide.at(5.0) === 0 && L.slide.at(5.1) === 1, 'an audition under a scheduled note: the audition (lower) sounds, the pattern note is merged legato, not cancelled');
+  lw.trigger(6.1, { midi: 40, dur: 0.1, step: 32 });
+  lw.trigger(6.0, { midi: 52, dur: 0.25 });
+  ok(L.pitch.at(6.05) === 52 && L.pitch.at(6.15) === 40 && L.pitch.at(6.22) === 52 && L.slide.at(6.1) === 1 && L.trig.at(6.1) !== L.trig.at(6.05), 'an audition over a lower scheduled note: the pattern note still plays (legato), then the pitch returns to the held audition');
+  lw.panic();
+  ok(lw._live.length === 0 && lw._plan.notes.length === 0, 'panic clears the held-note list');
   ok(bad.length === 0, 'no non-finite automation (' + bad.slice(0, 3).join('; ') + ')');
 
   // ------------------------------------------------------------------ 6. the processors in Node
@@ -391,6 +420,16 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
   var jh = run('hvt-juno', 1, je, { chorus: 1, chorusNoise: 1 }), jh2 = run('hvt-juno', 1, je, { chorus: 1, chorusNoise: 1 }), sameH = true;
   for (q = 0; q < jh.length; q++) if (jh[q] !== jh2[q]) { sameH = false; break; }
   ok(sameH && peakOf(jh, 40000, 44100) > 0, 'chorusNoise adds hiss (deterministic, seeded)');
+  // the bucket-brigade chorus (E1): silent with the hiss off, hiss at the default, none with the chorus off
+  var sj = C.spec('juno').chorusNoise;
+  ok(sj.value === 0.1 && sj.basis === 'prior' && /dB/.test(sj.label), 'chorusNoise default 0.1, basis prior, the label states its level in dB');
+  var q0 = run('hvt-juno', 0.5, {}, { chorus: 1, chorusNoise: 0 }), qd = run('hvt-juno', 0.5, {}, { chorus: 2, chorusNoise: 0.1 }), qd2 = run('hvt-juno', 0.5, {}, { chorus: 2, chorusNoise: 0.1 }), qo = run('hvt-juno', 0.5, {}, { chorus: 0, chorusNoise: 1 });
+  var rmsQ = function (x) { var s2 = 0; for (var z = 4410; z < x.length; z++) s2 += x[z] * x[z]; return Math.sqrt(s2 / (x.length - 4410)); }, sameQ = true;
+  for (q = 0; q < qd.length; q++) if (qd[q] !== qd2[q] || qd.R[q] !== qd2.R[q]) { sameQ = false; break; }
+  var hd = 20 * Math.log10(Math.max(rmsQ(qd), rmsQ(qd.R)));
+  ok(peakOf(q0, 0, q0.length) === 0 && peakOf(q0.R, 0, q0.length) === 0 && peakOf(qo, 0, qo.length) === 0, 'no signal: the BBD lines are silent with chorusNoise 0, and there is no hiss with the chorus off');
+  ok(sameQ && hd > -90 && hd < -70, 'hiss at the default is ' + hd.toFixed(1) + ' dBFS (between -90 and -70), identical on two runs');
+  ok(j1.every(isFinite) && j1.R.every(isFinite) && peakOf(j1, 2205, 26000) < 1, 'the BBD chorus output is finite and under full scale');
 
   // ------------------------------------------------------------------ 7. hooks
   console.log('7. hooks');
@@ -409,6 +448,32 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
   seq.tracks.acid.inst.trigger = function (tt, e) { seen.push(e); return orig(tt, e); };
   seq.scheduleAll(0, 1, 0);
   ok(seen.length === 16 && seen[5].slide === true && seen[2].accent === true && seen[0].midi === 36, 'the sequencer hands the 303 midi, accent and slide (' + seen.length + ' notes)');
+
+  // HVT-D note priority through Host.audition while a pattern plays (worklet stub; the sequencer writes notes ahead)
+  var shw = load(sandbox(true), ['core', 'synths', 'drums', 'worklets', 'classics', 'processors', 'songdoc', 'sequencer', 'song', 'host']);
+  var actx = new WCtx(), hostW = shw.Host.create({ context: actx });
+  var okStart = await hostW.start();
+  var edw = hostW.editor(), dcells = [];
+  for (q = 0; q < 16; q++) dcells.push(q % 4 === 0 ? { note: 50 } : null);
+  ok(okStart && !!edw.addTrack({ name: 'dbass', inst: 'modeld', kind: 'melody', variants: { A: { bars: 1, cells: dcells } } }), 'a modeld track on a started host (worklet stub context)');
+  edw.doc.sections.forEach(function (s) { edw.setPlay(s.name, 'dbass', 'A'); });
+  hostW.commit();
+  var seqw = hostW.engine(), dtr = seqw.tracks.dbass, dnode = dtr && dtr.inst && dtr.inst._node, DW = {};
+  if (dnode) dnode.parameters.forEach(function (p, k) { DW[k] = p; });
+  ok(dtr && dtr.inst.engine === 'worklet' && dtr.inst.params.priority === 'low', 'the track instrument runs on the worklet with priority low');
+  seqw.scheduleAll(0, 1, 0);
+  var bpmS = 60 / (seqw.bpm || (seqw.params && seqw.params.bpm) || 120) / 4, firstOn = null;
+  DW.trig.sets().forEach(function (e) { if (firstOn === null && e[0] > 0) firstOn = e[0]; });
+  var pat2 = DW.trig.sets().filter(function (e) { return e[0] > 0; }).map(function (e) { return e[0]; });
+  var tA = pat2[1] - 0.05;                                            // an audition 50 ms before the second pattern note
+  actx.currentTime = tA;
+  var auOk = hostW.audition('dbass', { midi: 38, dur: 0.25 });
+  ok(auOk && DW.pitch.at(tA + 0.01) === 38 && DW.pitch.at(pat2[1] + 0.01) === 38 && DW.slide.at(pat2[1]) === 1 && DW.gate.at(tA + 0.24) === 1, 'Host.audition of a lower key while the pattern plays: it sounds, the pattern note under it is merged legato (' + pat2.slice(0, 3).map(function (x) { return x.toFixed(3); }) + ')');
+  var tB = pat2[2] - 0.05; actx.currentTime = tB;
+  hostW.audition('dbass', { midi: 62, dur: 0.2 });
+  ok(DW.pitch.at(tB + 0.01) === 62 && DW.pitch.at(pat2[2] + 0.01) === 50 && DW.slide.at(pat2[2]) === 1, 'an audition above the pattern: the pattern note (lower) takes over legato at its time, nothing cancelled');
+  ok(DW.trig.at(pat2[2]) !== DW.trig.at(tB) && DW.gate.at(pat2[2] + 0.05) === 1, 'the pattern note after the audition keeps its trigger and gate');
+  hostW.dispose && hostW.dispose();
 
   console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks failed' : 'OK: ' + checks + ' checks passed');
   process.exit(fails ? 1 : 0);

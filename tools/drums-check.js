@@ -329,5 +329,84 @@ console.log('8. 909 sampled-voice fallbacks');
   ok(D.spec('sd909').tone.min === 0.1 && D.spec('sd909').tone.max === 0.34 && D.spec('bd909').decay.min === 0.0155 && D.spec('bd909').decay.max === 0.35 && D.spec('bd909').tune.min === 0.007 && D.spec('bd909').tune.max === 0.04, 'snare Tone 100 to 340 ms, bass drum Decay 15.5 to 350 ms, Tune 7 to 40 ms');
 })();
 
+// ------------------------------------------------------------------ 9. the TR-909 sample-ROM path, on SYNTHETIC images
+// No ROM image is in this repository and none may be: these images are made here (a 6-bit ramp, a decaying noise burst).
+// The owner's real chips are checked by tools/rom909-check.js when local/roms/tr909/ exists on the machine.
+console.log('9. TR-909 sample ROMs (synthetic images; real ones: tools/rom909-check.js)');
+(function () {
+  var S = load(), R = S.Drums, i;
+  function img(kind) {
+    var u = new Uint8Array(32768), r = 7;
+    for (i = 0; i < 32768; i++) {
+      r = (Math.imul(r, 1103515245) + 12345) >>> 0;
+      var code;
+      if (kind === 'hat' && i < 0x6000) code = i % 64;                                        // the ramp: every code in turn
+      else { var k = kind === 'hat' ? i - 0x6000 : i; code = Math.max(0, Math.min(63, 32 + Math.round(31 * Math.exp(-k / 1500) * ((r >>> 8) / 8388608 - 1)))); }
+      u[i] = code << 2;
+    }
+    return u;
+  }
+  var H = img('hat'), C = img('crash');
+  var st0 = R.romStatus();
+  ok(st0.loaded.length === 0 && st0.verified === false && st0.auto === 'off' && st0.chips.hat.size === 32768 && st0.chips.hat.expect.crc32 === '2aaae11b', 'no ROM loaded by default (no auto-load outside a page); romStatus lists the three chips and their expected checksums');
+  var h1 = R.romHash(new Uint8Array([49, 50, 51, 52, 53, 54, 55, 56, 57])), h2 = R.romHash(new Uint8Array([97, 98, 99]));
+  ok(h1.crc32 === 'cbf43926' && h1.sha1 === 'f7c3bc1d808e04732adf679965ccc34ca7ae3441' && h2.sha1 === 'a9993e364706816aba3e25717850c26c9cd0d89d', 'CRC32 and SHA-1 give the standard test vectors ("123456789", "abc")');
+  var bad = R.loadRom(new Uint8Array(1000)), fw = R.loadRom(new Uint8Array(8192)), notb = R.loadRom('nope');
+  ok(!bad.ok && /size 1000/.test(bad.error) && !fw.ok && /8192/.test(fw.error) && !notb.ok, 'identification by size: 1000 and 8192 bytes (the firmware size) are refused, a string is not bytes');
+  var ref = R.loadRom(H.buffer);
+  ok(!ref.ok && /checksum/.test(ref.error) && ref.crc32 === R.romHash(H).crc32 && R.romStatus().loaded.length === 0, 'a 32 KB image with an unknown checksum is refused (' + ref.crc32 + ')');
+  var nochip = R.loadRom(H, { allowUnverified: true });
+  ok(!nochip.ok && /opts.chip/.test(nochip.error), 'allowUnverified without a chip name is refused: the size cannot tell the three chips apart');
+  var uh = R.loadRom(H, { allowUnverified: true, chip: 'hat' });
+  ok(uh.ok && uh.chip === 'hat' && uh.verified === false && JSON.stringify(uh.voices) === '["ch909","oh909"]', 'with {allowUnverified: true, chip: "hat"} it loads, flagged unverified, for ch909 and oh909');
+  var st1 = R.romStatus();
+  ok(st1.chips.hat.loaded && !st1.chips.hat.verified && st1.verified === false && JSON.stringify(st1.loaded) === '["hat"]', 'romStatus shows the hat chip loaded and unverified');
+  var dec = R.decodeRom(H), exact = true;
+  for (i = 0; i < 32768; i++) if (dec[i] !== ((H[i] >> 2) - 32) / 32) { exact = false; break; }
+  ok(exact && dec[0] === -1 && dec[32] === 0 && dec[63] === 31 / 32 && dec[64] === -1, 'decoding is exact: code = byte >> 2 (D2..D7), x = (code - 32) / 32: the ramp reads -1, 0 at code 32, 31/32 at 63');
+  // playback: buffers at the context rate, lengths from the windows at the 30 kHz clock
+  var c = new RecCtx(44100, false), oh = R.create(c, 'oh909'), ch = R.create(c, 'ch909');
+  oh.out.connect(c.destination); ch.out.connect(c.destination);
+  oh.trigger(0.2, { vel: 1, step: 2 });
+  var bo = c.bufs[c.bufs.length - 1], vo = oh._live[0];
+  ok(bo.sampleRate === 44100 && bo.length === Math.floor(0x6000 / 30000 * 44100) && near(bo.duration, 0.8192, 1e-4), 'the open hat plays its window 0x0000-0x5FFF: 24576 ROM samples = 0.819 s at 30 kHz (' + bo.length + ' samples at 44.1 kHz)');
+  ok(vo.srcs[0].buffer === bo && vo.srcs[0].playbackRate.calls[0][1] === 1, 'the hats read at the fixed clock (rate 1, no Tune on the hats)');
+  ch.trigger(0.5, { vel: 1, step: 2 });
+  var bc = c.bufs[c.bufs.length - 1];
+  ok(bc.length === Math.floor(0x2000 / 30000 * 44100) && near(bc.duration, 0.2731, 1e-4), 'the closed hat plays 0x6000-0x7FFF: 8192 samples = 0.273 s');
+  var gch = vo.chokeG.gain.calls.filter(function (q) { return q[0] === 'linearRampToValueAtTime' && q[1] === 0.0001; });
+  ok(gch.length === 1 && near(gch[0][2], 0.505, 1e-9) && vo.srcs.every(function (q) { return near(lastStop(q), 0.506, 1e-9); }), 'choke: the closed hat from the ROM stops the sounding open hat (5 ms fade), one channel as before');
+  var d = bc.getChannelData(0), pk = 0, e = 0;
+  for (i = 0; i < d.length; i++) { pk = Math.max(pk, Math.abs(d[i])); e += d[i] * d[i]; }
+  var dOh = bo.getChannelData(0), pkO = 0; for (i = 0; i < dOh.length; i++) pkO = Math.max(pkO, Math.abs(dOh[i]));
+  ok(pk > 0.3 && pk < 0.981 && pkO < 0.981 && e > 0 && d.every(isFinite), 'ROM buffers peak under 1.0 (closed ' + pk.toFixed(3) + ', open ' + pkO.toFixed(3) + '), finite');
+  // the ramp survives the DAC model: the buffer's mean slope over one ramp period follows the codes
+  var per = 64 / 30000 * 44100, a0 = Math.round(per * 10 + per * 0.25), a1 = Math.round(per * 10 + per * 0.75);
+  ok(dOh[a1] - dOh[a0] > 0.6, 'the open-hat buffer rises along the 6-bit ramp (' + dOh[a0].toFixed(2) + ' -> ' + dOh[a1].toFixed(2) + ')');
+  // the rom row: 0 = the synthesized buffer even with a ROM loaded
+  var c2 = new RecCtx(44100, false), syn = R.create(c2, 'ch909', { rom: 0 });
+  syn.trigger(0, { vel: 1 });
+  ok(c2.bufs[c2.bufs.length - 1].sampleRate === 30000 && c2.bufs[c2.bufs.length - 1].length === 8192 && R.spec('ch909').rom.value === 1, 'rom 0 plays the synthesized buffer (30 kHz, 8192); the row defaults to 1');
+  // crash: Tune is the read clock; 30 kHz at the Tune minimum
+  var uc = R.loadRom([new Uint8Array(77), C], { allowUnverified: true, chip: 'crash' });
+  ok(uc.ok && uc.chips.length === 2 && uc.chip === 'crash' && !uc.verified && /size 77/.test(uc.error), 'an array of images: the bad one is reported, the good one loads (chip "crash", unverified)');
+  var c3 = new RecCtx(44100, false), cr = R.create(c3, 'cr909');
+  cr.trigger(1, { vel: 1, step: 2 });
+  var vc = cr._live[0], rc = vc.srcs[0].playbackRate.calls[0][1], bcr = vc.srcs[0].buffer;
+  ok(bcr.length === Math.floor(32768 / 30000 * 44100) && near(rc, Math.SQRT2, 1e-9) && near(lastStop(vc.srcs[0]), 1 + bcr.duration / rc + 0.02, 1e-9), 'crash: the whole chip (1.092 s at 30 kHz); Tune 0 reads at 2^0.5 x 30 kHz, and pitch and length move together');
+  cr.set('tune', -0.5); cr.trigger(3, {}); cr.set('tune', 0.5); cr.trigger(5, {});
+  ok(cr._live[1].srcs[0].playbackRate.calls[0][1] === 1 && cr._live[2].srcs[0].playbackRate.calls[0][1] === 2, 'crash Tune min reads at 30 kHz (rate 1), max at 60 kHz (rate 2)');
+  var dc = bcr.getChannelData(0), e1 = 0, e2 = 0, q4 = Math.floor(dc.length / 4);
+  for (i = 0; i < q4; i++) e1 += dc[i] * dc[i]; for (i = 3 * q4; i < 4 * q4; i++) e2 += dc[i] * dc[i];
+  ok(e2 < e1 * 0.01, 'crash: the address envelope and the burst decay through the chip (last quarter ' + (10 * Math.log10(e2 / e1)).toFixed(1) + ' dB re the first)');
+  var rdNo = R.create(new RecCtx(44100, false), 'rd909');
+  rdNo.trigger(0, {});
+  ok(rdNo._live[0].srcs[0].buffer.sampleRate === 30000, 'the ride has no chip loaded: it stays synthesized');
+  var n = R.unloadRom();
+  var c4 = new RecCtx(44100, false), ch4 = R.create(c4, 'ch909'); ch4.trigger(0, {});
+  ok(n === 2 && R.romStatus().loaded.length === 0 && c4.bufs[c4.bufs.length - 1].sampleRate === 30000, 'Drums.unloadRom() is the way back: the synthesized buffers play again');
+  console.log('   real ROM images: ' + (fs.existsSync(path.join(__dirname, '..', 'local', 'roms', 'tr909')) ? 'present in local/roms/tr909/: run node tools/rom909-check.js' : 'not on this machine (tools/rom909-check.js skips)'));
+})();
+
 console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks failed' : 'OK: ' + checks + ' checks passed');
 process.exit(fails ? 1 : 0);

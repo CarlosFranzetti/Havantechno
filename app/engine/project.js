@@ -227,7 +227,7 @@
     var out = { audio: [], programs: [] };
     if (!host) return out;
     try {
-      (host.audio ? host.audio() : []).forEach(function (a) { if (a.missing) out.audio.push({ id: a.id, name: a.name, src: a.src, usedBy: a.usedBy }); });
+      (host.audio ? host.audio() : []).forEach(function (a) { if (a.missing) out.audio.push({ id: a.id, name: a.name, src: a.src, hash: a.hash || null, usedBy: a.usedBy }); });
       (host.programs ? host.programs() : []).forEach(function (p) { if (p.missing) out.programs.push({ id: p.id, name: p.name, missing: p.missing, regions: p.regions }); });
     } catch (e) {}
     return out;
@@ -386,6 +386,18 @@
       return host.exportAudio(opts).then(function () { return written; });
     });
   }
+  // a content hash of a file's bytes, so a moved or renamed file can be found again: 'sha256:<hex>' through
+  // crypto.subtle (secure contexts and Electron), else 'fnv1a32:<hex>' (not cryptographic). null without bytes.
+  function hashBytes(bytes) {
+    if (bytes == null) return Promise.resolve(null);
+    var u = Object.prototype.toString.call(bytes) === '[object ArrayBuffer]' ? new Uint8Array(bytes) : (ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null);
+    if (!u) return Promise.resolve(null);
+    var hex = function (b) { var o = '', a = new Uint8Array(b); for (var i = 0; i < a.length; i++) o += (a[i] < 16 ? '0' : '') + a[i].toString(16); return o; };
+    var cr = root.crypto && root.crypto.subtle;
+    if (cr && typeof cr.digest === 'function') return Promise.resolve(cr.digest('SHA-256', u)).then(function (d) { return 'sha256:' + hex(d); }, function () { return fnv(); });
+    return Promise.resolve(fnv());
+    function fnv() { var h = 2166136261 >>> 0; for (var i = 0; i < u.length; i++) { h ^= u[i]; h = Math.imul(h, 16777619) >>> 0; } return 'fnv1a32:' + ('0000000' + h.toString(16)).slice(-8); }
+  }
   function uniqueName(name, used) {
     var m = /^(.*?)(\.[A-Za-z0-9]{1,5})?$/.exec(String(name || 'audio').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_') || 'audio'), b = m[1] || 'audio', x = m[2] || '', n = b + x, i = 2;
     while (used[n.toLowerCase()]) n = b + '_' + (i++) + x;
@@ -395,7 +407,8 @@
   // Electron: a project folder (chosen with pickDirectory) holding project.havantechno.json and audio/ with every file
   // of doc.audio copied in (copyFile from its path, absolute or relative to o.base / the folder the project was opened
   // from; a file with no readable path is written as a 32-bit float WAV of its decoded audio), the bundle's document
-  // pointing at audio/<file>, so the folder opens on another machine. audio/ needs HavantechnoShell.makeDirectory; without
+  // pointing at audio/<file> (paths relative to the project file) with a content hash per file (doc.audio[id].hash,
+  // listed by Project.missing for a locate-missing flow), so the folder opens on another machine. audio/ needs HavantechnoShell.makeDirectory; without
   // it the files go beside the document. The live document is not changed. Web: the document alone through save(); the
   // audio is relinked by file name when the files are added again (the existing flow). Resolves {path, dir, files,
   // missing, flat} (web: {path: null, name, missing}), null on cancel.
@@ -425,13 +438,18 @@
               if (!buf || typeof host.wav !== 'function') { missing.push(id); return null; }
               var wname = /\.wav$/i.test(fname) ? fname : fname.replace(/\.[A-Za-z0-9]{1,5}$/, '') + '.wav';
               if (wname !== fname) { delete used[fname.toLowerCase()]; wname = uniqueName(wname, used); }
-              var wdst = join(sh, flat ? dir : sub, wname);
-              return asPromise(sh.writeFile(wdst, host.wav(buf, { bitDepth: 32 }))).then(function () {
+              var wdst = join(sh, flat ? dir : sub, wname), wb = host.wav(buf, { bitDepth: 32 });
+              return asPromise(sh.writeFile(wdst, wb)).then(function () {
                 e.src = flat ? wname : 'audio/' + wname; files.push({ id: id, path: wdst, how: 'decoded' });
+                return hashBytes(wb).then(function (h) { if (h) e.hash = h; });
               }, function () { missing.push(id); });
             }
             if (from && fn(sh, 'copyFile')) {
-              return asPromise(sh.copyFile(from, dst)).then(function () { e.src = rel; files.push({ id: id, path: dst, how: 'copied' }); }, asWav);
+              return asPromise(sh.copyFile(from, dst)).then(function () {
+                e.src = rel; files.push({ id: id, path: dst, how: 'copied' });
+                if (!fn(sh, 'readFile')) return null;
+                return asPromise(sh.readFile(dst, {})).then(hashBytes, function () { return null; }).then(function (h) { if (h) e.hash = h; });
+              }, asWav);
             }
             return asWav();
           });
@@ -506,7 +524,7 @@
     try { return asPromise(sh.appDataPath()).then(function (p) { return p || null; }, function () { return null; }); } catch (e) { return Promise.resolve(null); }
   }
 
-  root.Project = { exportAudio: exportAudio, saveBundle: saveBundle, openBundle: openBundle, BUNDLE_FILE: BUNDLE_FILE, serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, pickFiles: pickFiles, importProgram: importProgram, importTrack: importTrack, missing: missing, autosave: autosave, restore: restore,
+  root.Project = { exportAudio: exportAudio, hashBytes: hashBytes, saveBundle: saveBundle, openBundle: openBundle, BUNDLE_FILE: BUNDLE_FILE, serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, pickFiles: pickFiles, importProgram: importProgram, importTrack: importTrack, missing: missing, autosave: autosave, restore: restore,
                    restoreAsync: restoreAsync, clearAutosave: clearAutosave, appDataPath: appDataPath, fileName: fileName,
                    EXT: EXT, AUTOSAVE_KEY: AUTOSAVE_KEY, FORMAT: FORMAT };
 })();

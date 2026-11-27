@@ -838,6 +838,179 @@
     if (!c.bufs[key]) { try { c.bufs[key] = renderHat(ctx, kind, crush); } catch (e) { c.bufs[key] = null; } }
     return c.bufs[key];
   }
+  // ---- the owner's TR-909 sample ROMs (E1, Pressing Crew 2026-11-26). The ROM images are Roland's copyright: they stay
+  // on the owner's machine (git-ignored local/roms/tr909/) and are never in this repository; nothing here contains them.
+  // Identification: every chip is 32768 bytes (HN61256P, 32 K x 8), so the size only says "a sample ROM"; the chip is
+  // named by CRC32 and SHA-1 against the values MAME's roland_tr909.cpp records (C1-hardware.md 5.5). A file that matches
+  // neither is refused unless the caller passes {allowUnverified: true, chip: 'hat' | 'crash' | 'ride'}; it then plays
+  // flagged unverified.
+  // Decoding (settled on the owner's ROMs, log-E1.md): the six data bits are D2..D7 (D0 and D1 are always 0 on the crash
+  // and ride chips; the hat chip carries low bits only in the quiet tail of the open hat, which the six-bit latch IC68
+  // drops), offset binary with silence at code 32 (every sound ends on 32): x = (code - 32) / 32, code = byte >> 2.
+  // Address windows (service notes p. 5, B3; the owner's hat ROM agrees): open hat 0x0000-0x5FFF, closed hat
+  // 0x6000-0x7FFF (two recordings, not one with two gates: the data at 0x6000 starts from silence with a new attack),
+  // crash and ride the whole chip. Read clock about 30 kHz (60 kHz / 2, ROM909.rate); the crash and ride Tune scales it.
+  // DAC: stair steps (zero-order hold), then the reconstruction low-pass the notes name without values (prior: two
+  // 2nd-order 12 kHz sections), rendered once per context at 4x the context rate and decimated. Envelopes: hats through
+  // the VCA (hold + decay, as the synthesized hats); crash and ride from the address (RA11, anti-log taper, Q71): an
+  // exponential over the chip's length, CYM_ENV dB down at the last address. Crash and ride read clock: 30 kHz at the
+  // Tune minimum, one octave of travel (CYM_TUNE0 = +0.5 oct at the panel's centre, Tune 0). Neither the envelope depth
+  // nor the crash/ride clock is in the notes C1 and B3 read; both are fitted to the owner's Rob Roy set (CSHD0 / CSHDA,
+  // RIDED0 / RIDEDA: the full chip at 30 kHz matches the Tune-0 lengths, the Tune-10 ones are half; the peak-to--20 dB
+  // times 845 / 430 ms and 695 / 380 ms give about 15 and 13 dB): basis prior, one unit through one sampler (log-E1.md).
+  var ROMSIZE = 0x8000, ROMGAIN = 0.9, RECON_HZ = 12000;
+  var CYM_ENV = { cr909: 15, rd909: 13 }, CYM_TUNE0 = 0.5;
+  var ROMCHIPS = {
+    hat: { part: 'HN61256P-PC43', ic: 'IC69', file: 'hn61256p__c43.ic69', crc32: '2aaae11b', sha1: '22a34d603e78673bb096f5e56a8971afe14d8fee', voices: ['ch909', 'oh909'] },
+    crash: { part: 'HN61256P-PC42', ic: 'IC62', file: 'hn61256p__c42.ic62', crc32: 'dc61cf1a', sha1: 'bc730107b0c391f4879c9777a3e85f3e57f3aad6', voices: ['cr909'] },
+    ride: { part: 'HN61256P-PC44', ic: 'IC54', file: 'hn61256p__c44.ic54', crc32: '01a9b435', sha1: 'daa54c58c7e3ae3398f125568537ec82d5bd1dfd', voices: ['rd909'] }
+  };
+  var ROMWIN = { oh909: { chip: 'hat', from: 0, to: 0x6000 }, ch909: { chip: 'hat', from: 0x6000, to: 0x8000 },
+                 cr909: { chip: 'crash', from: 0, to: 0x8000 }, rd909: { chip: 'ride', from: 0, to: 0x8000 } };
+  var ROMS = { hat: null, crash: null, ride: null }, romGen = 0;
+  var CRC_T = null;
+  function crc32(u) {
+    if (!CRC_T) { CRC_T = new Int32Array(256); for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; CRC_T[n] = c; } }
+    var crc = -1;
+    for (var i = 0; i < u.length; i++) crc = CRC_T[(crc ^ u[i]) & 0xff] ^ (crc >>> 8);
+    return ('0000000' + ((crc ^ -1) >>> 0).toString(16)).slice(-8);
+  }
+  function sha1(u) {                                                  // FIPS 180-4, bytes in, hex out
+    var ml = u.length, nb = ((ml + 8) >> 6) + 1, w = new Int32Array(nb * 16), i;
+    for (i = 0; i < ml; i++) w[i >> 2] |= u[i] << (24 - (i & 3) * 8);
+    w[ml >> 2] |= 0x80 << (24 - (ml & 3) * 8);
+    w[nb * 16 - 1] = (ml * 8) >>> 0; w[nb * 16 - 2] = Math.floor(ml / 0x20000000);
+    var h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE, h3 = 0x10325476, h4 = 0xC3D2E1F0, W = new Int32Array(80);
+    for (var b = 0; b < nb; b++) {
+      for (i = 0; i < 16; i++) W[i] = w[b * 16 + i];
+      for (i = 16; i < 80; i++) { var x = W[i - 3] ^ W[i - 8] ^ W[i - 14] ^ W[i - 16]; W[i] = (x << 1) | (x >>> 31); }
+      var a = h0, bb = h1, c = h2, d = h3, e = h4;
+      for (i = 0; i < 80; i++) {
+        var f, k2;
+        if (i < 20) { f = (bb & c) | (~bb & d); k2 = 0x5A827999; } else if (i < 40) { f = bb ^ c ^ d; k2 = 0x6ED9EBA1; }
+        else if (i < 60) { f = (bb & c) | (bb & d) | (c & d); k2 = 0x8F1BBCDC; } else { f = bb ^ c ^ d; k2 = 0xCA62C1D6; }
+        var tmp = (((a << 5) | (a >>> 27)) + f + e + k2 + W[i]) | 0;
+        e = d; d = c; c = (bb << 30) | (bb >>> 2); bb = a; a = tmp;
+      }
+      h0 = (h0 + a) | 0; h1 = (h1 + bb) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0; h4 = (h4 + e) | 0;
+    }
+    return [h0, h1, h2, h3, h4].map(function (v) { return ('0000000' + (v >>> 0).toString(16)).slice(-8); }).join('');
+  }
+  function bytesOf(x) {
+    if (!x) return null;
+    if (x instanceof Uint8Array) return x;
+    if (typeof ArrayBuffer !== 'undefined' && x instanceof ArrayBuffer) return new Uint8Array(x);
+    if (x.buffer && typeof x.byteLength === 'number') return new Uint8Array(x.buffer, x.byteOffset || 0, x.byteLength);
+    if (typeof x.byteLength === 'number' && typeof x.slice === 'function') { try { return new Uint8Array(x); } catch (e) {} }
+    return null;
+  }
+  // six data bits D2..D7, offset binary, silence at code 32
+  function decodeRom(u) { var x = new Float32Array(u.length); for (var i = 0; i < u.length; i++) x[i] = ((u[i] >> 2) - 32) / 32; return x; }
+  function loadOne(u, opts) {
+    var out = { chip: null, verified: false, voices: [], ok: false, size: u.length, crc32: null, sha1: null, error: null };
+    if (u.length !== ROMSIZE) { out.error = 'size ' + u.length + ' bytes: a TR-909 sample ROM (HN61256P) is 32768'; return out; }
+    out.crc32 = crc32(u); out.sha1 = sha1(u);
+    var chip = null, k;
+    for (k in ROMCHIPS) if (ROMCHIPS.hasOwnProperty(k) && ROMCHIPS[k].crc32 === out.crc32 && ROMCHIPS[k].sha1 === out.sha1) chip = k;
+    if (chip) out.verified = true;
+    else if (opts && opts.allowUnverified && ROMCHIPS.hasOwnProperty(opts.chip)) chip = opts.chip;
+    else { out.error = 'checksum ' + out.crc32 + ' / ' + out.sha1 + ' matches no TR-909 sample ROM' + (opts && opts.allowUnverified ? ' (unverified needs opts.chip: hat, crash or ride)' : ' (pass {allowUnverified: true, chip} to play it anyway)'); return out; }
+    if (opts && opts.chip && ROMCHIPS.hasOwnProperty(opts.chip) && opts.chip !== chip && out.verified) { out.error = 'the checksum says ' + chip + ', not ' + opts.chip; return out; }
+    ROMS[chip] = { data: decodeRom(u), verified: out.verified, crc32: out.crc32, sha1: out.sha1, source: (opts && opts.source) || 'bytes' };
+    romGen++;
+    out.chip = chip; out.voices = ROMCHIPS[chip].voices.slice(); out.ok = true;
+    return out;
+  }
+  // bytes: an ArrayBuffer / typed array of one chip, a concatenation of 32 KB chips, or an array of them.
+  // Returns {chip, verified, voices, ok, error, crc32, sha1} for one chip; for several, also {chips: [...]} with chip
+  // the names joined by ',', verified true only if all are, voices the union. Never throws.
+  function loadRom(bytes, opts) {
+    try {
+      var list = [], i, j;
+      if (Array.isArray(bytes)) { for (i = 0; i < bytes.length; i++) list.push(bytesOf(bytes[i])); }
+      else list.push(bytesOf(bytes));
+      var parts = [];
+      for (i = 0; i < list.length; i++) {
+        var u = list[i];
+        if (!u) { parts.push({ chip: null, verified: false, voices: [], ok: false, error: 'not bytes (ArrayBuffer or Uint8Array expected)' }); continue; }
+        if (u.length > ROMSIZE && u.length % ROMSIZE === 0) { for (j = 0; j < u.length; j += ROMSIZE) parts.push(loadOne(u.subarray(j, j + ROMSIZE), opts)); }
+        else parts.push(loadOne(u, opts));
+      }
+      if (parts.length === 1) return parts[0];
+      var good = parts.filter(function (p) { return p.ok; }), voices = [];
+      good.forEach(function (p) { p.voices.forEach(function (v) { if (voices.indexOf(v) < 0) voices.push(v); }); });
+      return { chips: parts, chip: good.map(function (p) { return p.chip; }).join(','), verified: good.length === parts.length && good.every(function (p) { return p.verified; }),
+               voices: voices, ok: good.length > 0, error: good.length === parts.length ? null : parts.filter(function (p) { return !p.ok; }).map(function (p) { return p.error; }).join('; ') };
+    } catch (e) { return { chip: null, verified: false, voices: [], ok: false, error: String(e && e.message) }; }
+  }
+  // chip: 'hat' | 'crash' | 'ride', or none for all: the synthesized buffers play again
+  function unloadRom(chip) {
+    var k, n = 0;
+    for (k in ROMS) if (ROMS.hasOwnProperty(k) && (!chip || chip === k) && ROMS[k]) { ROMS[k] = null; n++; }
+    if (n) romGen++;
+    return n;
+  }
+  function romStatus() {
+    var o = { loaded: [], verified: true, chips: {} }, k;
+    for (k in ROMCHIPS) if (ROMCHIPS.hasOwnProperty(k)) {
+      var r = ROMS[k], c = ROMCHIPS[k];
+      o.chips[k] = { loaded: !!r, verified: !!(r && r.verified), part: c.part, ic: c.ic, file: c.file, size: ROMSIZE, crc32: r ? r.crc32 : null, sha1: r ? r.sha1 : null, expect: { crc32: c.crc32, sha1: c.sha1 }, voices: c.voices.slice(), source: r ? r.source : null };
+      if (r) { o.loaded.push(k); if (!r.verified) o.verified = false; }
+    }
+    if (!o.loaded.length) o.verified = false;
+    o.auto = autoState;
+    return o;
+  }
+  // a voice's ROM buffer on a context (null when its chip is not loaded): window, cymbal envelope, ZOH at 4x, low-pass, decimate
+  function renderRom(ctx, type) {
+    var w = ROMWIN[type], r = ROMS[w.chip], sr = ctx.sampleRate || 44100, os = 4, fo = sr * os, i;
+    var len = w.to - w.from, src = new Float32Array(len), dB = CYM_ENV[type];
+    for (i = 0; i < len; i++) src[i] = r.data[w.from + i] * (dB ? Math.pow(10, -dB / 20 * i / len) : 1);
+    var nOut = Math.floor(len / ROM909.rate * sr), nOs = nOut * os, y = new Float32Array(nOs), step = ROM909.rate / fo;
+    for (i = 0; i < nOs; i++) y[i] = src[Math.min(len - 1, Math.floor(i * step))];
+    runBiquad(biquad('lowpass', RECON_HZ, Math.SQRT1_2, fo), y);
+    runBiquad(biquad('lowpass', RECON_HZ, Math.SQRT1_2, fo), y);
+    var b = ctx.createBuffer(1, nOut, sr), d = b.getChannelData(0), pk = 0;
+    for (i = 0; i < nOut; i++) { d[i] = y[i * os] * ROMGAIN; if (Math.abs(d[i]) > pk) pk = Math.abs(d[i]); }
+    if (pk > 0.98) for (i = 0; i < nOut; i++) d[i] *= 0.98 / pk;
+    return b;
+  }
+  function romBuf(ctx, type) {
+    var w = ROMWIN[type];
+    if (!w || !ROMS[w.chip]) return null;
+    var c = cacheOf(ctx), key = 'rom:' + type + ':' + romGen;
+    if (c.bufs[key] === undefined) { try { c.bufs[key] = renderRom(ctx, type); } catch (e) { c.bufs[key] = null; } }
+    return c.bufs[key];
+  }
+  // Pages: fetch the three chips from a folder (default: local/roms/tr909/ at the repository root, found relative to this
+  // script). A missing file is no error in code: the synthesized voices stay. The browser itself still prints one
+  // "404" line in the console for the first missing file (the hat ROM is asked first; the others only if it exists),
+  // unless the server answers an empty 204 for a missing file under /local/ (requested of tools/serve.js and
+  // tools/browser-check.js, log-E1.md). A page can opt out with window.HVT_NO_ROM_AUTOLOAD = true before this script.
+  var autoState = 'off', scriptUrl = null;
+  try { if (typeof document !== 'undefined' && document.currentScript && document.currentScript.src) scriptUrl = document.currentScript.src; } catch (e) {}
+  function loadRomFrom(base) {
+    if (typeof fetch !== 'function') return Promise.resolve({ ok: false, error: 'no fetch', chips: [] });
+    var url = function (f) { try { return new URL(f, base).href; } catch (e) { return base + f; } };
+    var get = function (k) {
+      return fetch(url(ROMCHIPS[k].file)).then(function (r) { return r && r.ok ? r.arrayBuffer() : null; }, function () { return null; })
+        .then(function (ab) { return ab && ab.byteLength ? loadOne(new Uint8Array(ab), { source: url(ROMCHIPS[k].file) }) : { chip: null, ok: false, missing: k }; });   // 404, or an empty 204 from a server that hides missing local files
+    };
+    autoState = 'loading';
+    return get('hat').then(function (h) {
+      if (!h.ok && h.missing) { autoState = 'none'; return { ok: false, chips: [h], error: 'no ROM at ' + base }; }
+      return Promise.all([get('crash'), get('ride')]).then(function (rest) {
+        var all = [h].concat(rest), okN = all.filter(function (p) { return p.ok; }).length;
+        autoState = okN ? 'loaded' : 'none';
+        return { ok: okN > 0, chips: all };
+      });
+    }).catch(function (e) { autoState = 'none'; return { ok: false, error: String(e && e.message), chips: [] }; });
+  }
+  var autoPromise = null;
+  if (scriptUrl && typeof fetch === 'function' && !root.HVT_NO_ROM_AUTOLOAD && /^https?:/.test(scriptUrl)) {
+    try { autoPromise = loadRomFrom(new URL('../../local/roms/tr909/', scriptUrl).href); } catch (e) { autoPromise = null; }
+  }
+
   function hat909(open) {
     var kind = open ? 'oh' : 'ch';
     return {
@@ -845,12 +1018,13 @@
         decay: open ? P(0.03, 0.16, 0.069, 's (time constant)', 'source', 'preset.ts 74 OpenedHihatMapping, default about 69 ms')
                     : P(0.008, 0.06, 0.008, 's (time constant)', 'source', 'preset.ts 75 ClosedHihatMapping, default 8 ms; the manual puts the closed path at 1/10 of the open one for the same pot position'),
         hold: open ? P(0.004, 0.05, 0.012, 's', 'source', 'processor.ts 150 release start 0.012') : P(0.002, 0.05, 0.006, 's', 'source', 'processor.ts 151 release start 0.006'),
-        crush: P(0, 1, 1, '', 'manual', '1 = the ROM: 6-bit (hex latch IC68 + RA9), 30 kHz clock (60 kHz / 2); 0 = a clean buffer')
+        crush: P(0, 1, 1, '', 'manual', '1 = the ROM: 6-bit (hex latch IC68 + RA9), 30 kHz clock (60 kHz / 2); 0 = a clean buffer'),
+        rom: P(0, 1, 1, '', 'manual', '1 = play the owner\'s TR-909 hi-hat ROM (HN61256P-PC43, IC69) when one is loaded (Drums.loadRom), 0 = the synthesized buffer; with no ROM loaded the synthesized buffer plays either way')
       }, 0),
       build: function (inst) {
         var ctx = inst.ctx;
         inst.trigger = function (t, ev) {
-          var p = inst.params, a = ampOf9(ev), v = voice(ctx, inst), b = hatBuf(ctx, kind, p.crush);
+          var p = inst.params, a = ampOf9(ev), v = voice(ctx, inst), b = (p.rom >= 0.5 && romBuf(ctx, inst.type)) || hatBuf(ctx, kind, p.crush);
           if (!b) return;
           var end = Math.min(t + p.hold + p.decay * 9 + 0.02, t + b.duration), g = v.gain(0);
           expEnv(g.gain, t, a, p.hold, p.decay);
@@ -866,14 +1040,15 @@
     return {
       spec: base({
         tune: P(-0.5, 0.5, 0, 'oct', 'source', 'preset.ts 76 TuneMapping (crash, ride); the Tune pot (VR25 10k) wiring may allow only about +-2 st, unresolved. Pitch and length move together'),
-        crush: P(0, 1, 1, '', 'manual', '1 = the ROM: 6-bit, 30 kHz; 0 = a clean buffer')
+        crush: P(0, 1, 1, '', 'manual', '1 = the ROM: 6-bit, 30 kHz; 0 = a clean buffer'),
+        rom: P(0, 1, 1, '', 'manual', '1 = play the owner\'s TR-909 ' + (kind === 'cr' ? 'crash ROM (HN61256P-PC42, IC62)' : 'ride ROM (HN61256P-PC44, IC54)') + ' when one is loaded (Drums.loadRom), 0 = the synthesized buffer; with no ROM loaded the synthesized buffer plays either way')
       }, 0),
       build: function (inst) {
         var ctx = inst.ctx;
         inst.trigger = function (t, ev) {
-          var p = inst.params, a = ampOf9(ev), v = voice(ctx, inst), b = hatBuf(ctx, kind, p.crush);
+          var p = inst.params, a = ampOf9(ev), v = voice(ctx, inst), rb = p.rom >= 0.5 ? romBuf(ctx, inst.type) : null, b = rb || hatBuf(ctx, kind, p.crush);
           if (!b) return;
-          var rate = Math.pow(2, p.tune), g = v.gain(a);
+          var rate = Math.pow(2, p.tune + (rb ? CYM_TUNE0 : 0)), g = v.gain(a);   // Tune: the read clock, so pitch and length move together
           con(v.buf(b, t, t + b.duration / rate + 0.02, rate), g);
           con(g, outOf(v, inst, null, t));
         };
@@ -912,6 +1087,11 @@
     bank: bankOf,                       // the shared metal bank of a context: {freqs, duty, bp, bpPaper, hp, hpPaper, hpOpen, hpClosed, cowbell, wave}
     ACC808: ACC808, ROM909: ROM909,
     METAL: METAL, STEP_DB: STEP_DB.slice(),
-    pulseCoeffs: pulseCoeffs
+    pulseCoeffs: pulseCoeffs,
+    // the owner's TR-909 sample ROMs (hats, crash, ride): see the ROM section above
+    loadRom: loadRom, unloadRom: unloadRom, romStatus: romStatus, loadRomFrom: loadRomFrom,
+    romReady: function () { return autoPromise || Promise.resolve(null); },
+    romHash: function (b) { var u = bytesOf(b); return u ? { crc32: crc32(u), sha1: sha1(u), size: u.length } : null; },
+    ROMCHIPS: ROMCHIPS, ROMWIN: ROMWIN, decodeRom: function (b) { var u = bytesOf(b); return u ? decodeRom(u) : null; }
   };
 })();

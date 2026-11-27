@@ -15,6 +15,8 @@
  *   decimation filter. Ported to JavaScript; the accent sweep is changed (see TB303 below).
  * - ImprovedMoog by Stefano D'Angelo (ISC, "Copyright 2012 Stefano D'Angelo <zanga.mail@gmail.com>", via
  *   ddiakopoulos/MoogLadders): the Model D ladder, after D'Angelo and Valimaki, ICASSP 2013.
+ * - BBDDelay by Jatin Chowdhury (BSD-3-Clause, "Copyright (c) 2020, jatinchowdhury18"): the Juno-60 BBD filter residues
+ *   and poles and the Holters-Parker structure of the chorus lines (notice in full above BbdLine).
  *
  * Permission notices of the ported sources:
  *   Open303 (MIT): Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
@@ -514,7 +516,8 @@ registerProcessor('hvt-modeld', ModelDProcessor);
 // is ported. Per voice: free-running PolyBLEP DCO (saw, pulse with PWM, sub one octave down, shared 5 kHz noise), the
 // Junox mix compression, a 4-pole zero-delay (TPT) ladder with one tanh at the loop input, an ADSR with the Juno-60
 // shapes, a gate envelope for VCA gate mode. Shared: the triangle LFO with delay and fade (auto or per-note trigger),
-// the four-position HPF, the stereo two-line chorus (triangle LFO, lines in antiphase), optional chorus hiss.
+// the four-position HPF, the stereo two-line chorus (triangle LFO, two bucket-brigade lines in antiphase: BbdLine above)
+// with its hiss (chorusNoise; 0 = off).
 // Voice allocation is on the main thread (classics.js); each voice has its own pitchN, gateN, trigN and glideN params.
 // The processor's knob params are physical values; classics.js maps the 0..1 sliders.
 var JU = {
@@ -530,13 +533,129 @@ var JU = {
   chorusRate: [0, 0.513, 0.863],               // Hz, triangle (Juno60 Chorus README; paper)
   chorusMin: 0.00166, chorusMax: 0.00535,      // s, delay swing (Juno60 Chorus README; paper)
   chorusDry: 0.44, chorusWet: 0.56,            // Junox chorus.js (source)
-  chorusPre: 7237, chorusPost: 10644,          // Hz, one-pole low-passes around the lines (Junox chorus.js 133-135; source)
-  hiss: 0.004,                                 // chorus hiss level at chorusNoise 1 (P5, prior)
+  // the two lines are bucket-brigade models (BBD below, E1 2026-11-26), replacing the ideal interpolated delay and the
+  // Junox one-poles (7237 / 10644 Hz) of the first version
+  bbdStages: 256,                              // MN3009, 256 stages (KR-106 DSP_ARCHITECTURE.md via C2; source)
+  bbdLoss: 4e-4,                               // charge lost per transfer (prior: no MN3009 datasheet read); N x loss = 0.1
+  hiss: 0.0034,                                // hiss injected per BBD read at chorusNoise 1 (prior; see juno-bench: about -60 dB re one voice at 1)
   unisonGain: 0.6,                             // per voice with six voices on one note (P5, prior: the hardware is louder in unison)
   phase: [0, 0.81, 0.29, 0.64, 0.89, 0.86],    // fixed start phases of the free-running DCOs (Youth106: arbitrary offsets); chosen so unison sums near sqrt(6) per harmonic (P5)
   seedNoise: 1e-6,                             // thermal seed so the ladder can self-oscillate (KR-106 idea)
   outGain: 0.32                                // calibration (P5, measured)
 };
+
+// ------------------------------------------------------------------ bucket-brigade delay line (Juno chorus)
+// After Holters and Parker, "A Combined Model for a Bucket Brigade Device and its Input and Output Filters", DAFx-18
+// (whose worked example is the Juno-60 chorus): the BBD is a discrete-time store clocked at its own, LFO-modulated rate,
+// between two continuous-time filters written as sums of complex one-poles H(s) = sum r / (s - p). The input filter's
+// state advances at the audio rate and is evaluated exactly at each BBD write instant; the output filter integrates the
+// BBD's held (zero-order hold) output analytically from each read instant to the next audio sample, so the variable
+// clock needs no interpolation and aliases as the hardware does. The Juno-60 residues and poles (rad/s) and the
+// structure are from BBDDelay by Jatin Chowdhury (BSD-3-Clause, see the notice below and THIRD_PARTY.md), whose
+// FilterSpec cites the paper's root/pole analysis; the paper itself was not read here (C3 had only its abstract). This
+// port is a re-derivation, not a copy: BBDDelay raises exp(pTs) to powers in seconds (its exponents mix units); here every
+// factor is exp(p dt) with dt in seconds, and the conjugate pairs are folded (two real parts instead of four poles).
+// Added (prior, not from the paper): a charge-transfer loss per stage (Raffel and Smith's idea, DAFx-10, not read: a
+// first-order FIR (1 - a) + a z^-1 at the BBD rate with a = N x loss) and hiss added to every read (white, seeded), so
+// it is shaped by the output filter and, at a slow clock, packed into the audio band: louder on the longer line, as
+// Youth106 describes for the Juno (P3). Not modelled: clock feedthrough, the input soft clip, any compander (the Juno-60
+// has none, C3 from memory).
+//
+//   BBDDelay (https://github.com/jatinchowdhury18/BBDDelay, src/BBDFilters.h, src/BBDDelayLine.h/.cpp):
+//   BSD 3-Clause License. Copyright (c) 2020, jatinchowdhury18. All rights reserved. Redistribution and use in source and
+//   binary forms, with or without modification, are permitted provided that the following conditions are met:
+//   1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following
+//   disclaimer. 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and
+//   the following disclaimer in the documentation and/or other materials provided with the distribution. 3. Neither the
+//   name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived
+//   from this software without specific prior written permission. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+//   CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+//   MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+//   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+//   BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+//   INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+//   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+//   POSSIBILITY OF SUCH DAMAGE.
+var BBDF = {
+  // [re, im] residue r and pole p per one-pole; a conjugate pair is listed once with weight 2 (BBDDelay FilterSpec)
+  inR: [[251589, 0], [-130428, 4165], [4634, 22873]], inP: [[-46580, 0], [-55482, 25082], [-26292, 59437]],
+  outR: [[5092, 0], [-11256, 99566], [-13802, 24606]], outP: [[-176261, 0], [-51468, 21437], [-26276, 59699]],
+  w: [1, 2, 2]
+};
+// H(j w) of a filter bank (for the bench and the normalisation)
+function bbdH(R, Pp, f) {
+  var w = TWO_PI * f, re = 0, im = 0;
+  for (var m = 0; m < 3; m++) for (var c = 0; c < (BBDF.w[m] === 2 ? 2 : 1); c++) {
+    var rr = R[m][0], ri = c ? -R[m][1] : R[m][1], pr = Pp[m][0], pi = c ? -Pp[m][1] : Pp[m][1];
+    var dr = -pr, di = w - pi, d = dr * dr + di * di;              // r / (j w - p)
+    re += (rr * dr + ri * di) / d; im += (ri * dr - rr * di) / d;
+  }
+  return [re, im];
+}
+function BbdInput(fs) {                                   // the shared input filter (both lines read it at their own instants)
+  this.Ts = 1 / fs; this.xr = new Float64Array(3); this.xi = new Float64Array(3);
+  this.er = new Float64Array(3); this.ei = new Float64Array(3);
+  for (var m = 0; m < 3; m++) { var a = Math.exp(BBDF.inP[m][0] * this.Ts), b = BBDF.inP[m][1] * this.Ts; this.er[m] = a * Math.cos(b); this.ei[m] = a * Math.sin(b); }
+}
+BbdInput.prototype.at = function (tau) {                  // filter output tau seconds after the last input sample
+  var y = 0, P = BBDF.inP, R = BBDF.inR, W = BBDF.w, Ts = this.Ts;
+  for (var m = 0; m < 3; m++) {
+    var a = Math.exp(P[m][0] * tau), b = P[m][1] * tau, cr = a * Math.cos(b), ci = a * Math.sin(b);
+    var gr = Ts * (R[m][0] * cr - R[m][1] * ci), gi = Ts * (R[m][0] * ci + R[m][1] * cr);
+    y += W[m] * (gr * this.xr[m] - gi * this.xi[m]);
+  }
+  return y;
+};
+BbdInput.prototype.push = function (u) {
+  for (var m = 0; m < 3; m++) { var r = this.er[m] * this.xr[m] - this.ei[m] * this.xi[m] + u; this.xi[m] = this.er[m] * this.xi[m] + this.ei[m] * this.xr[m]; this.xr[m] = r; }
+};
+function BbdLine(fs, stages, loss, seed) {
+  this.Ts = 1 / fs; this.N = stages; this.M = stages >> 1; this.buf = new Float64Array(this.M); this.wp = 0;
+  this.tn = 0; this.even = true; this.yOld = 0; this.last = 0; this.a = Math.min(0.5, stages * loss);
+  this.Xr = new Float64Array(3); this.Xi = new Float64Array(3); this.Ar = new Float64Array(3); this.Ai = new Float64Array(3);
+  this.er = new Float64Array(3); this.ei = new Float64Array(3); this.H0 = 0;
+  for (var m = 0; m < 3; m++) {
+    var a = Math.exp(BBDF.outP[m][0] * this.Ts), b = BBDF.outP[m][1] * this.Ts; this.er[m] = a * Math.cos(b); this.ei[m] = a * Math.sin(b);
+    // H0 = -Re sum r / p: the output filter's DC gain, applied to the held BBD value
+    var R = BBDF.outR[m], Pp = BBDF.outP[m], d = Pp[0] * Pp[0] + Pp[1] * Pp[1];
+    this.H0 -= BBDF.w[m] * (R[0] * Pp[0] + R[1] * Pp[1]) / d;
+  }
+  this.rng = new Lcg(seed);
+}
+// one audio sample: the ticks in [t(n-1), t(n)) read the input filter (state up to u(n-1)) or move the store
+BbdLine.prototype.run = function (inp, Tb, hiss) {
+  var Ts = this.Ts, P = BBDF.outP, R = BBDF.outR, m, Ar = this.Ar, Ai = this.Ai;
+  Ar[0] = Ar[1] = Ar[2] = 0; Ai[0] = Ai[1] = Ai[2] = 0;
+  while (this.tn < Ts) {
+    if (this.even) {                                     // write: sample the input filter at this instant
+      this.buf[this.wp] = inp.at(this.tn);
+      this.wp = this.wp + 1 === this.M ? 0 : this.wp + 1;
+    } else {                                             // read the oldest cell; the output steps; its step response is integrated
+      var v = this.buf[this.wp], y = (1 - this.a) * v + this.a * this.last;
+      this.last = v;
+      if (hiss > 0) y += hiss * this.rng.next();
+      var dlt = y - this.yOld, dt = Ts - this.tn;
+      this.yOld = y;
+      for (m = 0; m < 3; m++) {                          // (r / p) e^(p (Ts - tau)) x step
+        var a = Math.exp(P[m][0] * dt), b = P[m][1] * dt, cr = a * Math.cos(b), ci = a * Math.sin(b);
+        var d = P[m][0] * P[m][0] + P[m][1] * P[m][1], qr = (R[m][0] * P[m][0] + R[m][1] * P[m][1]) / d, qi = (R[m][1] * P[m][0] - R[m][0] * P[m][1]) / d;
+        Ar[m] += dlt * (qr * cr - qi * ci); Ai[m] += dlt * (qr * ci + qi * cr);
+      }
+    }
+    this.even = !this.even;
+    this.tn += Tb;
+  }
+  this.tn -= Ts;
+  var out = this.H0 * this.yOld;
+  for (m = 0; m < 3; m++) {
+    var xr = this.er[m] * this.Xr[m] - this.ei[m] * this.Xi[m] + Ar[m];
+    this.Xi[m] = this.er[m] * this.Xi[m] + this.ei[m] * this.Xr[m] + Ai[m]; this.Xr[m] = xr;
+    out += BBDF.w[m] * xr;
+  }
+  return out;
+};
+// group delay at DC of a filter bank (s), and the pair's DC gain: the line is normalised to unity and its delay measured end to end
+function bbdDelayDC(R, Pp) { var e = 1, a = bbdH(R, Pp, 0), b = bbdH(R, Pp, e); return -(Math.atan2(b[1], b[0]) - Math.atan2(a[1], a[0])) / (TWO_PI * e); }
 
 class JunoProcessor extends AudioWorkletProcessor {
   static get parameterDescriptors() {
@@ -551,7 +670,7 @@ class JunoProcessor extends AudioWorkletProcessor {
     d('cutoff', 800, 1, 1e6, 'a-rate'); d('resonance', 0.6, 0, 5, 'a-rate'); d('envAmt', 4.8, -14, 14, 'a-rate');
     d('vcfLfo', 0, 0, 6); d('vcfKey', 0.5, 0, 1); d('vcaMode', 0, 0, 1);
     d('attack', 0.01, 0.0005, 30); d('decay', 0.98, 0.001, 30); d('sustain', 0.7, 0, 1); d('release', 0.3, 0.001, 30);
-    d('chorus', 1, 0, 2); d('chorusNoise', 0, 0, 1);
+    d('chorus', 1, 0, 2); d('chorusNoise', 0.1, 0, 1);
     return out;
   }
   constructor(options) {
@@ -570,9 +689,14 @@ class JunoProcessor extends AudioWorkletProcessor {
     this.hp = { x1: 0, y1: 0, lp: 0 };
     this.hpC = [0, 0, Math.exp(-TWO_PI * JU.hpf2 / fs), Math.exp(-TWO_PI * JU.hpf3 / fs)];
     this.shelfC = 1 - Math.exp(-TWO_PI * JU.hpfShelf / fs);
-    var n = Math.ceil(0.012 * fs) + 4;
-    this.dl = new Float64Array(n); this.dn = n; this.dw = 0; this.chPh = 0.25; this.preLp = 0; this.postL = 0; this.postR = 0;
-    this.preC = 1 - Math.exp(-TWO_PI * JU.chorusPre / fs); this.postC = 1 - Math.exp(-TWO_PI * JU.chorusPost / fs);
+    this.chPh = 0.25;
+    this.bIn = new BbdInput(fs);
+    this.bL = new BbdLine(fs, JU.bbdStages, JU.bbdLoss, (seed * 7919 + 1) >>> 0);
+    this.bR = new BbdLine(fs, JU.bbdStages, JU.bbdLoss, (seed * 104729 + 3) >>> 0);
+    var g0 = bbdH(BBDF.inR, BBDF.inP, 0), g1 = bbdH(BBDF.outR, BBDF.outP, 0);
+    this.bNorm = 1 / (Math.hypot(g0[0], g0[1]) * Math.hypot(g1[0], g1[1]));
+    // the measured 1.66 to 5.35 ms is taken as the whole wet path: the filters' group delay and half a tick come off the store
+    this.bGd = bbdDelayDC(BBDF.inR, BBDF.inP) + bbdDelayDC(BBDF.outR, BBDF.outP);
     this.cC = [new Coef(1), new Coef(3.5), new Coef(3.5), new Coef(1), new Coef(1)];
     this.ga = new Coef(1); this.gr = new Coef(1);
   }
@@ -580,6 +704,7 @@ class JunoProcessor extends AudioWorkletProcessor {
     var o = outputs[0];
     if (!o || !o[0]) return this.alive;
     var L = o[0], R = o[1] || null, n = L.length, fs = sampleRate, i, j, V = this.v, NV = JU.voices;
+    var ext = inputs && inputs[0] && inputs[0][0] ? inputs[0][0] : null;   // tools/juno-bench.js only (opts._probe: one input summed before the HPF)
     var k0 = function (a) { return a[0]; };
     var tune = k0(P.tune) / 100, uni = k0(P.unison) >= 0.5, lfoRate = k0(P.lfoRate), lDel = k0(P.lfoDelay), lFade = k0(P.lfoFade), lAuto = k0(P.lfoAuto) >= 0.5;
     var vib = k0(P.dcoLfo) / 100, pwmS = k0(P.pwm), pwmMode = Math.round(k0(P.pwmMode)), pulseOn = k0(P.pulse) >= 0.5, sawOn = k0(P.saw) >= 0.5;
@@ -594,7 +719,8 @@ class JunoProcessor extends AudioWorkletProcessor {
     var cA = this.cC[0].of(Math.max(aT, 0.0005)), cD = this.cC[1].of(Math.max(dT, 0.001)), cR = this.cC[2].of(Math.max(rT, 0.001));
     var gA = this.ga.of(JU.gateA / 3), gR = this.gr.of(JU.gateR / 3);
     var vGain = (uni ? JU.unisonGain : 1) * JU.outGain, maxF = 0.4 * fs, lfoInc = lfoRate / fs;
-    var chInc = JU.chorusRate[chorus] / fs || 0, dn = this.dn, dl = this.dl, aT_ = [], aG = [], aP = [], aL = [];
+    var chInc = JU.chorusRate[chorus] / fs || 0, aT_ = [], aG = [], aP = [], aL = [];
+    var hiss = JU.hiss * hissS, mid = 0.5 * (JU.chorusMin + JU.chorusMax), span = 0.5 * (JU.chorusMax - JU.chorusMin), NB = JU.bbdStages, bIn = this.bIn, bGd = this.bGd;
     for (j = 0; j < NV; j++) { aT_.push(P['trig' + j]); aG.push(P['gate' + j]); aP.push(P['pitch' + j]); aL.push(P['glide' + j]); }
     var pC = P.cutoff, pR = P.resonance, pE = P.envAmt;
     for (i = 0; i < n; i++) {
@@ -663,34 +789,24 @@ class JunoProcessor extends AudioWorkletProcessor {
         mix += y4 * vca;
       }
       mix *= vGain;
+      if (ext) mix += ext[i];
       // HPF: 0 low shelf +6 dB under 65 Hz, 1 flat, 2 and 3 first-order high-pass
       var hp = this.hp, yh;
       if (hpfPos >= 2) { var a = this.hpC[hpfPos]; yh = 0.5 * (1 + a) * (mix - hp.x1) + a * hp.y1; hp.x1 = mix; hp.y1 = yh; }
       else if (hpfPos === 0) { hp.lp += this.shelfC * (mix - hp.lp); yh = mix + (JU.hpfShelfGain - 1) * hp.lp; }
       else yh = mix;
-      // chorus: one triangle LFO, two lines in antiphase, dry 0.44 + wet 0.56
+      // chorus: one triangle LFO, two BBD lines in antiphase (clock periods from the swept delays), dry 0.44 + wet 0.56
       if (chorus > 0) {
-        this.preLp += this.preC * (yh - this.preLp);
-        dl[this.dw] = this.preLp;
         this.chPh += chInc; if (this.chPh >= 1) this.chPh -= 1;
         var ct = this.chPh < 0.5 ? 4 * this.chPh - 1 : 3 - 4 * this.chPh;
-        var mid = 0.5 * (JU.chorusMin + JU.chorusMax), span = 0.5 * (JU.chorusMax - JU.chorusMin);
-        var dL = (mid + span * ct) * fs, dR = (mid - span * ct) * fs;
-        var wl = this.tap(dL), wr = this.tap(dR);
-        this.dw = this.dw + 1 === dn ? 0 : this.dw + 1;
-        this.postL += this.postC * (wl - this.postL); this.postR += this.postC * (wr - this.postR);
-        var hl = 0, hr = 0;
-        if (hissS > 0) { var hz = this.rng.next() * JU.hiss * hissS; hl = hz * (1 + ct) * 0.5; hr = hz * (1 - ct) * 0.5; }   // louder on the slow-clocked (long) line
-        L[i] = JU.chorusDry * yh + JU.chorusWet * this.postL + hl;
-        if (R) R[i] = JU.chorusDry * yh + JU.chorusWet * this.postR + hr;
+        var dL = mid + span * ct - bGd, dR = mid - span * ct - bGd;
+        var wl = this.bL.run(bIn, dL / (NB - 0.5), hiss), wr = this.bR.run(bIn, dR / (NB - 0.5), hiss);
+        bIn.push(yh);
+        L[i] = JU.chorusDry * yh + JU.chorusWet * this.bNorm * wl;
+        if (R) R[i] = JU.chorusDry * yh + JU.chorusWet * this.bNorm * wr;
       } else { L[i] = yh; if (R) R[i] = yh; }
     }
     return this.alive;
-  }
-  tap(d) {                                       // linear interpolation d samples behind the write index
-    var r = this.dw - d, dn = this.dn; while (r < 0) r += dn;
-    var i0 = Math.floor(r), fr = r - i0, i1 = i0 + 1 === dn ? 0 : i0 + 1;
-    return this.dl[i0] * (1 - fr) + this.dl[i1] * fr;
   }
 }
 registerProcessor('hvt-juno', JunoProcessor);

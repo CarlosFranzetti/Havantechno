@@ -92,7 +92,9 @@
     decay: P(0, 10, 5, 'mark', 'source', 'loudness decay, 90-50 %: 293 ms / 4.02 s / 5.53 s at 6 / 8.5 / 10; also the release with decaySwitch'),
     sustain: P(0, 10, 7, 'mark', 'source', 'loudness sustain, level (v / 10)^1.5'),
     decaySwitch: P(0, 1, 1, '', 'source', 'one switch, both contours: release = decay, or a 10 ms dump (CA-72)'),
-    level: P(0, 1.5, 1, '', 'prior', 'output gain')
+    level: P(0, 1.5, 1, '', 'prior', 'output gain'),
+    // E1 (Pressing Crew, 2026-11-26): the owner asked for both behaviours, lowest note by default as on the hardware
+    priority: E('low', ['low', 'last'], 'source', 'note priority: low = the lowest held note sounds, releasing it returns to the next lowest still held (the original keyboard, P2 sections 1, 4 and 14: "low-note priority", "lowest-key priority by default"); last = the newest note (the engine before 2026-11-26). Single trigger in both')
   };
   // panel marks -> processor values (P2 14.2 to 14.5; points are CA-72 measurements unless marked)
   function lerp(pts, x) {
@@ -131,7 +133,8 @@
     fDecay: function (v) { return [['fDecay', loglerp(LAW.fD, v) / Math.log(1.8)]]; },
     decay: function (v) { return [['decay', loglerp(LAW.lD, v) / Math.log(1.8)]]; },
     fSustain: function (v) { return [['fSustain', Math.pow(clamp(v, 0, 10) / 10, 1.5)]]; },
-    sustain: function (v) { return [['sustain', Math.pow(clamp(v, 0, 10) / 10, 1.5)]]; }
+    sustain: function (v) { return [['sustain', Math.pow(clamp(v, 0, 10) / 10, 1.5)]]; },
+    priority: function () { return []; }                // read by the event planner (planD), no processor parameter
   }, tb303: {}, juno: {} };
 
   // Juno: P3 section 9 (Juno-60 measurements from pendragon-andyh/Juno60, MIT; Junox constants, GPL-3.0-or-later,
@@ -164,8 +167,8 @@
     decay: P(0, 1, 0.5, '', 'paper', '0.002 / 0.096 / 0.984 / 4.449 / 19.783 s; RC e^(-3.5 x) (Juno60 Envelope README)'),
     sustain: P(0, 1, 0.7, '', 'manual', 'sustain level'),
     release: P(0, 1, 0.35, '', 'paper', 'as decay; 10 ms when sustain <= 0.02 (Junox juno60Envelope.js 214)'),
-    chorus: { min: 0, max: 2, value: 1, options: [0, 1, 2], unit: '', basis: 'paper', label: 'off, I (0.513 Hz), II (0.863 Hz): triangle, lines 1.66 to 5.35 ms in antiphase, dry 0.44 wet 0.56 (Juno60 Chorus README, Junox chorus.js)' },
-    chorusNoise: P(0, 1, 0, '', 'paper', 'BBD hiss swapping slowly left and right (Youth106; level prior)'),
+    chorus: { min: 0, max: 2, value: 1, options: [0, 1, 2], unit: '', basis: 'paper', label: 'off, I (0.513 Hz), II (0.863 Hz): triangle, lines 1.66 to 5.35 ms in antiphase, dry 0.44 wet 0.56 (Juno60 Chorus README, Junox chorus.js); each line a 256-stage bucket-brigade model with the Juno-60 input and output filters (Holters and Parker, DAFx-18, via BBDDelay)' },
+    chorusNoise: P(0, 1, 0.1, '', 'prior', 'BBD hiss, added at every read of each bucket-brigade line and shaped by its output filter, so it is louder on the slow-clocked (long) line and swaps slowly left and right (Youth106 via P3). 0 = off; level linear, 1 = about -39 dB and the default 0.1 about -59 dB re one voice\'s dry RMS (A2, default patch), -81 dBFS: nobody has measured a unit for this project (juno-bench)'),
     level: P(0, 1.5, 1, '', 'prior', 'output gain')
   };
   LAW.juno = {
@@ -198,7 +201,7 @@
   var ENUMS = {
     tb303: { wave: ['saw', 'square'] },
     modeld: { osc1Range: RANGES, osc2Range: RANGES, osc3Range: RANGES, osc1Wave: WAVES, osc2Wave: WAVES, osc3Wave: WAVES3,
-              noiseType: ['white', 'pink'] },
+              noiseType: ['white', 'pink'], priority: ['low', 'last'] },
     juno: { voiceMode: ['poly', 'unison'], pwmMode: ['lfo', 'manual', 'env'], vcaMode: ['env', 'gate'] }
   };
   var PROC = { tb303: 'hvt-tb303', modeld: 'hvt-modeld', juno: 'hvt-juno' };
@@ -258,7 +261,7 @@
   // ------------------------------------------------------------------ the event planner (both paths)
   // Step length: learned from ev.step and the trigger times; before two notes, from ev.dur (a one-step melody note is
   // 0.95 x step - 0.01 s in the sequencer).
-  function planner() { return { sd: 0, lastStep: null, lastT: 0, n: 0, prev: null, held: [], locked: {}, fv: null }; }
+  function planner() { return { sd: 0, lastStep: null, lastT: 0, n: 0, prev: null, held: [], notes: [], locked: {}, fv: null }; }
   function learnStep(pl, t, ev) {
     if (typeof ev.step === 'number' && pl.lastStep != null && ev.step > pl.lastStep) {
       var est = (t - pl.lastT) / (ev.step - pl.lastStep);
@@ -393,10 +396,56 @@
   };
 
   // ------------------------------------------------------------------ Model D
-  // Single triggering, last-note priority (the brief; P2 notes the original is low-note priority): a note that starts
-  // while another is held (the sequencer's dur decides), or after a note flagged ev.slide, is legato: the contours do
-  // not restart and the pitch moves (glides when glideOn). When the newest note ends while an older one is still held,
-  // the pitch returns to the most recent of those. The gate falls when the last held note ends.
+  // The `priority` row picks the planner. Both are single triggering: a note that starts while another is held (the
+  // sequencer's dur decides), or after a note flagged ev.slide, is legato: the contours do not restart and the pitch
+  // moves (glides when glideOn). The gate falls when the last held note ends.
+  // 'last' (planD, the engine before 2026-11-26, unchanged): the newest note sounds; when it ends while an older one is
+  // still held, the pitch returns to the most recent of those.
+  // 'low' (planLow, the default, as the original keyboard: P2): the lowest held note sounds; a higher note pressed over
+  // it changes nothing audible (no retrigger, no pitch change); releasing the lowest returns to the next lowest still
+  // held. planLow keeps every note it was given (start, end, pitch) and rewrites the automation from the new note's time
+  // on, notes already scheduled later included, so a note that arrives out of time order (Host.audition at currentTime
+  // while the sequencer has written notes up to 120 ms ahead) merges with the pattern instead of cancelling its events.
+  function noteEnd(pl, t, ev) {
+    var sd = learnStep(pl, t, ev), dur = Math.max(0.005, ev.dur || 0.2), end = t + dur;
+    if (ev.slide) end = Math.max(end, t + Math.round((dur + 0.01) / (0.95 * sd) + 1) * sd);
+    return end;
+  }
+  function planLow(pl, t, ev) {
+    var E = 1e-6, end = noteEnd(pl, t, ev), midi = noteOf(ev, 48), vel = velOf(ev), i, k, N;
+    pl.notes = pl.notes.filter(function (n) { return n.end > t - 1 || n.t >= t - E; });   // kept 1 s past their end: a later call may come earlier in time
+    var chord = ev && ev.notes && ev.notes.length && typeof ev.midi !== 'number' ? ev.notes : [midi];   // a chord event: every key held
+    for (i = 0; i < chord.length; i++) pl.notes.push({ t: t, end: end, midi: chord[i], vel: vel });
+    pl.notes.sort(function (a, b) { return a.t - b.t; });
+    N = pl.notes;
+    // the 'last' planner's list follows along, so a switch of the row mid-phrase keeps the legato state
+    pl.held = pl.held.filter(function (h) { return h.end > t + E; }); pl.held.push({ midi: midi, end: end });
+    var held = function (x) { return N.filter(function (n) { return n.t <= x + E && n.end > x + E; }); };
+    var times = [t];
+    for (i = 0; i < N.length; i++) { if (N[i].t > t + E) times.push(N[i].t); if (N[i].end > t + E) times.push(N[i].end); }
+    times.sort(function (a, b) { return a - b; });
+    var T = [];
+    for (i = 0; i < times.length; i++) if (!T.length || times[i] > T[T.length - 1] + E) T.push(times[i]);
+    var starts = [], gates = [], pitches = [], gateOff = t, first = null;
+    for (i = 0; i < T.length; i++) {
+      var x = T[i], H = held(x), lo = null;
+      for (k = 0; k < H.length; k++) if (lo === null || H[k].midi < lo) lo = H[k].midi;
+      var here = N.filter(function (n) { return Math.abs(n.t - x) <= E; });
+      if (here.length) {                                  // a note start: one trig per start time (a chord is one trigger)
+        var older = H.some(function (n) { return n.t < x - E; }), v = 0;
+        for (k = 0; k < here.length; k++) v = Math.max(v, here[k].vel);
+        pl.n++;
+        starts.push([x, pl.n, older ? 1 : 0, v]);
+        if (first === null) first = { legato: older, trig: pl.n, vel: v };
+      }
+      gates.push([x, H.length ? 1 : 0]);
+      if (lo !== null) { pitches.push([x, lo]); gateOff = Math.max(gateOff, x); }
+      for (k = 0; k < H.length; k++) gateOff = Math.max(gateOff, H[k].end);
+    }
+    pl.prev = { t: t, slide: !!ev.slide, off: gateOff };
+    return { legato: first.legato, midi: pitches.length ? pitches[0][1] : midi, off: gateOff, returns: pitches.slice(1), vel: first.vel, trig: first.trig,
+             starts: starts, gates: gates, pitches: pitches };
+  }
   function planD(pl, t, ev) {
     var sd = learnStep(pl, t, ev), dur = Math.max(0.005, ev.dur || 0.2), end = t + dur, i;
     for (i = pl.held.length - 1; i >= 0; i--) if (pl.held[i].end <= t + 1e-6) pl.held.splice(i, 1);
@@ -405,6 +454,7 @@
     var midi = noteOf(ev, 48);
     if (ev.slide) end = Math.max(end, t + Math.round((dur + 0.01) / (0.95 * sd) + 1) * sd);
     pl.held.push({ midi: midi, end: end });
+    pl.notes = pl.notes.filter(function (n) { return n.end > t + 1e-6; }); pl.notes.push({ t: t, end: end, midi: midi, vel: velOf(ev) });   // for a switch to 'low'
     // the pitch timeline after this note: return to the latest still-held note whenever the current one ends
     var steps = [], cur = pl.held[pl.held.length - 1], tt = cur.end, gateOff = 0;
     for (i = 0; i < pl.held.length; i++) gateOff = Math.max(gateOff, pl.held[i].end);
@@ -429,8 +479,18 @@
     if (node) {
       var W = buildWorklet(inst, node);
       inst.trigger = function (t, ev) {
-        var e = planD(pl, t, ev);
+        var low = inst.params.priority !== 'last', e = low ? planLow(pl, t, ev) : planD(pl, t, ev), i;
         applyLocks(inst, pl, W, t);
+        if (low) {
+          // rewrite every event from t on (later notes already scheduled included), in time order
+          cancel(W.gate, t); cancel(W.pitch, t); cancel(W.trig, t); cancel(W.slide, t); cancel(W.vel, t);
+          for (i = 0; i < e.pitches.length; i++) setV(W.pitch, e.pitches[i][1], e.pitches[i][0]);
+          for (i = 0; i < e.starts.length; i++) { var s = e.starts[i]; setV(W.slide, s[2], s[0]); setV(W.vel, s[3], s[0]); setV(W.trig, s[1], s[0]); }
+          for (i = 0; i < e.gates.length; i++) setV(W.gate, e.gates[i][1], e.gates[i][0]);
+          var P0 = inst.params;
+          liveNote(inst, t, e.off + (P0.decaySwitch >= 0.5 ? 8 * Math.max(phys('modeld', 'decay', P0.decay), phys('modeld', 'fDecay', P0.fDecay)) : 0.03) + 0.05);
+          return;
+        }
         cancel(W.gate, t); cancel(W.pitch, t);
         setV(W.pitch, e.midi, t); setV(W.slide, e.legato ? 1 : 0, t); setV(W.vel, e.vel, t);
         setV(W.trig, e.trig, t); setV(W.gate, 1, t);
@@ -439,13 +499,13 @@
         var P = inst.params;
         liveNote(inst, t, e.off + (P.decaySwitch >= 0.5 ? 8 * Math.max(phys('modeld', 'decay', P.decay), phys('modeld', 'fDecay', P.fDecay)) : 0.03) + 0.05);
       };
-      inst.onPanic = function (now) { cancel(W.gate, now); cancel(W.pitch, now); setV(W.gate, 0, now); pl.prev = null; pl.held = []; };
+      inst.onPanic = function (now) { cancel(W.gate, now); cancel(W.pitch, now); setV(W.gate, 0, now); pl.prev = null; pl.held = []; pl.notes = []; };
       return;
     }
     // FALLBACK (no worklet): three native oscillators, two biquads, contours as ramps; legato glides the running voice.
     // Marks are mapped as for the worklet (phys), but the shapes are approximate.
     inst.trigger = function (t, ev) {
-      var e = planD(pl, t, ev), P = inst.params, v = pl.fv, i;
+      var e = inst.params.priority !== 'last' ? planLow(pl, t, ev) : planD(pl, t, ev), P = inst.params, v = pl.fv, i;
       var X = function (n) { return phys('modeld', n, P[n]); };
       var tun = P.tune / 100, gl = P.glideOn >= 0.5 ? Math.max(0.001, 1 / X('glide')) : 0.001;
       var fr = function (m) {
@@ -494,7 +554,7 @@
       });
       pl.fv = nv;
     };
-    inst.onPanic = function () { pl.prev = null; pl.held = []; pl.fv = null; };
+    inst.onPanic = function () { pl.prev = null; pl.held = []; pl.notes = []; pl.fv = null; };
   };
 
   // ------------------------------------------------------------------ Juno (six voices)
@@ -528,7 +588,8 @@
   }
   BUILD.juno = function (inst) {
     var ctx = inst.ctx, pl = planner(), i;
-    var node = root.Worklets ? root.Worklets.node(ctx, PROC.juno, { outputChannelCount: [2], processorOptions: { seed: 106 } }) : null;
+    // opts._probe (tools/juno-bench.js only; not a parameter): one node input, summed into the voice bus before the HPF and chorus
+    var node = root.Worklets ? root.Worklets.node(ctx, PROC.juno, inst._probe ? { numberOfInputs: 1, outputChannelCount: [2], processorOptions: { seed: 106 } } : { outputChannelCount: [2], processorOptions: { seed: 106 } }) : null;
     inst._plan = pl;
     if (node) {
       var W = buildWorklet(inst, node);

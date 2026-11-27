@@ -175,7 +175,7 @@
     return t;
   }
   // doc.audio: {bufferId: {name, src, duration, sampleRate, channels}}, references to audio files, never their bytes
-  var AUDIO_KEYS = { name: 'string', src: 'string', duration: 'number', sampleRate: 'number', channels: 'number' };
+  var AUDIO_KEYS = { name: 'string', src: 'string', duration: 'number', sampleRate: 'number', channels: 'number', hash: 'string' };   // hash: 'sha256:<hex>' (bundles)
   function normAudio(a) {
     var out = {}, id, k;
     if (!a || typeof a !== 'object' || isArr(a)) return out;

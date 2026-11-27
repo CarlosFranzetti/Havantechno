@@ -722,7 +722,7 @@
       var a = audioMap(), out = [], id;
       for (id in a) if (has(a, id)) {
         var e = a[id];
-        out.push({ id: id, name: e.name, src: e.src, duration: e.duration, sampleRate: e.sampleRate, channels: e.channels, loaded: !!buffers[id], missing: !buffers[id], usedBy: usedBy(id) });
+        out.push({ id: id, name: e.name, src: e.src, hash: e.hash || null, duration: e.duration, sampleRate: e.sampleRate, channels: e.channels, loaded: !!buffers[id], missing: !buffers[id], usedBy: usedBy(id) });
       }
       for (id in buffers) if (has(buffers, id) && !has(a, id)) {
         var b = buffers[id], bf = b.buffer;
@@ -1690,8 +1690,10 @@
     //     sampleRate (the context's, else 44100), tailSeconds (2), master (mix: true, stems: false), sends (stems: true),
     //     dither (16-bit: true), seed (1), onProgress({index, total, name, part, stage, fraction}), onFile(file) (awaited;
     //     it may set file.bytes = null to drop the bytes once written), signal (AbortSignal, checked between files)}
-    // Resolves [{name, part, bytes, seconds, frames, sampleRate, bitDepth, peak, peakDb, clipped, master}]. One render
-    // per file, one file at a time. Never includes the reference track.
+    // Resolves [{name, part, bytes, seconds, frames, sampleRate, bitDepth, peak, peakDb, lufs, clipped, master}]. One
+    // render per file, one file at a time. Every file of one call starts at the span's first bar and has the same
+    // length (span + tail). lufs: BS.1770-4 integrated loudness when importer.js is loaded, else null; nothing is
+    // normalised. Never includes the reference track.
     host.exportAudio = function (o) {
       o = o || {};
       var sc, doc, st, plan = [], what = o.what == null ? 'mix' : o.what;
@@ -1730,11 +1732,14 @@
           }).then(function (buf) {
             prog(i, p, 'encode', 1);
             var c = cut(buf, lead, frames), bytes = Sequencer.wav(c, { bitDepth: bits, dither: o.dither, seed: i + 1 }), info = Sequencer.wav.info || {};
-            buf = null; c = null;
+            buf = null;
             if (p.dropSilent && !(info.peak > 0)) { prog(i, p, 'skipped', 1); return null; }
-            var f = { name: p.name, part: p.part, bytes: bytes, seconds: frames / sr, frames: frames, sampleRate: sr, bitDepth: bits, peak: info.peak,
+            var lufs = null, I = root.Importer;                // BS.1770-4 integrated loudness (importer.js), when it is loaded; no normalisation
+            if (I && typeof I.loudness === 'function') { try { var lu = I.loudness(c); lufs = isFinite(lu.lufs) ? lu.lufs : null; } catch (e) { lufs = null; } }
+            var f = { name: p.name, part: p.part, bytes: bytes, seconds: frames / sr, frames: frames, sampleRate: sr, bitDepth: bits, peak: info.peak, lufs: lufs,
                       peakDb: info.peak > 0 ? Math.round(2000 * Math.log(info.peak) / Math.LN10) / 100 : -Infinity, clipped: info.clipped || 0, master: p.master };
             out.push(f);
+            c = null;
             return Promise.resolve(typeof o.onFile === 'function' ? o.onFile(f) : null).then(function () { prog(i, p, 'done', 1); });
           });
         });

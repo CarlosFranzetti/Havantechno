@@ -1230,7 +1230,96 @@ function section10() {
   });
 }
 
-section5.then(section6).then(section7).then(section8).then(section9).then(section10).then(function () {
+// ------------------------------------------------------------------ 11. Pressing Crew (V1): audio tracks, WAV writers,
+// export routing, deterministic renders, audio options. Measured in headless Chromium by tools/export-check.js --measure.
+function section11() {
+  console.log('11. audio tracks, WAV writers, export routing, audio options');
+  var sb = sandbox(); load(sb);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'audiotrack.js'), 'utf8'), sb, { filename: 'audiotrack.js' });
+  loadHost(sb);
+  var S = sb.Sequencer, SDoc = sb.SongDoc, H = sb.Host;
+  // 11a. the scheduler: a chord on one step (coordinator's line) and onStep for every track that has it
+  var seq = S.create(new FakeContext(44100), { bpm: 120 }), got = [], steps = [];
+  var inst = { type: 'probe', spec: {}, params: {}, out: seq.ctx.createGain(), set: function () { return false; }, get: function () {}, panic: function () {}, dispose: function () {},
+               trigger: function (t, e) { got.push(e); }, onStep: function (s, t) { steps.push([s, t]); } };
+  seq.addTrack('p', { inst: inst, kind: 'note', note: 'C3', variants: { A: { bars: 1, cells: [{ vel: 1, notes: [60, 64, 67, 71, 74, 77, 81] }].concat(new Array(15).fill(null)) } } });
+  seq.setArrangement([{ name: 's', bars: 2, play: { p: 'A' } }]);
+  seq.scheduleAll(0, 2, 0);
+  ok(got.length === 2 && got[0].notes && got[0].notes.join() === '60,64,67,71,74,77', 'a chord on one step reaches the instrument as e.notes (at most 6)');
+  ok(steps.length === 32 && steps[0][0] === 0 && steps[31][0] === 31 && Math.abs(steps[16][1] - 2) < 1e-9, 'onStep is called at every scheduled step with the unswung time (' + steps.length + ')');
+  // 11b. WAV writers
+  var buf = new FakeContext(48000).createBuffer(2, 3, 48000); buf.getChannelData(0).set([0.5, -0.25, 1.2]); buf.getChannelData(1).set([0, 0.75, -2]);
+  var w16 = new DataView(S.wav(buf, { bitDepth: 16, dither: false })), w24 = new DataView(S.wav(buf, { bitDepth: 24 })), w32 = new DataView(S.wav(buf, { bitDepth: 32 }));
+  ok(w16.byteLength === 44 + 12 && w16.getInt16(44, true) === 16384 && w16.getInt16(48, true) === -8192 && w16.getInt16(52, true) === 32767 && w16.getInt16(54, true) === -32768, '16-bit PCM: x * 32768 rounded, clamped');
+  ok(w24.getUint16(20, true) === 1 && w24.getUint16(34, true) === 24 && w24.byteLength === 44 + 18 && (w24.getUint8(44) | (w24.getUint8(45) << 8) | (w24.getUint8(46) << 16)) === 4194304, '24-bit PCM: header and the first sample');
+  ok(w32.getUint16(20, true) === 3 && w32.getUint32(16, true) === 18 && w32.getUint32(42, true) === 4 && w32.getUint32(46, true) === 3 && w32.getFloat32(58 + 16, true) === Math.fround(1.2), '32-bit float: format 3, fmt 18, fact = 3 frames, values over 1 kept');
+  var d1 = new Uint8Array(S.wav(buf, { bitDepth: 16 })), d2 = new Uint8Array(S.wav(buf, { bitDepth: 16 })), same = d1.length === d2.length;
+  for (var i = 0; same && i < d1.length; i++) same = d1[i] === d2[i];
+  ok(same && S.wav.info.dither === true && new DataView(S.wav(buf, { bitDepth: 24, dither: true })).getUint8(44) === 0 && S.wav.info.dither === false, 'dither: seeded at 16 bits, never at 24');
+  ok(new DataView(S.wav(buf)).byteLength === 44 + 12 && new DataView(S.wav(buf)).getInt16(44, true) === 16383, 'Sequencer.wav(buffer) without options: the old writer, unchanged');
+  // 11c. document and editor: clips
+  var doc = sb.Song.document();
+  doc.tracks.push({ name: 'vox', type: 'audio', clips: [{ audio: 'v', bar: 2 }, { bar: 1 }] });
+  var d = SDoc.load(SDoc.save(doc)), ed = SDoc.createEditor(d), u = ed._undo.length;
+  ok(ed.track('vox').clips.length === 1 && ed.track('vox').clips[0].offset === 0 && ed.track('vox').clips[0].gain === 1 && ed.track('vox').inst === 'audio', 'save/load keeps an audio track and normalises its clips');
+  ok(ed.addClip('vox', { audio: 'w', bar: 4 }) === 1 && ed.moveClip('vox', 1, 6) && ed.trimClip('vox', 1, { offset: 1, length: 2 }) && ed.removeClip('vox', 0) && ed._undo.length === u + 4, 'addClip, moveClip, trimClip, removeClip: one undo step each');
+  ok(!ed.moveClip('vox', 5, 1) && !ed.trimClip('vox', 0, { offset: -1 }) && ed._undo.length === u + 4, 'refused clip edits take no undo step');
+  // 11d. a Host with an audio track on the fake context: clips start in the schedule; export routing on FakeOffline
+  function OptCtx(o) { FakeContext.call(this, typeof o === 'number' ? o : (o && o.sampleRate) || 44100); this.opts = o; }
+  OptCtx.prototype = Object.create(FakeContext.prototype);
+  OptCtx.prototype.close = function () { this.state = 'closed'; return Promise.resolve(); };
+  var host = H.create({ AudioContext: OptCtx });
+  return host.start().then(function () {
+    return host.addAudioTrack(new Uint8Array(441).buffer, { name: 'vox', bar: 2 });
+  }).then(function (name) {
+    var tr = host.engine().tracks[name], c = host.context();
+    ok(tr && tr.inst.type === 'audio' && host.document().tracks.filter(function (t) { return t.name === name; })[0].clips[0].bar === 2, 'host.addAudioTrack: an audio track, a clip on bar 2');
+    var before = c._srcs.length;
+    host.engine().scheduleAll(0, 4, 0);
+    var mine = c._srcs.slice(before).filter(function (s) { return s.buffer === host.buffer('audio'); });
+    ok(mine.length === 1, 'the clip starts once in a four-bar schedule');
+    sb.OfflineAudioContext = FakeOffline;
+    var made = [];
+    var OrigFO = FakeOffline;
+    sb.OfflineAudioContext = function (ch, len, sr) { var o = new OrigFO(ch, len, sr); made.push(o); o.startRendering = function () { var self = this; return OrigFO.prototype.startRendering.call(self).then(function () { return self.createBuffer(2, self.length, self.sampleRate); }); }; return o; };
+    var seqs = [], rawBuild = sb.Song.build;
+    sb.Song.build = function (s2, d2) { var r = rawBuild(s2, d2); if (s2.ctx) seqs.push(s2); return r; };
+    return host.exportAudio({ scope: { from: 0, to: 4 }, what: ['kick'], bitDepth: 24 }).then(function (files) {
+      sb.Song.build = rawBuild;
+      var kickStem = seqs[0], ret = seqs[1];
+      ok(files.length === 1 && files[0].part === 'kick' && files[0].bitDepth === 24 && files[0].frames === Math.round((4 * 240 / 126 + 2) * 44100), 'stem export: one file (silent returns dropped), 24-bit by default, 4 bars + 2 s');
+      ok(kickStem.tracks.stab.inst.out.connections.length === 0 && kickStem.tracks.kick.inst.out.connections.length === 1, 'a stem: the other tracks\' instruments are disconnected, the stem\'s is not');
+      ok(Object.keys(kickStem.tracks.kick.sendGains).every(function (g) { return kickStem.tracks.kick.sendGains[g].connections.length === 0; }) && kickStem.master.output.connections.length === 0 && kickStem.master.input.connections.indexOf(kickStem.out) >= 0, 'a dry stem: its sends cut; the master bypassed (input straight to the output)');
+      ok(ret && ret.tracks.kick.channel.output.connections.every(function (n) { return Object.keys(ret.tracks.kick.sendGains).some(function (g) { return ret.tracks.kick.sendGains[g] === n; }); }), 'a return stem: the channel feeds only its send gains, not the master input');
+      return host.exportAudio({ what: 'mix', scope: { from: 0, to: 2 } });
+    }).then(function (files) {
+      ok(files[0].master === true && files[0].bitDepth === 24 && /mix\.wav$/.test(files[0].name), 'the mix keeps the master by default');
+      // deterministic renders: a disconnect issued while an offline render runs waits for the next suspend
+      sb.AudioNode = Node;
+      var probe = null, seenAt = null, origDisc = Node.prototype.disconnect;
+      return S.render(function (s) {
+        if (!s.ctx) { s.setArrangement([{ name: 'a', bars: 8 }]); return; }
+        s.setArrangement([{ name: 'a', bars: 8 }]);
+        probe = s.ctx.createGain(); probe.context = s.ctx; probe.connect(s.out);
+        setTimeout(function () { probe.disconnect(); seenAt = probe.connections.length; }, 0);
+      }, { tail: 0 }).then(function () {
+        ok(seenAt === 1 && probe.connections.length === 0, 'a disconnect during an offline render is deferred to the next suspend, then applied');
+        ok(Node.prototype.disconnect === origDisc, 'the AudioNode prototype is restored after the render');
+        delete sb.AudioNode;
+        // audio options on the fake context
+        return host.setAudioOptions({ latencyHint: 'balanced' });
+      });
+    }).then(function (r) {
+      ok(r === true && host.audioOptions().latencyHint === 'balanced' && host.context().opts && host.context().opts.latencyHint === 'balanced', 'setAudioOptions: a new context with the latency hint');
+      return host.outputDevices();
+    }).then(function (list) {
+      ok(list.length === 1 && list[0].id === '' && list[0].label === 'System default', 'outputDevices without mediaDevices: the default only');
+      host.dispose();
+    });
+  });
+}
+
+section5.then(section6).then(section7).then(section8).then(section9).then(section10).then(section11).then(function () {
   console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
   process.exit(fails ? 1 : 0);
 }, function (e) {

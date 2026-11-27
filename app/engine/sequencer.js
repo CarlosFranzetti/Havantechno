@@ -67,9 +67,9 @@
     return function () { a = (a + 0x6D2B79F5) >>> 0; var t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   }
   // WAV writer with options (Pressing Crew, V1): {bitDepth: 16 | 24 | 32, dither, seed}.
-  //   16 and 24: integer PCM (format 1), x * 2^(n-1) rounded and clamped to [-2^(n-1), 2^(n-1) - 1]. dither (default
-  //   true at 16 bits, false at 24): TPDF, the difference of two uniform draws, +-1 LSB peak, no noise shaping, from a
-  //   generator seeded by `seed` (default 1), so the same buffer always gives the same file.
+  //   16 and 24: integer PCM (format 1), x * 2^(n-1) rounded and clamped to [-2^(n-1), 2^(n-1) - 1]. Dither only at
+  //   16 bits (on unless dither: false; never at 24 or 32, R2's ruling): TPDF, the difference of two uniform draws,
+  //   +-1 LSB peak, no noise shaping, from a generator seeded by `seed` (default 1): the same buffer gives the same file.
   //   32: IEEE float (format 3, an 18-byte fmt chunk and a fact chunk); samples are written as they are, over 1 included.
   // Returns an ArrayBuffer; wav.info(last call) has {peak, clipped}. Without options: the 16-bit writer below, unchanged.
   function wavx(buffer, o) {
@@ -85,7 +85,7 @@
     str('data'); u32(dataLen);
     var data = [];
     for (c = 0; c < ch; c++) data.push(buffer.getChannelData(c));
-    var dither = o.dither == null ? bits === 16 : !!o.dither, r = dither ? rng(o.seed == null ? 1 : o.seed) : null;
+    var dither = bits === 16 && o.dither !== false, r = dither ? rng(o.seed == null ? 1 : o.seed) : null;   // only when reducing to 16 bits
     var scale = bits === 24 ? 8388608 : 32768, lo = -scale, hi = scale - 1, peak = 0, clipped = 0;
     for (i = 0; i < n; i++) for (c = 0; c < ch; c++) {
       var x = data[c][i], ax = x < 0 ? -x : x;
@@ -572,6 +572,32 @@
   // the render position through OfflineAudioContext.suspend, so finished voices leave the graph (rendering the whole
   // range up front kept every voice connected: about quadratic in the length). chunked: false, or a context without
   // suspend, schedules everything up front as before.
+  // Deterministic renders (Pressing Crew, V1): voices disconnect their nodes in onended handlers on the main thread,
+  // which run while the offline renderer keeps going, so a node still ringing was cut at a moment that changed from one
+  // render to the next (measured: up to 1e-5 per instrument, 4e-4 on the mix). While a render runs, disconnect() on its
+  // own nodes is queued and applied at the next suspend (a bar boundary), the same point in every render.
+  // opts.deterministic === false keeps the old behaviour. Nodes of other contexts are not affected.
+  var deferring = [], rawDisconnect = null;
+  function deferDisconnects(octx) {
+    var AN = root.AudioNode && root.AudioNode.prototype;
+    if (!AN || typeof AN.disconnect !== 'function') return null;
+    var job = { ctx: octx, queue: [] };
+    if (!deferring.length) {
+      rawDisconnect = AN.disconnect;
+      AN.disconnect = function () {
+        for (var i = 0; i < deferring.length; i++) if (deferring[i].ctx === this.context && deferring[i].live) { deferring[i].queue.push([this, arguments]); return undefined; }
+        return rawDisconnect.apply(this, arguments);
+      };
+    }
+    deferring.push(job);
+    job.flush = function () { var q = job.queue; job.queue = []; for (var i = 0; i < q.length; i++) { try { rawDisconnect.apply(q[i][0], q[i][1]); } catch (e) {} } };
+    job.end = function () {
+      var i = deferring.indexOf(job); if (i >= 0) deferring.splice(i, 1);
+      job.queue = [];
+      if (!deferring.length && rawDisconnect) { AN.disconnect = rawDisconnect; rawDisconnect = null; }
+    };
+    return job;
+  }
   function render(buildFn, opts) {
     opts = opts || {};
     return new Promise(function (resolve, reject) {
@@ -589,6 +615,7 @@
         if (WL && typeof WL.load === 'function') WL.load(octx).then(go, go); else go();
       } catch (e) { reject(e); }
       function build() {
+        var dj = opts.deterministic === false ? null : deferDisconnects(octx);
         var seq = create(octx, { bpm: dry.bpm, swing: dry.swing });
         buildFn(seq);
         var t0 = 0.05, a = from * STEPS, b = to * STEPS, sd = seq.stepSec(), chunk = seq.barSec();
@@ -606,6 +633,7 @@
           for (var k = 1; k <= to - from - 2 && k * chunk < seconds - 0.01; k++) {
             (function (k) {
               octx.suspend(k * chunk).then(function () {
+                if (dj) dj.flush();
                 ahead(t0 + (k + 2) * chunk);
                 if (typeof opts.onProgress === 'function') { try { opts.onProgress(Math.min(1, k * chunk / seconds)); } catch (e) {} }
                 octx.resume();
@@ -614,9 +642,11 @@
             })(k);
           }
         }
+        if (dj) dj.live = true;                             // from here on, disconnects on this context wait for a suspend
         var p = octx.startRendering();
-        if (p && p.then) p.then(resolve, reject);
-        else { octx.oncomplete = function (e) { resolve(e.renderedBuffer); }; }
+        var done = function (v) { if (dj) dj.end(); resolve(v); }, fail = function (e) { if (dj) dj.end(); reject(e); };
+        if (p && p.then) p.then(done, fail);
+        else { octx.oncomplete = function (e) { done(e.renderedBuffer); }; }
       }
     });
   }
