@@ -302,7 +302,7 @@
     function menu(kind) {
       var type = o.presets[kind], isPat = kind === 'pattern', store = isPat ? PR.patterns : PR;
       var g = h('div', { className: 'so-group so-menu', 'aria-label': isPat ? 'Pattern bank' : 'Patch presets' }, S.bar);
-      var lab = h('label', { className: 'so-field' }, g); h('span', null, lab, isPat ? 'Bank' : 'Patch');
+      var lab = h('label', { className: 'so-field' }, g); h('span', null, lab, isPat ? 'Pattern' : 'Patch');
       var sel = h('select', { className: 'so-select', 'aria-label': isPat ? 'Stored pattern' : 'Patch preset' }, lab);
       function fill(keep) {
         sel.textContent = '';

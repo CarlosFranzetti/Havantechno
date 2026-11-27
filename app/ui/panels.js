@@ -13,6 +13,9 @@
  * x, y, str, attrs), P.voice(type) -> {type, dev, path(param), entry(param)} (dev null when no track uses that voice; a
  * single-device panel uses P.voice(null) = the window's own device), P.knob(parent, o), P.button(parent, o), P.slide(parent, o),
  * P.onUpdate(fn), P.onDispose(fn), P.listen(node, type, fn), P.addVoice(type), P.steps (see machine panels), P.frame.
+ * P.place(g, dx, dy, s) moves a group of controls drawn in another arrangement's coordinates (readouts follow it).
+ * Layouts: hvt303, hvtd and hvt106 have opts.layout 'landscape' (the default size) and 'portrait'; the HVT-D and HVT-106 carry a
+ * step sequencer (synthSeq below); opts.rec starts its REC on (the solo pages), so the keyboard writes the selected step.
  * So a single-device panel (303, Model D, Juno) is a define() whose build draws its face and calls P.knob(g, {param: 'cutoff', ...}).
  *
  * Controls behave like Widgets (ui/widgets.js): role="slider", aria-valuenow/min/max/valuetext, vertical drag (200 px for the
