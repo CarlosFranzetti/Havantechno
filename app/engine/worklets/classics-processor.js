@@ -120,6 +120,13 @@ Elliptic.prototype.run = function (x) {
   w[0] = t;
   return y;
 };
+// the state update of run() alone, for the sub-samples whose output a decimator drops (the Juno's voice loop, A2)
+Elliptic.prototype.push = function (x) {
+  var w = this.w, t = x + 1e-18, i;
+  for (i = 0; i < 12; i++) t -= EA[i] * w[i];
+  for (i = 11; i > 0; i--) w[i] = w[i - 1];
+  w[0] = t;
+};
 
 // ================================================================== TB-303
 // Open303's voice (rosic_Open303.h getSample, MIT) with P1's second-pass corrections (transcripts/P1-303-second-pass.md
@@ -855,7 +862,8 @@ class JunoProcessor extends AudioWorkletProcessor {
       }
       if (OSJ === 1) mix = acc[0];
       else if (nAct > 0 || this.decLive) {               // the decimator runs while a voice sounds and until its tail is under 1e-12
-        for (kk = 0; kk < OSJ; kk++) mix = dec.run(acc[kk]);
+        for (kk = 0; kk < OSJ - 1; kk++) dec.push(acc[kk]);
+        mix = dec.run(acc[OSJ - 1]);
         this.decLive = nAct > 0 || Math.abs(mix) > 1e-12;
       }
       mix *= vGain;

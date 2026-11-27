@@ -1205,7 +1205,15 @@ function section10() {
       var d = h.document();
       ok(r && r.doc === d && r.saved && r.saved.path === '/songs/loop.recut.json' && saved.length === 1, 'importTrack saves the project at once through Project.save (' + (r.saved && r.saved.name) + ')');
       var f = P.parse(saved[0].text);
-      ok(f.reference && f.reference.audio === h.reference().id && Math.abs(f.reference.offset - 0.05) < 0.002 && f.analysis && f.analysis.elements.length === 4 && f.tracks.length === 4, 'the saved file holds the reference (offset ' + (f.reference && f.reference.offset) + '), the analysis and the tracks');
+      ok(f.reference && f.reference.audio === h.reference().id && Math.abs(f.reference.offset - 0.05) < 0.002 && f.analysis && f.analysis.elements.length === 4, 'the saved file holds the reference (offset ' + (f.reference && f.reference.offset) + ') and the analysis');
+      // the default placement: each stem as audio on the timeline from the first downbeat, and no instrument tracks
+      var stemTr = f.tracks.filter(function (t) { return t.inst === 'audio'; });
+      ok(f.tracks.length === 2 && stemTr.length === 2 && stemTr[0].name === 'stem_drums' && stemTr[1].name === 'stem_bass' && stemTr[0].family === 'drums' && stemTr[1].family === 'bass',
+        'by default the import places each stem as an audio track (stem_drums, stem_bass) and builds no instrument track: ' + f.tracks.map(function (t) { return t.name + ':' + t.inst; }).join(' '));
+      ok(stemTr.every(function (t, i) { var c = t.clips && t.clips[0]; return t.clips.length === 1 && c.audio === f.analysis.stems[i].audio && c.bar === 0 && Math.abs(c.offset - f.reference.offset) < 1e-9 && f.analysis.stems[i].track === t.name; }),
+        'each stem clip starts on bar 1 at the file\'s first downbeat (the reference\'s offset) and analysis.stems names its track');
+      ok(f.analysis.elements.every(function (e) { return e.track === null && e.recreation; }) && Object.keys(f.sections[0].play).length === 0 && f.sections[0].bars >= 1,
+        'the elements keep their suggested recreation with no track, and the import section spans the file (' + f.sections[0].bars + ' bars)');
       ok(r.analysis.separator && r.analysis.separator.model === 'htdemucs' && r.analysis.stems.map(function (s) { return s.name; }).join() === 'drums,bass' && d.audio[r.analysis.stems[0].audio].src === '/tmp/st/drums.wav', 'separation through the shell: stems by path (reloadable), the separator recorded');
       ok(['decode', 'separate', 'tempo', 'analyse', 'build', 'save'].every(function (s) { return stages.indexOf(s) >= 0; }), 'progress covers decode, separate, tempo, analyse, build, save');
       ok(d.audio[h.reference().id].src === '/music/loop.wav' && d.name === 'loop', 'the reference keeps its path; the project takes the file\'s name');
@@ -1213,6 +1221,17 @@ function section10() {
       var h2 = H.create({ context: ctx3 });
       return h2.start().then(function () { return P.importTrack({ file: bytes(11), host: h2, maxSeconds: 4, shell: { saveFile: function (o) { return Promise.resolve({ path: '/x/' + o.name }); } } }); }).then(function (r2) {
         ok(r2.analysis.elements.length === 3 && r2.analysis.stems[0].name === 'mix' && r2.analysis.unverified.some(function (u) { return /no stems/.test(u); }), 'no stems and no separator: the mix is read in three bands, and the report says so');
+        var d2 = h2.document();
+        ok(d2.tracks.length === 1 && d2.tracks[0].name === 'mix' && d2.tracks[0].inst === 'audio' && d2.tracks[0].clips[0].audio === h2.reference().id && r2.analysis.stems[0].track === 'mix',
+          'a file with no stems goes on the timeline as one audio track named mix, playing the imported file');
+        return P.importTrack({ file: bytes(11), host: h2, maxSeconds: 4, place: 'both', shell: { saveFile: function (o) { return Promise.resolve({ path: '/x/' + o.name }); } } }).then(function (r3) {
+          var d3 = h2.document(), au = d3.tracks.filter(function (t) { return t.inst === 'audio'; });
+          ok(au.length === 1 && d3.tracks.length === 4 && r3.analysis.elements.every(function (e) { return e.track && d3.tracks.some(function (t) { return t.name === e.track; }); }) && Object.keys(d3.sections[0].play).length === 3,
+            'place: both keeps the audio track and builds the three instrument tracks: ' + d3.tracks.map(function (t) { return t.name + ':' + t.inst; }).join(' '));
+          return P.importTrack({ file: bytes(11), host: h2, maxSeconds: 4, place: 'recreations', shell: { saveFile: function (o) { return Promise.resolve({ path: '/x/' + o.name }); } } });
+        }).then(function (r4) {
+          var d4 = h2.document();
+          ok(d4.tracks.length === 3 && d4.tracks.every(function (t) { return t.inst !== 'audio'; }) && r4.analysis.stems[0].track == null, 'place: recreations builds the instrument tracks only, as before');
         // cancel (D2's request, coordinator's ruling): AbortError, nothing saved, the host keeps its document
         var keep = sb.SongDoc.save(h2.document()), saves = 0, cancels = 0, sig = { aborted: false, l: [], addEventListener: function (t, f) { this.l.push(f); }, removeEventListener: function () {} };
         var sh2 = { saveFile: function () { saves++; return Promise.resolve({ path: '/x' }); }, cancelSeparate: function () { cancels++; },
@@ -1228,6 +1247,7 @@ function section10() {
         }).then(function (nm) {
           ok(nm === 'AbortError' && saves === 0 && sb.SongDoc.save(h2.document()) === keep, 'a cancel just before the save: AbortError, no file, the previous document back');
           h.dispose(); h2.dispose();
+        });
         });
       });
     });

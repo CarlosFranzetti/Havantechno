@@ -677,6 +677,17 @@
   };
 
   // ------------------------------------------------------------------ API
+  // A3 rows and the panels (feature test, Selector Crew log-T2 "Requests"): app/ui/panels.js checks that every spec row has
+  // a control. Until it draws these rows and says so with `Panels.a3 = true`, a page that has loaded panels.js gets the
+  // specs without them (the processor's own defaults for them are 0, the engine before A3); everywhere else (Node checks,
+  // benches, pages without panels) they are in.
+  var A3ROWS = { tb303: ['tuneError'], juno: ['voiceTune', 'voiceCutoff', 'voiceEnv', 'driftTune', 'driftCutoff'] };
+  function hidden(type, name) { var Pn = root.Panels; return !!(Pn && Pn.a3 !== true && A3ROWS[type] && A3ROWS[type].indexOf(name) >= 0); }
+  function specOf(t) {
+    if (!SPEC[t]) return null;
+    var o = {}; for (var k in SPEC[t]) if (SPEC[t].hasOwnProperty(k) && !hidden(t, k)) o[k] = SPEC[t][k];
+    return o;
+  }
   var fallbackSaid = false;
   function has(type) { return SPEC.hasOwnProperty(type); }
   function create(ctx, type, opts) {
@@ -685,7 +696,7 @@
       return makeInst(ctx || null, 'unknown', { level: P(0, 1.5, 1, '') }, opts, function () {});
     }
     var spec = {}, src = SPEC[type];
-    for (var p in src) if (src.hasOwnProperty(p)) {
+    for (var p in src) if (src.hasOwnProperty(p) && !hidden(type, p)) {
       spec[p] = {};
       for (var q in src[p]) if (src[p].hasOwnProperty(q)) spec[p][q] = (q === 'options') ? src[p][q].slice() : src[p][q];
     }
@@ -700,7 +711,7 @@
   root.Classics = {
     create: create, has: has,
     types: function () { return TYPES.slice(); },
-    spec: function (t) { return SPEC[t] || null; },
+    spec: function (t) { return specOf(t); },
     processor: function (t) { return PROC[t] || null; },
     numeric: numeric, values: wvals, LAW: LAW
   };

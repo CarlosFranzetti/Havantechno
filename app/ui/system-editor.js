@@ -86,6 +86,10 @@
     '.se-gtoggle{display:flex;align-items:center;gap:6px;height:22px;padding:0 8px;border:0;background:transparent;color:var(--dim,#8a8f99);font:inherit;font-size:10px;letter-spacing:.1em;cursor:pointer;text-align:left}',
     '.se-gstem{display:flex;align-items:center;padding:0 8px;color:var(--dim,#8a8f99);font-size:10px;opacity:.6;border-left:1px dashed var(--line,#262a32)}',
     '.se-row{display:grid;grid-template-columns:var(--se-left) minmax(0,1fr);height:26px;background:var(--panel,#16181d);cursor:pointer}',
+    '.se-row.audio{height:52px}',
+    '.se-row.audio .se-l{align-items:center}',
+    '.se-sc.audio{display:block;position:relative;border-left:1px solid var(--line,#262a32)}',
+    '.se-clipcv{position:absolute;left:0;top:0;width:100%;height:100%;display:block}',
     '.se-row.sel{background:var(--panel-raised,#1d2027);outline:1px solid var(--fam-ink,var(--fg,#e6e8ec));outline-offset:-1px}',
     '.se-row.idle .se-l .se-steps{opacity:.35}',
     '.se-row[hidden]{display:none}',
@@ -456,6 +460,72 @@
       S.brace.style.width = pct((d.sections[i].bars | 0) / S.total);
     }
 
+    // ---- audio tracks on the timeline: each clip's waveform at its bars (Selector round, the coordinator)
+    function audioClips(name) {
+      var dd = isFn(host.document) ? safe(function () { return host.document(); }, null) : null, ts = (dd && dd.tracks) || [];
+      for (var i = 0; i < ts.length; i++) if (ts[i] && ts[i].name === name) return (ts[i].type === 'audio' || ts[i].inst === 'audio') ? (ts[i].clips || []) : null;
+      return null;
+    }
+    var PEAK_BLOCK = 256, peakStore = [];              // [{buf, mins, maxs, nb, sr}] for the buffers drawn; a few stems
+    function peaksFor(buf) {
+      var i;
+      for (i = 0; i < peakStore.length; i++) if (peakStore[i].buf === buf) return peakStore[i];
+      var n = buf.length | 0, ch = Math.max(1, buf.numberOfChannels | 0), nb = Math.ceil(n / PEAK_BLOCK) || 1;
+      var mins = new Float32Array(nb), maxs = new Float32Array(nb), c, b, data, lo, hi, end, x;
+      for (c = 0; c < ch; c++) {
+        data = safe(function () { return buf.getChannelData(c); }, null);
+        if (!data) continue;
+        for (b = 0; b < nb; b++) {
+          lo = mins[b]; hi = maxs[b]; end = Math.min(n, (b + 1) * PEAK_BLOCK);
+          for (i = b * PEAK_BLOCK; i < end; i++) { x = data[i]; if (x < lo) lo = x; if (x > hi) hi = x; }
+          mins[b] = lo; maxs[b] = hi;
+        }
+      }
+      var P = { buf: buf, mins: mins, maxs: maxs, nb: nb, sr: buf.sampleRate || 44100 };
+      peakStore.push(P); if (peakStore.length > 24) peakStore.shift();
+      return P;
+    }
+    function drawClips(r) {
+      var cv = r.clipCv, area = r.clipArea;
+      if (!cv || !area || !isFn(cv.getContext)) return;
+      var w = area.clientWidth | 0, h = area.clientHeight | 0;
+      if (w < 2 || h < 2) return;
+      var clips = audioClips(r.name) || [], dpr = root.devicePixelRatio || 1, total = S.total || 1;
+      var bpm = (isFn(host.bpm) ? safe(function () { return host.bpm(); }, 0) : 0) || (S.doc && S.doc.bpm) || 120;
+      var bufs = clips.map(function (c) { return isFn(host.buffer) ? safe(function () { return host.buffer(c.audio); }, null) : null; });
+      var key = [w, h, dpr, total, bpm, JSON.stringify(clips), bufs.map(function (b) { return b ? b.length : 0; }).join(',')].join('|');
+      if (key === r.clipKey) return;
+      r.clipKey = key;
+      var ctx = safe(function () { return cv.getContext('2d'); }, null);
+      if (!ctx) return;
+      var W = Math.max(1, Math.round(w * dpr)), H = Math.max(1, Math.round(h * dpr));
+      if (cv.width !== W) cv.width = W;
+      if (cv.height !== H) cv.height = H;
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H);
+      var cs = isFn(root.getComputedStyle) ? safe(function () { return root.getComputedStyle(r.el); }, null) : null;
+      var ink = (cs && String(cs.getPropertyValue('--fam-ink') || '').trim()) || (cs && cs.color) || '#e6e8ec';
+      var spb = 240 / Math.max(1, bpm), mid = H / 2, amp = (H / 2 - dpr) * 0.94;
+      clips.forEach(function (c, ci) {
+        var buf = bufs[ci], dur = buf ? (buf.duration || buf.length / (buf.sampleRate || 44100)) : 0;
+        var len = c.length > 0 ? c.length : Math.max(0, dur - (c.offset || 0));
+        var x0 = Math.max(0, Math.floor((c.bar / total) * W)), x1 = Math.min(W, Math.ceil(((c.bar + len / spb) / total) * W));
+        if (!buf) x1 = Math.min(W, Math.max(x1, x0 + Math.round(8 * dpr)));
+        if (x1 <= x0) return;
+        ctx.globalAlpha = 0.14; ctx.fillStyle = ink; ctx.fillRect(x0, 1, x1 - x0, H - 2);          // the clip's extent
+        ctx.globalAlpha = 1;
+        if (!buf) return;                                                                           // file not loaded: the empty box
+        var P = peaksFor(buf), g = typeof c.gain === 'number' ? c.gain : 1, x, t0, t1, i0, i1, lo, hi, k;
+        for (x = x0; x < x1; x++) {
+          t0 = (c.offset || 0) + ((x / W) * total - c.bar) * spb; t1 = (c.offset || 0) + (((x + 1) / W) * total - c.bar) * spb;
+          if (t1 <= 0 || t0 >= dur) continue;
+          i0 = Math.max(0, Math.floor(t0 * P.sr / PEAK_BLOCK)); i1 = Math.min(P.nb, Math.max(i0 + 1, Math.ceil(t1 * P.sr / PEAK_BLOCK)));
+          lo = 0; hi = 0;
+          for (k = i0; k < i1; k++) { if (P.mins[k] < lo) lo = P.mins[k]; if (P.maxs[k] > hi) hi = P.maxs[k]; }
+          lo = Math.max(-1, lo * g); hi = Math.min(1, hi * g);
+          ctx.fillRect(x, mid - hi * amp, 1, Math.max(1, (hi - lo) * amp));
+        }
+      });
+    }
     function buildRow(d, name) {
       var fam = (S.devices.filter(function (x) { return x.id === 'track:' + name; })[0] || {}).family || famOf(name);
       var row = make('div', 'se-row'); attr(row, 'data-fam', fam); attr(row, 'data-track', name); attr(row, 'tabindex', 0);
@@ -476,9 +546,16 @@
       var stepsHost = make('div', 'se-steps'); stepsHost.appendChild(sw.el); l.appendChild(stepsHost);
       row.appendChild(l);
 
-      var sc = make('div', 'se-sc'); sc.style.gridTemplateColumns = areaCols(d.sections);
-      var cells = [];
-      d.sections.forEach(function (sec, i) {
+      var sc = make('div', 'se-sc');
+      var cells = [], clipCv = null;
+      // an audio track: its clips drawn as waveforms across the whole timeline (a clip sits on absolute bars, not in a section)
+      if (audioClips(name)) {
+        toggleClass(row, 'audio', true); toggleClass(sc, 'audio', true);
+        clipCv = make('canvas', 'se-clipcv'); attr(clipCv, 'role', 'img'); attr(clipCv, 'aria-label', 'Audio clips of ' + name);
+        sc.appendChild(clipCv);
+        on(sc, 'click', function (e) { if (e && e.stopPropagation) e.stopPropagation(); select(name); });
+      } else sc.style.gridTemplateColumns = areaCols(d.sections);
+      if (!clipCv) d.sections.forEach(function (sec, i) {
         var vn = variantName(sec, name), c = make('div', 'se-cell' + (vn ? '' : ' none'), vn || '·');
         var rp = secRamps(sec, name);
         if (rp.length) { toggleClass(c, 'ramp', true); attr(c, 'title', 'ramps: ' + rp.join(', ')); }
@@ -502,7 +579,7 @@
           if (i >= 0 && i < S.rowOrder.length) { select(S.rowOrder[i]); if (e.preventDefault) e.preventDefault(); }
         }
       });
-      S.rows[name] = { el: row, name: name, steps: sw, meter: m, cells: cells, mBtn: mBtn, sBtn: sBtn, sig: '', lastLevel: -1, chip: chip.face };
+      S.rows[name] = { el: row, name: name, steps: sw, meter: m, cells: cells, mBtn: mBtn, sBtn: sBtn, sig: '', lastLevel: -1, chip: chip.face, clipCv: clipCv, clipArea: clipCv ? sc : null, clipKey: '' };
       S.rowOrder.push(name);
       return row;
     }
@@ -1025,6 +1102,7 @@
       var f = Math.max(0, Math.min(1, absBar / S.total)), fs = pct(f);
 
       if (S.refLane) S.refLane.update(fs);        // D2: reference lane playhead and waveform (redraws only on change)
+      for (var an in S.rows) if (has(S.rows, an) && S.rows[an].clipCv) drawClips(S.rows[an]);   // audio rows: redrawn only when something changed
       if (fs !== S.lastPh) {
         S.lastPh = fs;
         if (S.ovPh) S.ovPh.style.left = fs;

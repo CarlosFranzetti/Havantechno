@@ -8,7 +8,12 @@
  *
  * Errors are Error objects whose message starts with "[code] " (the code survives Electron's IPC, which keeps only the
  * message; preload.js turns it back into err.code): python-missing, packages-missing, weights-missing, weights-bad,
- * ffmpeg-missing, bad-path, busy, cancelled, failed. */
+ * ffmpeg-missing, bad-path, busy, cancelled, failed.
+ *
+ * Result (A1, Selector Crew T1, 2026-11-27): {stems: [{name, path}] (drums, bass, other, vocals: float32 WAVs, never
+ * rescaled), residual: {path, rmsDbfs, relativeDb, peak} or null (the mix minus the stems, not a stem), model, folder,
+ * attribution, seconds, format, weights: [{file, sha256, bytes, url}], licence: {code, weights}, sumCheck, log, cached?}.
+ * The model "stub" of separate.py (a band split for checks) is refused here: only auto, mdx and htdemucs. */
 'use strict';
 var path = require('path');
 var fs = require('fs');
@@ -191,7 +196,16 @@ function createRunner(deps) {
     });
     for (var i = 0; i < stems.length; i++) await fsp.stat(stems[i].path);   // throws when a listed stem is gone
     if (!stems.length) throw new Error('no stems listed');
-    return { stems: stems, model: info.model || 'unknown', folder: outDir, attribution: info.attribution || '', seconds: info.seconds || {} };
+    // A1 (2026-11-27): the residual (mix minus the sum of the stems) rides on its own key, never in stems, so the four-stem
+    // contract holds. null for a sidecar written before A1 (a cached run) or when its file is gone.
+    var residual = null, rs = info.residual;
+    if (rs && typeof rs.path === 'string') {
+      try { await fsp.stat(rs.path); residual = { path: rs.path, rmsDbfs: rs.rmsDbfs == null ? null : rs.rmsDbfs, relativeDb: rs.relativeDb == null ? null : rs.relativeDb, peak: rs.peak == null ? null : rs.peak }; }
+      catch (e) { residual = null; }
+    }
+    return { stems: stems, residual: residual, model: info.model || 'unknown', folder: outDir, attribution: info.attribution || '', seconds: info.seconds || {},
+             format: info.format || null, weights: Array.isArray(info.weights) ? info.weights : [], licence: info.licence || null,
+             sumCheck: info.sumCheck || null };
   }
 
   async function runIt(rawPath, opts, onProgress) {

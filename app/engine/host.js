@@ -1303,6 +1303,12 @@
     // tracks with Importer.build, stores doc.analysis and commits (one undo step). o: {onProgress, source, separator,
     // unverified, tempo, maxSeconds, signal}. An aborted signal stops it at the next stage (AbortError), before any edit. A document with no tracks takes the analysis's tempo and its one section;
     // otherwise the tracks are added and the section appended. Tracks an earlier analysis built are replaced.
+    // o.stemTracks (true): each stem (or the lone mix) also goes on the timeline as an audio track named stem_<name>,
+    // one clip at bar 0 that starts at the first downbeat of the file (the audio before it is not placed), recorded as
+    // analysis.stems[i].track. o.recreations (false): no instrument track is built from the elements (each element's
+    // track stays null and its suggested recreation stays in the report; host.applyRecreation builds one on request).
+    // o.extraAudio ([{name, source}], with stemTracks): files placed as audio tracks beside the stems and not analysed
+    // (the separator's residual: what the stems leave out of the mix), recorded as analysis.extra [{name, audio, track}].
     host.analyze = function (stems, o) {
       o = o || {};
       var A = root.Analysis, I = root.Importer;
@@ -1315,11 +1321,18 @@
         catch (e) { if (!progWarned) { progWarned = true; warn('analyze: onProgress threw (' + (e && e.message) + '); further throws are not logged'); } }
         if (o.signal && o.signal.aborted && !(stage === 'build' && done > 0)) { var ae = new Error('Host.analyze: cancelled'); ae.name = 'AbortError'; throw ae; }
       }
-      var g = gen, list = stems.map(function (s) { return { name: String(s.name || 'mix').toLowerCase(), raw: s }; }), ids = [];
+      var g = gen, list = stems.map(function (s) { return { name: String(s.name || 'mix').toLowerCase(), raw: s }; }), ids = [], extras = [], extraFailed = [];
       prog('decode', 0, list.length, 'loading stems');
       return list.reduce(function (p, st, i) {
         return p.then(function () { return stemBuffer(st.raw); }).then(function (id) { st.id = id; st.buf = getBuffer(id); prog('decode', i + 1, list.length, st.name); });
       }, Promise.resolve()).then(function () {
+        // files that ride along unanalysed; one that cannot be loaded is left out and named in the report
+        var ex = o.stemTracks && isArr(o.extraAudio) ? o.extraAudio.filter(function (x) { return x && x.source != null; }) : [];
+        return ex.reduce(function (p, x) {
+          return p.then(function () { return host.loadAudio(x.source, { name: x.fileName || undefined, analyze: false }); }).then(function (id) { extras.push({ name: String(x.name || 'extra').toLowerCase(), audio: id }); },
+            function (e) { extraFailed.push(String(x.name || 'extra') + ' (' + ((e && e.message) || e) + ')'); });
+        }, Promise.resolve());
+      }).then(function () {
         if (g !== gen) throw new Error('Host.analyze: the document changed during the analysis');
         prog('tempo', 0, 1, '');
         return later();
@@ -1363,6 +1376,11 @@
           if (g !== gen) throw new Error('Host.analyze: the document changed during the analysis');
           var old = ed.doc.analysis, oldTracks = {};
           if (old && isArr(old.elements)) old.elements.forEach(function (e) { if (e && e.track) oldTracks[e.track] = true; });
+          if (old && isArr(old.stems)) old.stems.forEach(function (e) { if (e && e.track) oldTracks[e.track] = true; });
+          if (old && isArr(old.extra)) old.extra.forEach(function (e) { if (e && e.track) oldTracks[e.track] = true; });
+          if (extras.length) analysis.extra = extras;
+          extraFailed.forEach(function (x) { analysis.unverified.push('not placed on the timeline: ' + x); });
+          var wantRec = o.recreations !== false, wantStems = !!o.stemTracks;
           var existing = ed.doc.tracks.map(function (t) { return t.name; }).filter(function (n) { return !oldTracks[n]; });
           var fresh = !existing.length;
           var built = I.build(analysis, { buffers: bufs, existing: existing, section: fresh ? 'import' : uniqueSection('import') });
@@ -1373,14 +1391,36 @@
               ed.doc.bpm = tp.bpm;
               ed.doc.sections = [];
             }
-            built.tracks.forEach(function (t, i) { var tr = ed.addTrack(t); analysis.elements[i].track = tr ? tr.name : null; });
+            // the stems themselves, as audio on the timeline: bar 0 is the file's first downbeat
+            var taken = {};
+            ed.doc.tracks.forEach(function (t) { taken[t.name] = true; });
+            built.tracks.forEach(function (t) { if (wantRec) taken[t.name] = true; });
+            if (wantStems) list.forEach(function (st, si) {
+              var base = (st.name === 'mix' ? 'mix' : 'stem_' + st.name).replace(/[^A-Za-z0-9_-]+/g, '_') || 'stem', nm = base, n = 2;
+              while (taken[nm] || nm === 'send' || nm === 'master') nm = base + '_' + (n++);
+              taken[nm] = true;
+              var fam = st.name === 'drums' ? 'drums' : (st.name === 'bass' ? 'bass' : 'keys');
+              var tr = ed.addTrack({ name: nm, type: 'audio', inst: 'audio', gain: 1, pan: 0, variants: {}, family: fam, sidechain: { depth: 0 },
+                                     clips: [{ audio: st.id, bar: 0, offset: Math.max(0, Number(tp.offset) || 0), length: 0, gain: 1 }] });
+              analysis.stems[si].track = tr ? tr.name : null;
+            });
+            if (wantStems) extras.forEach(function (x) {
+              var base = String(x.name).replace(/[^A-Za-z0-9_-]+/g, '_') || 'extra', nm = base, n = 2;
+              while (taken[nm] || nm === 'send' || nm === 'master') nm = base + '_' + (n++);
+              taken[nm] = true;
+              var tr = ed.addTrack({ name: nm, type: 'audio', inst: 'audio', gain: 1, pan: 0, variants: {}, family: 'fx', sidechain: { depth: 0 },
+                                     clips: [{ audio: x.audio, bar: 0, offset: Math.max(0, Number(tp.offset) || 0), length: 0, gain: 1 }] });
+              x.track = tr ? tr.name : null;
+            });
+            if (wantRec) built.tracks.forEach(function (t, i) { var tr = ed.addTrack(t); analysis.elements[i].track = tr ? tr.name : null; });
+            else { built.sections[0].play = {}; analysis.elements.forEach(function (e) { e.track = null; }); }
             ed.doc.sections.push(built.sections[0]);
             analysis.section = built.sections[0].name;
             analysis.elements.forEach(function (e) { delete e.bandKey; });
             ed.doc.analysis = analysis;
           });
           host.commit();
-          prog('build', 1, 1, built.tracks.length + ' tracks');
+          prog('build', 1, 1, (wantRec ? built.tracks.length : 0) + ' instrument tracks' + (wantStems ? ', ' + list.length + ' audio' : ''));
           emit('analysis', { status: 'done', elements: analysis.elements.length });
           return analysis;
         });

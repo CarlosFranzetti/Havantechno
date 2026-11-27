@@ -254,6 +254,47 @@
     var n = String((src && (src.name || src.path)) || '').split(/[\\/]/).pop().toLowerCase(), m = n.match(STEM_RE);
     return m ? m[1].toLowerCase() : (n.replace(/\.[a-z0-9]{1,5}$/, '').replace(/[^a-z0-9_-]+/g, '_') || 'stem' + (i + 1));
   }
+  // ---- separation from a browser: the server that served the page (tools/serve.js on this computer) runs the same
+  // separator the desktop shell runs. localSeparator() resolves true when it answers; the answer is asked once per page.
+  var sepProbe = null;
+  function localSeparator() {
+    if (sepProbe) return sepProbe;
+    if (typeof root.fetch !== 'function' || !root.location || !/^https?:$/.test(root.location.protocol || '')) return (sepProbe = Promise.resolve(false));
+    var p;
+    try { p = root.fetch('/api/separate', { cache: 'no-store' }); } catch (e) { p = Promise.reject(e); }
+    sepProbe = Promise.resolve(p).then(function (r) { return r && r.ok ? r.json() : null; }).then(function (j) { return !!(j && j.available === true); }, function () { return false; });
+    return sepProbe;
+  }
+  function bytesOf(file) {
+    if (file && typeof file.arrayBuffer === 'function') return asPromise(file.arrayBuffer());
+    if (file && file.bytes) return Promise.resolve(file.bytes);
+    if (file && (file instanceof ArrayBuffer || ArrayBuffer.isView(file))) return Promise.resolve(file);
+    return Promise.reject(new Error('the file\'s bytes cannot be read here'));
+  }
+  // upload -> {id, input}; then follow(id, ...) polls until the stems are there: [{name, source: <url>}] plus .model, .log, .residual
+  function sepUpload(file, fname, model) {
+    return bytesOf(file).then(function (ab) {
+      return root.fetch('/api/separate?name=' + encodeURIComponent(fname) + (model ? '&model=' + encodeURIComponent(model) : ''), { method: 'POST', body: ab, headers: { 'Content-Type': 'application/octet-stream' } });
+    }).then(function (r) { return r.json().then(function (j) { if (!r.ok || !j || !j.id) throw new Error((j && j.error) || ('the separation service answered ' + r.status)); return j; }); });
+  }
+  function sepFollow(id, onTick, sig) {
+    return new Promise(function (resolve, reject) {
+      var stopped = false;
+      function cancel() { if (stopped) return; stopped = true; try { root.fetch('/api/separate/' + id, { method: 'DELETE' }); } catch (e) {} var e2 = new Error('Project.importTrack: cancelled'); e2.name = 'AbortError'; reject(e2); }
+      if (sig && typeof sig.addEventListener === 'function') sig.addEventListener('abort', cancel);
+      (function tick() {
+        if (stopped) return;
+        if (sig && sig.aborted) return cancel();
+        root.fetch('/api/separate/' + id, { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+          if (stopped) return;
+          if (j.state === 'running') { try { onTick(j.progress || {}); } catch (e) {} return void setTimeout(tick, 700); }
+          stopped = true;
+          if (j.state !== 'done') return reject(new Error(j.error || ('separation ' + j.state)));
+          resolve(j);
+        }, function (e) { if (!stopped) { stopped = true; reject(e); } });
+      })();
+    });
+  }
   function importTrack(o) {
     o = o || {};
     var host = o.host, sh = shellOf(o), file = o.file;
@@ -272,17 +313,51 @@
     var fname = String(file.name || (typeof file === 'string' ? file : '') || file.path || 'import').split(/[\\/]/).pop();
     var name = o.name || fname.replace(/\.[A-Za-z0-9]{1,5}$/, '') || 'import';
     var doc = { v: 1, name: name, bpm: 120, swing: 0, key: null, progression: [], sends: {}, tracks: [], sections: [{ name: 'import', bars: 1, play: {} }] };
-    var refId = null, separator = null, unverified = [], analysis = null, level = null;
+    // stems on the timeline should sum to the file as it is: the master chain starts bypassed (each unit can be switched
+    // back on in its window); an import that builds instrument tracks only keeps the default master, as before
+    if (o.place !== 'recreations') doc.master = { eq: { bypass: true }, hp: { bypass: true }, lp: { bypass: true }, glue: { bypass: true }, sat: { bypass: true }, limiter: { bypass: true } };
+    var refId = null, separator = null, unverified = [], analysis = null, level = null, residualSrc = null;
     // the document the host had: put back when the import is cancelled or fails, so nothing of a half import remains
     var before = null;
     try { before = SD().save(host.document()); } catch (e) { before = null; }
     function restoreHost() { if (before == null) return; try { host.loadDocument(before); } catch (e) { warn('importTrack: could not restore the previous document: ' + (e && e.message)); } }
     try { host.loadDocument(doc); } catch (e) { return Promise.reject(e); }
     prog('decode', 0, 1, fname);
-    return host.loadAudio(file, { analyze: false }).then(function (id) {
+    // In a browser with no stems given and no shell: when the page's own server offers separation (tools/serve.js), the
+    // file is stored there first, so the reference and the stems are files that server can serve again when the project
+    // is reopened. o.separate === false skips it.
+    var webJob = null;
+    var pre = (!(o.stems && o.stems.length) && !fn(sh, 'separate') && o.separate !== false)
+      ? localSeparator().then(function (yes) {
+          if (!yes) return null;
+          prog('separate', 0, 1, 'sending ' + fname + ' to the separator');
+          return sepUpload(file, fname, o.model).then(function (j) { webJob = j; return j; }, function (e) { unverified.push('separation could not start (' + ((e && e.message) || e) + '): the analysis read the mix'); return null; });
+        })
+      : Promise.resolve(null);
+    return pre.then(function () {
+      gate();
+      return host.loadAudio(file, webJob && webJob.input ? { analyze: false, name: fname, src: webJob.input } : { analyze: false });
+    }).then(function (id) {
       gate();
       refId = id;
       prog('decode', 1, 1, fname);
+      if (webJob) {
+        prog('separate', 0, 1, 'separating ' + fname);
+        return sepFollow(webJob.id, function (p) { prog('separate', p.done == null ? 0 : p.done, p.total == null ? 1 : p.total, p.note || p.message || ''); }, sig).then(function (j) {
+          gate();
+          var list = j.stems || [];
+          separator = { model: j.model || o.model || null, stems: list.map(function (s) { return s.name; }), log: String(j.log || '').slice(-4000), residual: j.residual || null, service: 'local server' };
+          if (j.residual && j.residual.url) residualSrc = j.residual.url;
+          prog('separate', 1, 1, list.length + ' stems');
+          return list.map(function (s) { return { name: String(s.name).toLowerCase(), source: s.url }; });
+        }, function (e) {
+          if (e && e.name === 'AbortError') throw e;
+          gate();
+          separator = { error: String((e && e.message) || e) };
+          unverified.push('separation failed (' + separator.error + '): the analysis read the mix');
+          return null;
+        });
+      }
       if (o.stems && o.stems.length) {
         return o.stems.map(function (s, i) {
           if (s && s.source != null) return { name: String(s.name || stemName(s.source, i)).toLowerCase(), source: s.source };
@@ -304,13 +379,16 @@
         unhook(); gate();
         var list = (r && r.stems) || [];
         separator = { model: (r && r.model) || o.model || null, stems: list.map(function (s) { return s.name; }), log: String((r && r.log) || '').slice(-4000) };
+        var rs = r && r.residual;
+        if (rs && rs.path) separator.residual = { rmsDbfs: rs.rmsDbfs == null ? null : rs.rmsDbfs, relativeDb: rs.relativeDb == null ? null : rs.relativeDb, peak: rs.peak == null ? null : rs.peak };
         prog('separate', 1, 1, list.length + ' stems');
-        return Promise.all(list.map(function (s, i) {
+        var readRes = (rs && rs.path && fn(sh, 'readFile')) ? asPromise(sh.readFile(rs.path, {})).then(function (bytes) { if (bytes) residualSrc = { name: String(rs.path).split(/[\\/]/).pop(), path: rs.path, bytes: bytes }; }, function () {}) : Promise.resolve();
+        return readRes.then(function () { return Promise.all(list.map(function (s, i) {
           if (!fn(sh, 'readFile')) return null;
           return asPromise(sh.readFile(s.path, {})).then(function (bytes) {
             return bytes ? { name: String(s.name || stemName(s, i)).toLowerCase(), source: { name: String(s.path).split(/[\\/]/).pop(), path: s.path, bytes: bytes } } : null;
           }, function () { return null; });
-        })).then(function (st) { return st.filter(Boolean); });
+        })); }).then(function (st) { return st.filter(Boolean); });
       }, function (e) {
         if (typeof off === 'function') { try { off(); } catch (x) {} }
         unhook(); gate();
@@ -322,7 +400,13 @@
       gate();
       var list = stems && stems.length ? stems : [{ name: 'mix', id: refId }];
       var b = host.buffer(refId);
+      // o.place: 'stems' (default: each stem, or the lone mix, as audio on the timeline; no instrument tracks), 'both'
+      // (the stems and the instrument tracks the analysis suggests) or 'recreations' (instrument tracks only, as before)
+      var place = o.place === 'both' || o.place === 'recreations' ? o.place : 'stems';
       return host.analyze(list, { onProgress: o.onProgress, separator: separator, unverified: unverified, maxSeconds: o.maxSeconds,
+                                 stemTracks: place !== 'recreations', recreations: place !== 'stems',
+                                 // what the separator left out of the stems, as its own lane, so the lanes add up to the file
+                                 extraAudio: residualSrc && stems && stems.length ? [{ name: 'residual', source: residualSrc }] : undefined,
                                  source: { name: fname, duration: b ? b.duration : null, sampleRate: b ? b.sampleRate : null }, signal: sig });
     }).then(function (an) {
       gate();
@@ -533,7 +617,7 @@
     try { return asPromise(sh.appDataPath()).then(function (p) { return p || null; }, function () { return null; }); } catch (e) { return Promise.resolve(null); }
   }
 
-  root.Project = { exportAudio: exportAudio, hashBytes: hashBytes, saveBundle: saveBundle, openBundle: openBundle, BUNDLE_FILE: BUNDLE_FILE, serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, pickFiles: pickFiles, importProgram: importProgram, importTrack: importTrack, missing: missing, autosave: autosave, restore: restore,
+  root.Project = { localSeparator: localSeparator, exportAudio: exportAudio, hashBytes: hashBytes, saveBundle: saveBundle, openBundle: openBundle, BUNDLE_FILE: BUNDLE_FILE, serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, pickFiles: pickFiles, importProgram: importProgram, importTrack: importTrack, missing: missing, autosave: autosave, restore: restore,
                    restoreAsync: restoreAsync, clearAutosave: clearAutosave, appDataPath: appDataPath, fileName: fileName,
                    EXT: EXT, AUTOSAVE_KEY: AUTOSAVE_KEY, FORMAT: FORMAT };
 })();

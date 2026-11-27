@@ -15,6 +15,9 @@
  * envelope decay against the decay knob (accent off and on), accent level against the accent knob, the cutoff sweep over
  * 1, 2 and 4 consecutive accents at resonance 0.2 / 0.6 / 0.95, the slide curve, gate length, saw against square, and
  * the output peak over a grid of settings. Writes tools/out/tb303-bench.json and prints a table.
+ * Added by Selector Crew T2 (A3, 2026-11-27): (9) the tuneError row: five held keys at tuneError 10 ct with opts._seed 1
+ * (twice) and 2; the oscillator frequency from the probe at the middle of each note, in cents re equal temperament, against
+ * the offset the seed predicts (the same deviate as app/engine/classics.js: MurmurHash3's fmix32, public domain).
  */
 'use strict';
 var http = require('http'), fs = require('fs'), path = require('path');
@@ -73,6 +76,8 @@ function serve() {
 
 // in the page: render one tb303 with notes and scheduled sets; returns base64 Float32 arrays (out, fc, freq, amp)
 function pageHelper() {
+  // A3 rows (classics.js hides them on a page with panels.js until the panels draw them, log-T2): on for the bench
+  if (window.Panels && window.Panels.a3 !== true) window.Panels.a3 = true;
   window.__b64 = function (f) { var u = new Uint8Array(f.buffer, f.byteOffset, f.byteLength), s = '', i; for (i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
   window.__tb = async function (a) {
     var octx = new OfflineAudioContext(5, Math.ceil(44100 * a.seconds), 44100);
@@ -221,6 +226,20 @@ async function main() {
   var xdflt = await R({}, pat, 0.02 + 33 * STEP);
   res.outputPeak.defaultsPattern = r3(peak(xdflt.out, 0, xdflt.out.length));
 
+  // 9. the tuning error (A3): measured key offsets against the seed's prediction
+  var fmix = function (h) { h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return h >>> 0; };
+  var gz = function (seed, a2, b2) { var hh = fmix(((seed ^ Math.imul(a2 + 1, 0x9e3779b1)) + Math.imul(b2 + 1, 0x632be5ab)) >>> 0), sz = 0; for (var qq = 0; qq < 4; qq++) { hh = fmix((hh + 0x6d2b79f5) >>> 0); sz += hh / 2147483648 - 1; } return sz / 1.1547005383792515; };
+  var KEYS = [36, 38, 43, 48, 36], tn = [];
+  for (q = 0; q < KEYS.length; q++) tn.push({ t: 0.02 + q * 4 * STEP, midi: KEYS[q], dur: 3 * STEP, step: q * 4 });
+  res.tuning = { tuneError: 10, keys: KEYS };
+  var tr = {};
+  for (var sd of [1, 1, 2]) {
+    var xt = await R({ tuneError: 10, _seed: sd }, tn, 0.02 + KEYS.length * 4 * STEP), meas = [], pred = [];
+    for (q = 0; q < KEYS.length; q++) { var mid = S(0.02 + q * 4 * STEP + 1.5 * STEP); meas.push(r3(1200 * Math.log2(mean(mid - 200, mid + 200, xt.f) / (440 * Math.pow(2, (KEYS[q] - 69) / 12))))); pred.push(r3(10 * gz(sd, 303, KEYS[q]))); }
+    if (tr['seed' + sd]) res.tuning.sameSeedIdentical = JSON.stringify(tr['seed' + sd]) === JSON.stringify(meas) && (function () { for (var z = 0; z < xt.out.length; z++) if (xt.out[z] !== tr['out' + sd][z]) return false; return true; })();
+    tr['seed' + sd] = meas; tr['out' + sd] = xt.out;
+    res.tuning['seed' + sd] = { measuredCt: meas, predictedCt: pred, worstErrorCt: r3(Math.max.apply(null, meas.map(function (m, z) { return Math.abs(m - pred[z]); }))) };
+  }
   res.meta.seconds = r1((Date.now() - t0) / 1000);
   res.meta.pageErrors = errors.length;
   await browser.close(); server.close();
@@ -253,6 +272,7 @@ function printTable(r) {
   for (k in r.slide) { var l = r.slide[k]; console.log('  slideTime ' + pad(l.slideTimeMs, 5) + pad(l.t50Ms, 7) + '/ ' + pad(l.t90Ms, 7) + 'gate held ' + l.gateHeld); }
   console.log('\nGate (fraction of the step): one step ' + r.gate.oneStep + ', tie of two ' + r.gate.tieTwoSteps + ', slid pair ' + r.gate.slidPairFromFirst);
   console.log('Saw / square: rms ' + r.wave.sawRms + ' / ' + r.wave.squareRms + ' (' + r.wave.squareOverSawDb + ' dB), peak ' + r.wave.sawPeak + ' / ' + r.wave.squarePeak);
+  if (r.tuning) console.log('Tuning error (A3), tuneError ' + r.tuning.tuneError + ' ct, keys ' + r.tuning.keys.join(' ') + ': seed 1 ' + r.tuning.seed1.measuredCt.join(' ') + ' ct (predicted ' + r.tuning.seed1.predictedCt.join(' ') + '), seed 2 ' + r.tuning.seed2.measuredCt.join(' ') + ' ct (predicted ' + r.tuning.seed2.predictedCt.join(' ') + '); same seed identical: ' + r.tuning.sameSeedIdentical);
   console.log('Output peak, 2-bar accent/slide pattern: defaults ' + r.outputPeak.defaultsPattern + ', grid max ' + r.outputPeak.max + ' at ' + JSON.stringify(r.outputPeak.maxAt));
 }
 function flat(o, pre, out) {

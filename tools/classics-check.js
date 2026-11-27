@@ -358,8 +358,8 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
 
   // ------------------------------------------------------------------ 6. the processors in Node
   console.log('6. processors (stubbed AudioWorkletGlobalScope)');
-  function run(name, seconds, events, consts) {
-    var Pc = loadProcs(44100)[name], desc = Pc.parameterDescriptors, proc = new Pc({ processorOptions: { seed: 22051 } });
+  function run(name, seconds, events, consts, popts) {
+    var Pc = loadProcs(44100)[name], desc = Pc.parameterDescriptors, proc = new Pc({ processorOptions: popts || { seed: 22051 } });
     var N = Math.ceil(seconds * 44100), out = new Float32Array(N), outR = new Float32Array(N), cur = {}, evs = {};
     desc.forEach(function (dd) { cur[dd.name] = (consts && dd.name in consts) ? consts[dd.name] : dd.defaultValue; evs[dd.name] = ((events || {})[dd.name] || []).slice(); });
     for (var b = 0; b < N; b += 128) {
@@ -431,6 +431,132 @@ var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
   ok(peakOf(q0, 0, q0.length) === 0 && peakOf(q0.R, 0, q0.length) === 0 && peakOf(qo, 0, qo.length) === 0, 'no signal: the BBD lines are silent with chorusNoise 0, and there is no hiss with the chorus off');
   ok(sameQ && hd > -90 && hd < -70, 'hiss at the default is ' + hd.toFixed(1) + ' dBFS (between -90 and -70), identical on two runs');
   ok(j1.every(isFinite) && j1.R.every(isFinite) && peakOf(j1, 2205, 26000) < 1, 'the BBD chorus output is finite and under full scale');
+
+  // ------------------------------------------------------------------ 6b. A2 and A3 (Selector Crew T2, 2026-11-27)
+  console.log('6b. juno oversampling (A2), seeded variance and drift (A3), the 303 tuning error');
+  function fftR(re, im) {
+    var nn = re.length, ii, jj, kk, ll;
+    for (ii = 1, jj = 0; ii < nn; ii++) { var bit = nn >> 1; for (; jj & bit; bit >>= 1) jj ^= bit; jj ^= bit; if (ii < jj) { var tt = re[ii]; re[ii] = re[jj]; re[jj] = tt; tt = im[ii]; im[ii] = im[jj]; im[jj] = tt; } }
+    for (ll = 2; ll <= nn; ll <<= 1) {
+      var ang = -2 * Math.PI / ll, wr = Math.cos(ang), wi = Math.sin(ang);
+      for (ii = 0; ii < nn; ii += ll) { var cr = 1, ci = 0; for (kk = 0; kk < ll / 2; kk++) {
+        var a = ii + kk, b = a + ll / 2, xr = re[b] * cr - im[b] * ci, xi = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - xr; im[b] = im[a] - xi; re[a] += xr; im[a] += xi;
+        var nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr; } }
+    }
+  }
+  function bhSpec(xx, from, nn) {                                    // power spectrum, 4-term Blackman-Harris
+    var re = new Float64Array(nn), im = new Float64Array(nn);
+    for (var ii = 0; ii < nn; ii++) { var p = 2 * Math.PI * ii / (nn - 1); re[ii] = (xx[from + ii] || 0) * (0.35875 - 0.48829 * Math.cos(p) + 0.14128 * Math.cos(2 * p) - 0.01168 * Math.cos(3 * p)); }
+    fftR(re, im);
+    var pw = new Float64Array(nn / 2); for (ii = 0; ii < nn / 2; ii++) pw[ii] = re[ii] * re[ii] + im[ii] * im[ii];
+    return pw;
+  }
+  // alias power over line power (dB), 20 Hz to 20 kHz: lines within 3 Hz of a multiple of g, aliases beyond 4 Hz (as juno-bench section 6)
+  function aliasDb(xx, g) {
+    var nn = 65536, pw = bhSpec(xx, 8820, nn), df = 44100 / nn, line = 0, al = 0;
+    for (var ii = Math.ceil(20 / df); ii <= Math.floor(20000 / df); ii++) { var f = ii * df, d = Math.abs(f - g * Math.round(f / g)); if (d <= 3) line += pw[ii]; else if (d > 4) al += pw[ii]; }
+    return 10 * Math.log10(al / line + 1e-30);
+  }
+  // the frequency of the strongest bin between lo and hi Hz, parabolic on log power
+  function peakHz(xx, from, lo, hi) {
+    var nn = 65536, pw = bhSpec(xx, from, nn), df = 44100 / nn, bi = Math.round(lo / df);
+    for (var ii = Math.round(lo / df); ii <= Math.round(hi / df); ii++) if (pw[ii] > pw[bi]) bi = ii;
+    var a = Math.log(pw[bi - 1]), b = Math.log(pw[bi]), c = Math.log(pw[bi + 1]);
+    return (bi + 0.5 * (a - c) / (a - 2 * b + c)) * df;
+  }
+  var ZERO = { voiceTune: 0, voiceCutoff: 0, voiceEnv: 0, driftTune: 0, driftCutoff: 0 };
+  function jc(o) { var r2 = { saw: 1, pulse: 0, cutoff: 1e6, resonance: 0, envAmt: 0, vcfKey: 0, attack: 0.0005, sustain: 1, chorus: 0, chorusNoise: 0 }, kq; for (kq in ZERO) r2[kq] = ZERO[kq]; for (kq in o) r2[kq] = o[kq]; return r2; }
+  var one96 = { trig0: [[0.02, 1]], gate0: [[0.02, 1]], pitch0: [[0, 96]] };
+  var f96 = 440 * Math.pow(2, 27 / 12), saw1 = run('hvt-juno', 1.75, one96, jc({}), { seed: 106, os: 1 }), saw4 = run('hvt-juno', 1.75, one96, jc({}), { seed: 106, os: 4 });
+  var aS1 = aliasDb(saw1, f96), aS4 = aliasDb(saw4, f96);
+  ok(saw4.proc.os === 4 && saw1.proc.os === 1 && run('hvt-juno', 0.01, {}, {}, { seed: 106 }).proc.os === 4, 'the juno voice loop runs at 4x by default (processorOptions.os 1 keeps the old loop)');
+  ok(aS4 < -45 && aS4 < aS1 - 12, 'A2: saw at MIDI 96, alias power re the harmonics ' + aS1.toFixed(1) + ' dB at 1x, ' + aS4.toFixed(1) + ' dB at 4x (needs < -45 and 12 dB better)');
+  var fl = f96 / 96, pwmC = jc({ saw: 0, pulse: 1, pwmMode: 0, pwm: 1, lfoRate: fl, lfoDelay: 0 });
+  var pw1 = run('hvt-juno', 1.75, one96, pwmC, { seed: 106, os: 1 }), pw4 = run('hvt-juno', 1.75, one96, pwmC, { seed: 106, os: 4 });
+  var aP1 = aliasDb(pw1, fl), aP4 = aliasDb(pw4, fl);
+  ok(aP4 < -55 && aP4 < aP1 - 20, 'A2: bright PWM (duty 0.05 to 0.5 at ' + fl.toFixed(2) + ' Hz) at MIDI 96, alias power ' + aP1.toFixed(1) + ' dB at 1x, ' + aP4.toFixed(1) + ' dB at 4x (needs < -55 and 20 dB better)');
+  var chA = { trig0: [[0.05, 1]], gate0: [[0.05, 1], [0.8, 0]], pitch0: [[0, 57]] }, dflt = {};
+  ['pwm', 'resonance', 'envAmt', 'cutoff'].forEach(function (kq) { dflt[kq] = C.values('juno', kq, C.spec('juno')[kq].value)[0][1]; });
+  var lo1 = run('hvt-juno', 1, chA, jc({ cutoff: dflt.cutoff, resonance: dflt.resonance, envAmt: dflt.envAmt, chorus: 0 }), { seed: 106, os: 1 });
+  var lo4 = run('hvt-juno', 1, chA, jc({ cutoff: dflt.cutoff, resonance: dflt.resonance, envAmt: dflt.envAmt, chorus: 0 }), { seed: 106, os: 4 });
+  var rmsR = function (xx, a, b) { var s2 = 0; for (var z = a; z < b; z++) s2 += xx[z] * xx[z]; return Math.sqrt(s2 / (b - a)); };
+  var lvDb = 20 * Math.log10(rmsR(lo4, 4410, 33000) / rmsR(lo1, 4410, 33000));
+  ok(Math.abs(lvDb) < 0.5, 'A2: a held A3 on the default filter keeps its level at 4x (' + lvDb.toFixed(2) + ' dB re 1x, needs within 0.5)');
+  var q4 = run('hvt-juno', 0.5, {}, { chorus: 0 }, { seed: 106, os: 4 });
+  ok(peakOf(q4, 0, q4.length) === 0, 'A2: with no notes the 4x path is exactly silent (the decimator sleeps)');
+
+  // A3: seeds, deviates, bounds
+  var SD = C.spec('juno');
+  ok(['voiceTune', 'voiceCutoff', 'voiceEnv', 'driftTune', 'driftCutoff'].every(function (kq) { return SD[kq].basis === 'prior' && /3\.46/.test(SD[kq].label) && SD[kq].value > 0; }) && C.spec('tb303').tuneError.value === 0 && C.spec('tb303').tuneError.basis === 'prior',
+     'A3 rows: juno voiceTune ' + SD.voiceTune.value + ' ct, voiceCutoff ' + SD.voiceCutoff.value + ' ct, voiceEnv ' + SD.voiceEnv.value + ' %, driftTune ' + SD.driftTune.value + ' ct, driftCutoff ' + SD.driftCutoff.value + ' ct (prior, each label states its bound); tb303 tuneError 0 by default');
+  var dv = {}; Object.keys(SD).forEach(function (kq) { if (kq !== 'level') C.values('juno', kq, SD[kq].value).forEach(function (pq) { dv[pq[0]] = pq[1]; }); });
+  dv.chorus = 1;
+  var pad = { }, chord = [57, 60, 64, 69, 72, 76];
+  chord.forEach(function (m, v) { pad['trig' + v] = [[0.05, 1]]; pad['gate' + v] = [[0.05, 1], [1.2, 0]]; pad['pitch' + v] = [[0, m]]; });
+  var sA = run('hvt-juno', 1.5, pad, dv, { seed: 106, vseed: 7 }), sA2 = run('hvt-juno', 1.5, pad, dv, { seed: 106, vseed: 7 }), sB = run('hvt-juno', 1.5, pad, dv, { seed: 106, vseed: 8 });
+  var idA = true, dAB = 0, rA = 0;
+  for (q = 0; q < sA.length; q++) { if (sA[q] !== sA2[q] || sA.R[q] !== sA2.R[q]) idA = false; dAB = Math.max(dAB, Math.abs(sA[q] - sB[q])); rA = Math.max(rA, Math.abs(sA[q])); }
+  ok(idA, 'A3: two renders of a six-note chord with the defaults and one seed are identical to the sample');
+  var lvAB = 20 * Math.log10(rmsR(sB, 4410, 52000) / rmsR(sA, 4410, 52000));
+  ok(dAB > 1e-3 && Math.abs(lvAB) < 1.5, 'A3: two seeds differ (largest sample difference ' + dAB.toFixed(4) + ' of peak ' + rA.toFixed(3) + ') at nearly the same level (' + lvAB.toFixed(2) + ' dB, needs within 1.5)');
+  var zs = [], bound = true;
+  [1, 2, 3, 7, 8, 1e6, 4294967295].forEach(function (sd) { var pz = run('hvt-juno', 0.01, {}, {}, { seed: 106, vseed: sd }).proc.z; pz.forEach(function (zz) { ['t', 'c', 'a', 'd', 'r'].forEach(function (kq) { zs.push(zz[kq]); if (!(Math.abs(zz[kq]) <= 3.4642)) bound = false; }); }); });
+  var mz = zs.reduce(function (s2, v) { return s2 + v; }, 0) / zs.length, vz = zs.reduce(function (s2, v) { return s2 + (v - mz) * (v - mz); }, 0) / zs.length;
+  ok(bound && Math.abs(mz) < 0.35 && vz > 0.5 && vz < 1.6, 'A3: the deviates are bounded by 3.46 and near unit spread (' + zs.length + ' values: mean ' + mz.toFixed(3) + ', variance ' + vz.toFixed(3) + ')');
+  // the pitch offset through the DSP: one voice at A4, voiceTune 5 ct, two seeds; the measured difference is the predicted one
+  var a4 = { trig0: [[0.02, 1]], gate0: [[0.02, 1]], pitch0: [[0, 69]] }, pA = run('hvt-juno', 1.8, a4, jc({ voiceTune: 5, cutoff: 2000 }), { seed: 106, vseed: 11 }), pB = run('hvt-juno', 1.8, a4, jc({ voiceTune: 5, cutoff: 2000 }), { seed: 106, vseed: 12 });
+  var hA = peakHz(pA, 8820, 400, 480), hB = peakHz(pB, 8820, 400, 480), meas = 1200 * Math.log2(hA / hB), pred = 5 * (pA.proc.z[0].t - pB.proc.z[0].t);
+  ok(Math.abs(meas - pred) < 0.3 && Math.abs(1200 * Math.log2(hA / 440) - 5 * pA.proc.z[0].t) < 0.5, 'A3: voiceTune 5 ct, two seeds: voice 0 at ' + hA.toFixed(3) + ' and ' + hB.toFixed(3) + ' Hz, ' + meas.toFixed(2) + ' ct apart, predicted ' + pred.toFixed(2) + ' (within 0.3)');
+  // the envelope spread: the coefficients the voices use follow their deviates and stay within 1 +- 3.46 sd
+  var eP = run('hvt-juno', 0.01, {}, jc({ voiceEnv: 0.2, attack: 0.5, decay: 1, release: 1 }), { seed: 106, vseed: 3 }).proc, envOk = true;
+  for (var vv = 0; vv < 6; vv++) {
+    var tA = -1 / (Math.log(eP.eco[3 * vv]) * 44100), sc = tA / 0.5;
+    if (Math.abs(sc - Math.max(0.5, 1 + 0.2 * eP.z[vv].a)) > 1e-6 || Math.abs(sc - 1) > 0.2 * 3.4642 + 1e-9) envOk = false;
+  }
+  ok(envOk, 'A3: voiceEnv 20 %: each voice\'s attack time is 0.5 s x (1 + 0.2 z), within 1 +- 0.69');
+  // drift: bounded, smooth, a function of song time (a processor started 10 s into the song agrees with one that ran there)
+  var DRP = loadProcs(44100)['hvt-juno'], dA = new DRP({ processorOptions: { seed: 106, vseed: 5 } }), dB = new DRP({ processorOptions: { seed: 106, vseed: 5 } });
+  var blk = function (pr, nb, off) { var P0 = {}; DRP.parameterDescriptors.forEach(function (dd) { P0[dd.name] = new Float32Array([dd.defaultValue]); }); P0.driftTune[0] = 1; P0.driftCutoff[0] = 100; P0.chorus[0] = 0; P0.songOff[0] = off;
+    var o1 = new Float32Array(128), o2 = new Float32Array(128); for (var b = 0; b < nb; b++) pr.process([], [[o1, o2]], P0); };
+  var nbD = Math.round(10 * 44100 / 128);
+  var nb1 = Math.round(44100 / 128);
+  blk(dA, nbD, 0); blk(dB, nb1, (nbD - nb1) * 128 / 44100);   // dB starts at song time 9 s and runs 1 s: both end at the same song time
+  var dDiff = Math.abs(dA.drP - dB.drP); for (vv = 0; vv < 6; vv++) dDiff = Math.max(dDiff, Math.abs(dA.drC[vv] - dB.drC[vv]));
+  var dMax = 0, dStep = 0, prev = null;
+  var tt;
+  var DA = (new Function('sampleRate', 'registerProcessor', 'AudioWorkletProcessor', PROC_SRC + '\n;return driftAt;'))(44100, function () {}, function () { this.port = {}; });
+  for (tt = 0; tt < 400; tt += 0.01) { var dz = DA(5, 8, tt); dMax = Math.max(dMax, Math.abs(dz)); if (prev !== null) dStep = Math.max(dStep, Math.abs(dz - prev)); prev = dz; }
+  ok(dDiff < 1e-3 && dMax <= 3.4642 && dStep < 0.01, 'A3: drift is a function of song time (a voice started at song 10 s agrees with one that ran 10 s: ' + dDiff.toExponential(1) + '), bounded (' + dMax.toFixed(2) + ' <= 3.46) and smooth (largest 10 ms step ' + dStep.toFixed(4) + ' sd)');
+
+  // seeds and the song position reach the processor (stub worklet)
+  var jS = CW.create(ctx, 'juno', { _seed: 4242 }), nS = ctx.worklets[ctx.worklets.length - 1], jD = CW.create(ctx, 'juno'), nD = ctx.worklets[ctx.worklets.length - 1], SW = {};
+  nS.parameters.forEach(function (p, k) { SW[k] = p; });
+  ok(nS.opts.processorOptions.vseed === 4242 && nS.opts.processorOptions.seed === 106 && nD.opts.processorOptions.vseed === 106 && !('os' in nD.opts.processorOptions), 'opts._seed reaches the juno as vseed (noise seed stays 106); without it vseed is 106; no os option unless a bench asks');
+  ok(SW.voiceTune.value === 0.2 && SW.voiceEnv.value === 0.02 && SW.driftCutoff.value === 10, 'the A3 rows reach the processor (voiceEnv in percent becomes a fraction)');
+  jS.trigger(2, { midi: 60, dur: 0.2, step: 32, songTime: 9.5 });
+  jS.trigger(2.5, { midi: 62, dur: 0.2, step: 36 });
+  ok(near(SW.songOff.at(2), 7.5, 1e-9) && near(SW.songOff.at(2.6), 7.5, 1e-9) && SW.songOff.calls.length === 1, 'ev.songTime writes songOff = songTime - t at the note (7.5); a note without it writes nothing');
+  // the 303 key offsets (worklet stub and fallback)
+  var tA303 = CW.create(ctx, 'tb303', { tuneError: 10, _seed: 1 }), nA = ctx.worklets[ctx.worklets.length - 1], tB303 = CW.create(ctx, 'tb303', { tuneError: 10, _seed: 2 }), nB = ctx.worklets[ctx.worklets.length - 1];
+  var WA = {}, WB = {}; nA.parameters.forEach(function (p, k) { WA[k] = p; }); nB.parameters.forEach(function (p, k) { WB[k] = p; });
+  var keys = [36, 38, 48, 36, 43, 60], offsA = [], offsB = [];
+  keys.forEach(function (m, qq) { tA303.trigger(1 + qq * st, { midi: m, dur: d, step: qq }); tB303.trigger(1 + qq * st, { midi: m, dur: d, step: qq }); offsA.push(WA.pitch.at(1 + qq * st) - m); offsB.push(WB.pitch.at(1 + qq * st) - m); });
+  ok(offsA.every(function (o) { return Math.abs(o) <= 0.3465; }) && offsB.every(function (o) { return Math.abs(o) <= 0.3465; }) && offsA[0] === offsA[3] && offsA[0] !== offsA[1] && offsA.some(function (o, qq) { return o !== offsB[qq]; }),
+     'tb303 tuneError 10 ct: every key within 34.6 ct, a key keeps its offset (C2 twice: ' + (offsA[0] * 100).toFixed(2) + ' ct), keys differ, two seeds give two keyboards (' + offsA.map(function (o) { return (o * 100).toFixed(1); }).join(' ') + ' / ' + offsB.map(function (o) { return (o * 100).toFixed(1); }).join(' ') + ' ct)');
+  var t0e = CW.create(ctx, 'tb303', { _seed: 1 }), n0e = ctx.worklets[ctx.worklets.length - 1], W0e = {}; n0e.parameters.forEach(function (p, k) { W0e[k] = p; });
+  t0e.trigger(1, { midi: 37, dur: d, step: 0 });
+  ok(W0e.pitch.at(1) === 37, 'tb303 tuneError 0 (the default): the pitch written is the key, exactly');
+  var fc303 = new RecCtx(), fb303 = C.create(fc303, 'tb303', { tuneError: 10, _seed: 1 });
+  fb303.trigger(1, { midi: 36, dur: d, step: 0 });
+  var fo303 = fc303.nodes.filter(function (n) { return n.type_ === 'osc'; })[0], ff = fo303.frequency.calls[0][1];
+  ok(near(1200 * Math.log2(ff / (440 * Math.pow(2, (36 - 69) / 12))), offsA[0] * 100, 0.01), 'the fallback 303 plays the same key offset (' + (1200 * Math.log2(ff / 65.406)).toFixed(2) + ' ct)');
+  var fjc = new RecCtx(), fj = C.create(fjc, 'juno', { voiceTune: 5, _seed: 9 });
+  fj.trigger(1, { midi: 69, dur: 0.5 });
+  var fjo = fjc.nodes.filter(function (n) { return n.type_ === 'osc'; })[0], fjf = fjo.frequency.calls[0][1], zj = loadProcs(44100)['hvt-juno'];
+  var zj0 = new zj({ processorOptions: { seed: 106, vseed: 9 } }).z[0].t;
+  ok(fj.engine === 'fallback' && near(1200 * Math.log2(fjf / 440), 5 * zj0, 0.01), 'the fallback juno applies the same per-voice pitch offset as the worklet (' + (1200 * Math.log2(fjf / 440)).toFixed(2) + ' ct)');
+  ok(bad.length === 0, 'no non-finite automation in the A3 writes');
 
   // ------------------------------------------------------------------ 7. hooks
   console.log('7. hooks');

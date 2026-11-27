@@ -122,7 +122,10 @@ var GOOD = { python: '3.12.0', missing: [], mdxFallbackUsable: true, ffmpeg: '/u
     ['drums', 'bass', 'other', 'vocals'].forEach(function (s) { stems[s] = path.join(out, name + '-' + s + '.wav'); fs.writeFileSync(stems[s], 'x'); });
     c.stderr.emit('data', ' 10%|█ | 1/10\r 50%|█████ | 5/10\r');
     c.stdout.emit('data', 'stems written to ' + out + '\n');
-    fs.writeFileSync(path.join(out, name + '-stems.json'), JSON.stringify({ model: 'htdemucs', stems: stems, attribution: 'MIT' }));
+    var resid = path.join(out, name + '-residual.wav'); fs.writeFileSync(resid, 'x');
+    fs.writeFileSync(path.join(out, name + '-stems.json'), JSON.stringify({ model: 'htdemucs', stems: stems, attribution: 'MIT',
+      residual: { path: resid, rmsDbfs: -61.5, relativeDb: -42.25, peak: 0.01 }, format: { sampleFormat: 'float32', rescaled: false },
+      weights: [{ file: 'w.th', sha256: 'ab', bytes: 2 }], licence: { code: 'MIT', weights: 'none stated' } }));
     c.emit('close', 0, null);
   }
   var sp2 = fakeSpawn([ver('3.12.0'), chk(GOOD), { match: function (c, a) { fakeSpawn.last = a; return isRun(c, a); }, run: successRun }]);
@@ -134,8 +137,21 @@ var GOOD = { python: '3.12.0', missing: [], mdxFallbackUsable: true, ffmpeg: '/u
   var runCall = sp2.calls.filter(function (c) { return isRun(c.cmd, c.args); })[0];
   ok(runCall.args[1] === script && runCall.args[2] === wavp && !runCall.opts.shell && runCall.opts.env.PYTHONUNBUFFERED === '1', 'runner spawn args');
   ok(!r.busy(), 'runner idle after success');
+  // A1: the residual is on its own key with its level, never among the stems; weights and licence pass through
+  ok(res.residual && /My Track-residual\.wav$/.test(res.residual.path) && res.residual.relativeDb === -42.25 && res.residual.rmsDbfs === -61.5 && res.residual.peak === 0.01, 'runner residual key', JSON.stringify(res.residual));
+  ok(res.stems.every(function (s) { return s.name !== 'residual' && !/residual/.test(s.path); }), 'residual is not a stem');
+  ok(res.format && res.format.sampleFormat === 'float32' && res.format.rescaled === false && res.weights.length === 1 && res.licence.weights === 'none stated', 'runner format, weights, licence');
+  try { S.normModel('stub'); ok(false, 'stub refused'); } catch (e) { ok(e.code === 'bad-path', 'stub model refused by the shell'); }
   var before = sp2.calls.length;
   res = await r.separate(wavp, {}, null); ok(res.cached === true && sp2.calls.length === before, 'runner cache hit spawns nothing');
+
+  // a sidecar written before A1 (no residual key) still reads, with residual null
+  var oldIn = await S.validateInput(wavp), oldDir = S.outDirFor(ud, oldIn, 'mdx'), oldStems = {};
+  fs.mkdirSync(oldDir, { recursive: true });
+  ['drums', 'bass', 'other'].forEach(function (s) { oldStems[s] = path.join(oldDir, 'My Track-' + s + '.wav'); fs.writeFileSync(oldStems[s], 'x'); });
+  fs.writeFileSync(path.join(oldDir, 'My Track-stems.json'), JSON.stringify({ model: 'mdx', stems: oldStems }));
+  res = await S.createRunner({ userData: ud, script: script, spawn: fakeSpawn([]), platform: 'linux', env: {} }).separate(wavp, { model: 'mdx' }, null);
+  ok(res.cached && res.residual === null && res.stems.length === 3 && Array.isArray(res.weights) && res.weights.length === 0, 'pre-A1 sidecar: residual null', JSON.stringify(res).slice(0, 200));
 
   // busy and cancel: a run that hangs until killed
   fs.writeFileSync(wavp, Buffer.alloc(200, 2));   // new size: new folder, no cache hit

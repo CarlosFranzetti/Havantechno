@@ -239,7 +239,8 @@ function pageTruth() {
     return chain.then(function () {
       var host = Host.create(), saved = [], stages = [], t0 = performance.now();
       var shell = { saveFile: function (o) { saved.push(o.text.length); return Promise.resolve({ path: '/tmp/' + o.name }); } };
-      return Project.importTrack({ host: host, shell: shell, file: { name: 'song.wav', bytes: Sequencer.wav(bufs.mix) },
+      // place: 'both': this check scores the instrument tracks the analysis builds; the default places the stems only
+      return Project.importTrack({ host: host, shell: shell, place: 'both', file: { name: 'song.wav', bytes: Sequencer.wav(bufs.mix) },
         stems: ['drums', 'bass', 'other'].map(function (k) { return { name: k, source: { name: k + '.wav', bytes: Sequencer.wav(bufs[k]) } }; }),
         onProgress: function (e) { stages.push(e.stage + (e.note ? ': ' + e.note : '')); } }).then(function (r) {
         var dd = host.document(), an = r.analysis, out = { name: 'song import (16 bars, 124 BPM, stems drums/bass/other)', seconds: Math.round((performance.now() - t0) / 100) / 10, saved: saved.length, savedName: r.saved && r.saved.name,

@@ -619,7 +619,7 @@
     var overlay = el('div', 'iv-modal');
     var dlg = el('div', 'iv-dlg', null, { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'iv-dlg-title' });
     var h = el('h2', 'iv-title', 'Import ' + fileName, { id: 'iv-dlg-title' });
-    var sub = el('p', 'iv-sub', 'The file becomes the reference track; the analysis builds a recreation beside it and the project is saved at once.');
+    var sub = el('p', 'iv-sub', 'The file becomes the reference track, and its stems (or the mix, without stems) go on the timeline as audio from the first downbeat. The analysis reads tempo and what each part is; the project is saved at once.');
     var content = el('div', 'iv-dlg-body');
     var foot = el('div', 'iv-dlg-foot');
     dlg.appendChild(h); dlg.appendChild(sub); dlg.appendChild(content); dlg.appendChild(foot);
@@ -684,17 +684,37 @@
     function say(t) { statusEl.textContent = t || ''; }
 
     // ---- step 2: stems
-    function stemsStep() {
+    // what goes on the timeline: the stems as audio (the default), and with the box ticked also the instrument tracks
+    // the analysis suggests (a rough first pass)
+    var placeBoth = false;
+    function placeBox() {
+      var id = 'iv-place-both', wrap = el('p', 'iv-place');
+      var cb = el('input', null, null, { type: 'checkbox', id: id }); cb.id = id; cb.checked = placeBoth;
+      on(cb, 'change', function () { placeBoth = !!cb.checked; });
+      wrap.appendChild(cb);
+      wrap.appendChild(el('label', null, ' Also build instrument tracks from the analysis (a rough first guess; they play on top of the stems until muted)', { 'for': id }));
+      return wrap;
+    }
+    function stemsStep(web) {
       clear(content);
-      var sep = availability(host, shell).separate, hasPath = !!(file && file.path);
-      if (sep.ok) {
+      var sep = availability(host, shell).separate, hasPath = !!(file && file.path), P0 = root.Project;
+      // no desktop shell: the server that served this page may offer separation (tools/serve.js on this computer)
+      if (!sep.ok && web === undefined && P0 && isFn(P0.localSeparator)) {
+        content.appendChild(el('p', null, 'Looking for a separator on this computer\u2026'));
+        setFoot([cancelBtn]);
+        Promise.resolve(safe(function () { return P0.localSeparator(); }, false)).then(function (yes) { if (!R.running && !R.cancelled && !R.done) stemsStep(!!yes); }, function () { if (!R.running && !R.cancelled && !R.done) stemsStep(false); });
+        return;
+      }
+      if (web) hasPath = true;                       // the local server takes the file's bytes, not a path
+      if (sep.ok || web) {
         content.appendChild(el('h3', 'iv-step', 'Stems'));
-        content.appendChild(el('p', null, hasPath ? 'Separate the file into drums, bass, other and vocals first (HT-Demucs, a few minutes), or analyse the mix as it is.' : 'This file has no path on disk, so it cannot be separated here; the mix will be analysed as one.'));
+        content.appendChild(el('p', null, web ? 'Separate the file into drums, bass, other and vocals first (HT-Demucs, on this computer through the local server; a few minutes), or place the mix as it is.' : hasPath ? 'Separate the file into drums, bass, other and vocals first (HT-Demucs, a few minutes), or analyse the mix as it is.' : 'This file has no path on disk, so it cannot be separated here; the mix will be analysed as one.'));
         var bSep = btn('iv-primary', 'Separate into stems', 'Run the separator on this file (HT-Demucs)');
         var bMix = btn('', 'Analyse the mix', 'Skip separation: analyse the whole mix');
         if (!hasPath) setDisabled(bSep, true, 'This file has no path on disk.');
         on(bSep, 'click', function () { if (isOff(bSep)) { say(bSep._why); return; } run('separate', null); });
         on(bMix, 'click', function () { run('mix', null); });
+        content.appendChild(placeBox());
         setFoot([bSep, bMix, cancelBtn]);
       } else {
         content.appendChild(el('h3', 'iv-step', 'Stems (optional)'));
@@ -746,6 +766,7 @@
         on(bUse, 'click', function () { if (isOff(bUse)) { say(bUse._why); return; } run('stems', stems.map(function (s) { return { name: s.name, source: s.file }; })); });
         on(bSkip, 'click', function () { run('mix', null); });
         content.appendChild(zone); content.appendChild(bPick); content.appendChild(list);
+        content.appendChild(placeBox());
         renderStems();
         setFoot([bUse, bSkip, cancelBtn]);
       }
@@ -849,6 +870,7 @@
         if (R.cancelled) throw cancelErr();
         return root.Project.importTrack({
           file: file, stems: stemList, shell: useShell, host: host,
+          place: placeBoth ? 'both' : 'stems', separate: mode === 'separate' ? undefined : false,
           signal: R.abort ? R.abort.signal : undefined,
           onProgress: function (ev) {
             if (ev && ev.stage && ev.stage !== 'separate') R.separating = false;
