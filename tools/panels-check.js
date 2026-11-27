@@ -6,7 +6,8 @@
  * add affordance adding a track; the HVT-909; a bridge-like host (no document/editor); the windows.js Panel view; dispose
  * leaving no listeners. Synth panels: HVT-303 and HVT-D against Classics.spec (every spec row has a control, every control a
  * spec row; a renamed row is skipped, not left dead), the 303's step section (select, note keys, octave, accent, slide, rest,
- * one undo entry each), HVT-106 against a stub spec from P3's table (radios, lamp switches, a stepped fader).
+ * one undo entry each), HVT-106 against a stub spec from P3's table (radios, lamp switches, a stepped fader). Step sequencers
+ * (Showroom Crew W2): HVT-D (REC, note entry, ratchet, length, portrait with octave keys) and HVT-106 (chord notes, COPY).
  */
 'use strict';
 var fs = require('fs'), path = require('path'), vm = require('vm');
@@ -445,6 +446,38 @@ var kbN = rDn.el.find(function (n) { return n.className === 'pn-keys' || n.attrs
 ok(kbN && (typeof host.audition === 'function' ? kbN.attrs.role === 'group' : kbN.attrs['aria-hidden'] === 'true'), 'the keyboard is a live group only when the host can audition');
 rDn.dispose();
 
+// ---- HVT-D step sequencer (Showroom Crew W2): in a window REC starts off (keys only audition), REC on writes the step
+var rDs = P.render(dD, hostA); rDs.update();
+var dsk = rDs.el.find(function (n) { return /^Step \d+/.test(n.attrs['aria-label'] || ''); });
+ok(dsk.length === 16 && rDs.el.find(function (n) { return n.attrs['data-seq'] === 'mono'; }).length === 1, 'HVT-D: the step sequencer is on the panel (16 keys shown)');
+function cD() { var t = sb.Panels.util.findTrack(host.document(), 'modeld'), vn = sb.Panels.util.variantName(host.document().sections[host.transport.pos().section], 'modeld'); return vn ? t.variants[vn].cells : null; }
+function kDs(re) { return rDs.el.find(function (n) { return re.test(n.attrs['aria-label'] || ''); })[0]; }
+var dkey = function (m) { return rDs.el.find(function (n) { return n.attrs['data-midi'] === String(m); })[0]; };
+var ud = undoN(), cBefore = JSON.stringify(cD());
+dsk[2].fire('click', {}); dkey(60).fire('pointerdown', {}); dkey(60).fire('pointerup', {});
+ok(undoN() === ud && JSON.stringify(cD()) === cBefore, 'HVT-D in a window: REC off, a key only auditions (no document change)');
+kDs(/^Record: the keyboard/).fire('click', {}); rDs.update();
+dsk[2].fire('click', {}); dkey(60).fire('pointerdown', {}); dkey(60).fire('pointerup', {});
+var cd = cD();
+ok(cd && cd[2] && cd[2].note === 60 && undoN() === ud + 1, 'HVT-D: REC on, the key writes C4 into step 3, one undo entry (and the section plays the track)');
+rDs.update();
+ok(/selected/.test(dsk[3].attrs['aria-label']), 'HVT-D: entry moves to the next step');
+dsk[2].fire('click', {}); kDs(/^Ratchet the selected/).fire('click', {});
+ok(cD()[2].rep === 2 && undoN() === ud + 2, 'HVT-D: RATCHET sets rep 2 (the sequencer plays rep as repeats)');
+kDs(/^Pattern length/).fire('click', {});
+ok(cD().length === (cd.length === 16 ? 32 : 16) && undoN() === ud + 3, 'HVT-D: LENGTH changes the variant\'s bars, one undo entry');
+ed.undo(); host.commit();
+ok(cD().length === cd.length, 'undo restores the length');
+var rDp = P.render(dD, hostA, { layout: 'portrait' });
+everyRow(rDp, dD.spec, 'HVT-D portrait');
+ok(rDp.el.children[0].attrs.viewBox === '0 0 560 2082' && rDp.el.find(function (n) { return n.attrs['data-midi'] != null; }).length === 20, 'HVT-D portrait: 560 x 2082, a 20-key keyboard');
+var okUp = rDp.el.find(function (n) { return n.attrs['aria-label'] === 'Keyboard an octave up'; })[0];
+okUp.fire('click', {});
+ok(rDp.el.find(function (n) { return n.attrs['data-midi'] === '48'; }).length === 0 && rDp.el.find(function (n) { return n.attrs['data-midi'] === '79'; }).length === 1, 'HVT-D portrait: the octave key moves the keyboard up (48..67 -> 60..79)');
+rDp.dispose();
+var LDs = LIVE.n; rDs.dispose();
+ok(rDs.listenerCount() === 0 && listenersUnder(rDs.el) === 0 && LIVE.n < LDs, 'HVT-D with sequencer: dispose removes its listeners');
+
 // ---- HVT-106 on a stub spec (P3's table; names from BRIEF.md)
 var JUNO = {
   tune: { min: -100, max: 100, value: 0, unit: 'ct' }, bend: { min: 0, max: 12, value: 2, unit: 'st' }, portamento: { min: 0, max: 1, value: 0 },
@@ -485,8 +518,30 @@ ok(jkeys.length === 49 && jkeys.every(function (k) { return k.attrs.role === 'bu
 var c3 = jkeys.filter(function (k) { return k.attrs['data-midi'] === '48'; })[0];
 c3.fire('pointerdown', { shiftKey: true }); c3.fire('pointerup', {});
 ok(auditions.length === 3 && auditions.map(function (a) { return a[1]; }).join() === '48,52,55' && auditions[0][0] === 'juno' && rJ.kit.state.lastAudition.ok, 'Shift-click on C3 auditions a C major triad on the juno track');
+ok(rJ.el.find(function (n) { return n.attrs['data-seq'] === 'poly'; }).length === 1 && rJ.el.find(function (n) { return /^Copy the selected chord/.test(n.attrs['aria-label'] || ''); })[0].attrs['aria-disabled'] === 'true', 'HVT-106: the poly sequencer is drawn, its edit keys disabled on a host without an editor');
 var LJ = LIVE.n; rJ.dispose();
 ok(rJ.listenerCount() === 0 && listenersUnder(rJ.el) === 0 && LIVE.n < LJ, 'HVT-106 dispose removes its listeners');
+
+// ---- HVT-106 polyphonic sequencer on the real Host (Showroom Crew W2)
+ed.group(function (e) { e.addTrack({ name: 'juno', type: 'juno', inst: 'juno', kind: 'melody', family: 'keys', gain: 0.8, variants: { A: { bars: 1, cells: [] } } }); });
+host.commit();
+var dJ = host.device('track:juno');
+if (dJ) {
+  var rP = P.render(dJ, host, { rec: true }); rP.update();
+  function cJ() { var t = sb.Panels.util.findTrack(host.document(), 'juno'), vn = sb.Panels.util.variantName(host.document().sections[host.transport.pos().section], 'juno'); return vn ? t.variants[vn].cells : null; }
+  var pk = function (m) { return rP.el.find(function (n) { return n.attrs['data-midi'] === String(m); })[0]; };
+  var psk = rP.el.find(function (n) { return /^Step \d+/.test(n.attrs['aria-label'] || ''); });
+  psk[4].fire('click', {});
+  var up0 = undoN();
+  [62, 65, 69, 72].forEach(function (m) { pk(m).fire('pointerdown', {}); pk(m).fire('pointerup', {}); });
+  ok(cJ()[4] && cJ()[4].notes.join() === '62,65,69,72' && cJ()[4].note === 62 && undoN() === up0 + 4, 'HVT-106: with REC each key adds a chord note to step 5 (cell.notes, note = lowest), one undo entry each');
+  rP.update();
+  ok(/Step 5: Dm7/.test(psk[4].attrs['aria-label']), 'HVT-106: the step names the chord Dm7 (' + psk[4].attrs['aria-label'] + ')');
+  ok(pk(65).attrs.fill === '#e8781e' && pk(64).attrs.fill !== '#e8781e', 'HVT-106: the keyboard lights the selected step\'s chord');
+  rP.el.find(function (n) { return /^Copy the selected chord/.test(n.attrs['aria-label'] || ''); })[0].fire('click', {});
+  ok(cJ()[5] && cJ()[5].notes.join() === '62,65,69,72' && undoN() === up0 + 5, 'HVT-106: COPY (chord memory) copies to step 6, one undo entry');
+  rP.dispose();
+}
 
 timers.forEach(clearTimeout);
 console.log('OK: ' + passed + ' checks passed');

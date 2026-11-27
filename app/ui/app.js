@@ -13,10 +13,13 @@
   var shell = root.HavantechnoShell || null;
 
   var LS_VIEW = 'hv.view';
+  // Pressing Crew V2: Mixer (ui/mixer-view.js) and Clips (ui/clip-view.js) join the switch; Tab switches System Editor
+  // and Step View, or Mixer and Clips; Ctrl/Cmd or Alt + 1..4 picks one (log-V2.md)
   var VIEWS = [
-    { id: 'system', label: 'System Editor', global: 'SystemEditor' },
-    { id: 'step', label: 'Step View', global: 'StepView' },
-    { id: 'mixer', label: 'Mixer', global: null }
+    { id: 'system', label: 'System Editor', global: 'SystemEditor', key: '1' },
+    { id: 'step', label: 'Step View', global: 'StepView', key: '2' },
+    { id: 'mixer', label: 'Mixer', global: 'MixerView', key: '3' },
+    { id: 'clips', label: 'Clips', global: 'ClipView', key: '4' }
   ];
 
   // ------------------------------------------------------------------ helpers
@@ -127,6 +130,9 @@
     save: doSave,
     open: doOpen,
     exportWav: doExport,
+    exportAudio: function () { return doExportDialog(); },
+    importAudio: function () { return doImportAudio(); },
+    openSettings: function (tab) { return openSettings(tab); },
     undo: function () { return doUndo(false); },
     redo: function () { return doUndo(true); },
     toast: toast,
@@ -270,7 +276,61 @@
       toast('Exported ' + name + '.wav');
       return { name: name + '.wav' };
     }).then(function (r) { finish(); return r; }, function (e) { report('export', e); toast('Export failed: ' + (e && e.message ? e.message : e)); finish(); return null; });
-    function finish() { S.busy = false; if (b) { b.disabled = false; b.textContent = 'Export WAV'; } }
+    function finish() { S.busy = false; if (b) { b.disabled = false; b.textContent = 'Export\u2026'; } }
+  }
+
+  // ---- Export… (ui/export-dialog.js on V1's calls); the plain 16-bit whole-song path stays the fallback
+  function XD() { return root.ExportDialog || null; }
+  function doExportDialog() {
+    var h = S.host, xd = XD();
+    if (!h) return Promise.resolve(null);
+    var av = xd && typeof xd.available === 'function' ? xd.available(h) : { ok: false };
+    if (!av.ok) return doExport();
+    try { return xd.open(h, { shell: shell, toast: toast }); } catch (e) { report('export dialog', e); return doExport(); }
+  }
+  function doImportAudio() {
+    var h = S.host, xd = XD();
+    if (!h) return Promise.resolve([]);
+    if (!xd || typeof xd.importAudio !== 'function') { toast('Import audio is not available: ui/export-dialog.js did not load.'); return Promise.resolve([]); }
+    return xd.importAudio(h, { shell: shell, toast: toast });
+  }
+  function importAudioWhy() {
+    var h = S.host;
+    if (!XD()) return 'ui/export-dialog.js did not load.';
+    if (!h || typeof h.addAudioTrack !== 'function') return 'Audio tracks are not in this engine yet (host.addAudioTrack is missing).';
+    return '';
+  }
+  function openSettings(tab) {
+    var St = root.Settings;
+    if (!St || typeof St.open !== 'function') { toast('Settings are not available: ui/settings.js did not load.'); return false; }
+    return St.open(tab);
+  }
+  // device windows open on the panel or the controls (Settings 'view.deviceOpen'): Windows remembers the view per device
+  // in hv.win.<id>; a device opened for the first time gets 'controls' written there before Windows.open reads it
+  function wrapWindows() {
+    var W = root.Windows;
+    if (!W || W.__v2wrapped || typeof W.open !== 'function') return;
+    var orig = W.open;
+    W.open = function (id) {
+      try {
+        if (root.Settings && root.Settings.get('view.deviceOpen') === 'controls' && id) {
+          var k = 'hv.win.' + id, sv = null;
+          try { sv = JSON.parse(root.localStorage.getItem(k) || 'null'); } catch (e1) { sv = null; }
+          if (!sv || !sv.v) { sv = sv && typeof sv === 'object' ? sv : {}; sv.v = 'controls'; try { root.localStorage.setItem(k, JSON.stringify(sv)); } catch (e2) { /* blocked */ } }
+        }
+      } catch (e) { report('deviceOpen', e); }
+      return orig.apply(W, arguments);
+    };
+    W.__v2wrapped = true;
+  }
+  // saved audio options (Settings 'audio.*'): passed to Host.create as opts.audio (bootMain); only the output device is
+  // applied again once audio runs (setSinkId needs a running context; the rate and latency are already in it)
+  function applyAudioSettings(host) {
+    var St = root.Settings;
+    if (!St || typeof host.setAudioOptions !== 'function') return;
+    if (!St.get('audio.sinkId')) return;
+    var o = { sinkId: St.get('audio.sinkId') };
+    try { Promise.resolve(host.setAudioOptions(o)).then(null, function (e) { report('setAudioOptions', e); }); } catch (e) { report('setAudioOptions', e); }
   }
 
   // ---- import, report, A/B (Dubplate Crew D2; ui/import-view.js)
@@ -320,7 +380,6 @@
   }
   function showView(id) {
     var h = S.host; if (!h) return false;
-    if (id === 'mixer') { toast('The Mixer drawer is not built yet.', 2500); return false; }
     var spec = null, i;
     for (i = 0; i < VIEWS.length; i++) if (VIEWS[i].id === id) spec = VIEWS[i];
     if (!spec) return false;
@@ -351,11 +410,15 @@
     }
     return true;
   }
+  // Tab switches within a pair, as it always switched System Editor and Step View: the two editing views, and the Mixer
+  // with the Clips (V2's choice, log-V2.md); Ctrl/Cmd or Alt + 1..4 picks any view
+  var PAIR = { system: 'step', step: 'system', mixer: 'clips', clips: 'mixer' };
   function toggleView() {
-    var next = S.viewId === 'system' ? 'step' : 'system';
+    var next = PAIR[S.viewId] || 'system';
     if (!viewAvailable(next)) return false;
     return showView(next);
   }
+  function viewByKey(d) { for (var i = 0; i < VIEWS.length; i++) if (VIEWS[i].key === d) return VIEWS[i].id; return null; }
   function refreshSwitch() {
     var btns = S.bar.viewBtns || {};
     for (var id in btns) if (btns.hasOwnProperty(id)) btns[id].setAttribute('aria-pressed', id === S.viewId ? 'true' : 'false');
@@ -372,13 +435,14 @@
       if (key === 'o') { doOpen(); return true; }
       if (key === 'z' && !k.inField) { doUndo(!!k.shift); return true; }
       if (key === 'y' && !k.inField) { doUndo(true); return true; }
-      if (key === '1') { showView('system'); return true; }
-      if (key === '2') { showView('step'); return true; }
+      if (viewByKey(key)) { showView(viewByKey(key)); return true; }
+      if (key === ',' && !k.shift) { openSettings(); return true; }
+      if (key === 'e' && k.shift) { doExportDialog(); return true; }
       return false;
     }
     if (k.alt && !mod && !k.shift) {
-      if (k.code === 'Digit1') { showView('system'); return true; }
-      if (k.code === 'Digit2') { showView('step'); return true; }
+      var dg = /^Digit([1-4])$/.exec(k.code || '');
+      if (dg && viewByKey(dg[1])) { showView(viewByKey(dg[1])); return true; }
       return false;
     }
     if (mod || k.alt || k.inField) return false;
@@ -413,9 +477,10 @@
     seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'View');
     B.viewBtns = {};
     VIEWS.forEach(function (v) {
-      var b = button('', v.label, v.id === 'mixer' ? 'Mixer drawer (placeholder)' : v.label + ' (Tab switches System Editor and Step View)');
+      var b = button('', v.label, v.label + ' (Ctrl/Cmd+' + v.key + ' or Alt+' + v.key + '; Tab switches it with ' + (v.id === 'system' ? 'Step View' : v.id === 'step' ? 'the System Editor' : v.id === 'mixer' ? 'Clips' : 'the Mixer') + ')');
       b.setAttribute('aria-pressed', 'false');
-      if (v.id === 'mixer') { b.disabled = true; b.title = 'Mixer drawer: not built yet'; }
+      b.setAttribute('data-view-switch', v.id);
+      if (!viewAvailable(v.id)) { b.disabled = true; b.title = v.label + ': its file did not load'; }
       b.addEventListener('click', function () { showView(v.id); });
       B.viewBtns[v.id] = b;
       seg.appendChild(b);
@@ -526,14 +591,29 @@
     });
     right.appendChild(B.report);
 
-    B.export = button('', 'Export WAV', 'Render the whole song to a WAV file');
-    B.export.addEventListener('click', doExport);
-    right.appendChild(B.export);
+    // V2: Export… opens the export dialog (mix, stems, span, format) when the engine has host.exportAudio, else it
+    // renders the whole song to one 16-bit WAV as before; Audio… adds audio files as audio tracks at the playhead
+    var xs = el('div', 'ap-seg');
+    B.export = button('', 'Export\u2026', 'Export audio: the mix or stems, the song or a span (Ctrl/Cmd+Shift+E)');
+    B.export.addEventListener('click', function () { doExportDialog(); });
+    B.impAudio = button('', 'Audio\u2026', 'Import audio files as audio tracks at the playhead');
+    B.impAudio.addEventListener('click', function () {
+      var why = importAudioWhy();
+      if (why) { toast(why, 5000); return; }
+      doImportAudio();
+    });
+    xs.appendChild(B.export); xs.appendChild(B.impAudio);
+    right.appendChild(xs);
 
     B.win = button('', 'Windows', 'Device windows: hide all, tile, cascade, link');
     B.win.setAttribute('aria-haspopup', 'menu'); B.win.setAttribute('aria-expanded', 'false');
     B.win.addEventListener('click', function () { toggleWinMenu(); });
     right.appendChild(B.win);
+
+    B.settings = button('', 'Settings', 'Settings: audio, view, about (Ctrl/Cmd+,)');
+    B.settings.setAttribute('aria-haspopup', 'dialog');
+    B.settings.addEventListener('click', function () { openSettings(); });
+    right.appendChild(B.settings);
 
     frame.appendChild(bar);
   }
@@ -616,6 +696,15 @@
       try { var ed = h.editor(); cu = !!ed.canUndo(); cr = !!ed.canRedo(); } catch (e5) { /* ignore */ }
       if (B.undo.disabled === cu) B.undo.disabled = !cu;
       if (B.redo.disabled === cr) B.redo.disabled = !cr;
+      var iw = importAudioWhy();
+      if (B._iw !== iw) {
+        B._iw = iw;
+        if (iw) { B.impAudio.setAttribute('aria-disabled', 'true'); B.impAudio.title = iw; }
+        else { B.impAudio.removeAttribute('aria-disabled'); B.impAudio.title = 'Import audio files as audio tracks at the playhead'; }
+      }
+      var xa = XD() && typeof XD().available === 'function' ? XD().available(h) : { ok: false, why: '' };
+      var xt = xa.ok ? 'Export audio: the mix or stems, the song or a span (Ctrl/Cmd+Shift+E)' : 'Export the whole song as one 16-bit WAV (' + (xa.why || 'the export dialog did not load') + ')';
+      if (B.export.title !== xt) B.export.title = xt;
       var rw = reportWhy();
       if (B._rw !== rw) {
         B._rw = rw;
@@ -678,6 +767,7 @@
           return;
         }
         overlay.hidden = true; S.started = true;
+        applyAudioSettings(host);
         afterStart(host, true);
       }
       var p;
@@ -721,6 +811,11 @@
     try {
       if (new root.URLSearchParams(root.location.search).get('song') === 'v2' && root.Song && typeof root.Song.documentV2 === 'function') opts.doc = root.Song.documentV2();
     } catch (e0) { report('song param', e0); }
+    // V2: the saved audio options (Settings 'audio.*') go to the engine before its context exists (V1's opts.audio)
+    try {
+      var St0 = root.Settings;
+      if (St0 && typeof St0.get === 'function') opts.audio = { latencyHint: St0.get('audio.latencyHint'), sampleRate: St0.get('audio.sampleRate') || 0, sinkId: St0.get('audio.sinkId') || '' };
+    } catch (e00) { report('audio settings', e00); }
     try { host = root.Host.create(opts); } catch (e) {
       report('Host.create', e);
       viewEl.appendChild(el('div', 'ap-note', 'The engine could not start: ' + (e && e.message ? e.message : e)));
@@ -736,12 +831,15 @@
     doc.body.appendChild(S.toastEl);
 
     if (root.Windows) root.Windows.init({ host: host, layer: doc.getElementById('windows') });
+    wrapWindows();
+    if (root.Settings && typeof root.Settings.attach === 'function') { try { root.Settings.attach(host, { shell: shell, toast: toast }); } catch (e1) { report('Settings.attach', e1); } }
     buildBar(host);
     S.viewHost = el('div', 'ap-view');
     viewEl.appendChild(S.viewHost);
 
-    var first = lsGet(LS_VIEW);
-    if (first !== 'step' || !viewAvailable('step')) first = 'system';
+    var pref = root.Settings && typeof root.Settings.get === 'function' ? root.Settings.get('view.default') : 'last';
+    var first = pref && pref !== 'last' ? pref : lsGet(LS_VIEW);
+    if (!first || !viewAvailable(first)) first = 'system';
     showView(first);
 
     try {

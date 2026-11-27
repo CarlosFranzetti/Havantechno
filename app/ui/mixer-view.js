@@ -106,8 +106,8 @@
     head.appendChild(el('h2', 'mx-title', 'Mixer'));
     head.appendChild(el('p', 'mx-help', 'Faders and knobs: drag, arrow keys (Shift = fine), double-click resets. Each move is one undo step. M and S are not saved with the song.'));
     var body = el('div', 'mx-body');
-    var scroll = el('div', 'mx-scroll', null, { role: 'group', 'aria-label': 'Track and return strips' });
-    var masterBox = el('div', 'mx-masterbox');
+    var scroll = el('div', 'mx-scroll', null, { role: 'group', 'aria-label': 'Track strips' });
+    var masterBox = el('div', 'mx-masterbox', null, { role: 'group', 'aria-label': 'Returns and master' });
     body.appendChild(scroll); body.appendChild(masterBox);
     rootEl.appendChild(head); rootEl.appendChild(body);
     container.appendChild(rootEl);
@@ -168,13 +168,13 @@
       var nb = btn('mx-name', t.name, 'Open the device window of ' + t.name);
       on(nb, 'click', function () { select(t.name); if (!openDevice('track:' + t.name)) say('Device windows are not available.'); });
       strip.appendChild(nb);
-      strip.appendChild(el('span', 'mx-type', t.type || ''));
-      var pan = bound('knob', { path: t.name + '.pan', label: 'Pan', min: -1, max: 1, step: 0.01, home: 0, size: 'chip', format: fmtPan, bipolar: true });
+      strip.appendChild(el('span', 'mx-type', t.type && t.type !== t.name ? t.type : '\u00A0'));
+      var pan = bound('knob', { path: t.name + '.pan', label: t.name + ' pan', min: -1, max: 1, step: 0.01, home: 0, size: 'strip', format: fmtPan, bipolar: true });
       var pw = el('div', 'mx-knob'); pw.appendChild(pan.el); pw.appendChild(el('span', 'mx-kl', 'Pan', { 'aria-hidden': 'true' }));
       strip.appendChild(pw); s.controls.push(pan);
       var sw = el('div', 'mx-sends');
       sends.forEach(function (sd) {
-        var k = bound('knob', { path: t.name + '.send.' + sd.name, label: 'Send to ' + sd.name, min: 0, max: 1.5, step: 0.01, home: 0, size: 'chip', format: function (v) { return v.toFixed(2); } });
+        var k = bound('knob', { path: t.name + '.send.' + sd.name, label: t.name + ' send to ' + sd.name, min: 0, max: 1.5, step: 0.01, home: 0, size: 'strip', format: function (v) { return v.toFixed(2); } });
         var kw = el('div', 'mx-knob', null, { 'data-fam': sd.family || 'time' }); kw.appendChild(k.el); kw.appendChild(el('span', 'mx-kl', sd.name, { 'aria-hidden': 'true' }));
         sw.appendChild(kw); s.controls.push(k);
       });
@@ -308,11 +308,14 @@
         var row = el('div', 'mx-grow');
         sends.forEach(function (sd) { var s = returnStrip(sd); S.strips.push(s); row.appendChild(s.el); });
         g.appendChild(row);
-        scroll.appendChild(g);
+        masterBox.appendChild(g);
       }
       var m = masterStrip();
       S.strips.push(m); S.master = m;
-      masterBox.appendChild(m.el);
+      var mg = el('div', 'mx-group', null, { 'data-fam': 'dynamics' });
+      mg.appendChild(el('div', 'mx-ghead', 'MASTER'));
+      mg.appendChild(m.el);
+      masterBox.appendChild(mg);
       scroll.scrollLeft = keepScroll;
       if (S.selected) mark(S.selected);
       refreshStates(true);

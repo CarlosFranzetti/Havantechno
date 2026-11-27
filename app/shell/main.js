@@ -8,6 +8,9 @@
  *   'shell:separateProgress'; stems go to <userData>/separation/<name>-<hash>/.
  * - pickDirectory({title}) grants a folder for writeFile / copyFile (shell/files.js): the page may write only inside folders
  *   chosen in a dialog during this run and inside <userData>. appVersion() answers app.getVersion().
+ * - Permissions: only the app's own origin (the havantechno://app scheme, or HAVANTECHNO_URL in development) is granted
+ *   'media' (audio only, never video: device labels for the output-device list), 'speaker-selection' (setSinkId) and
+ *   'midi' (no sysex). Everything else, and every other origin, is denied (installPermissions below).
  * - IPC: openFile, saveFile, appDataPath, readAppData, writeAppData, openDeviceWindow,
  *   closeDeviceWindow, setDeviceWindowsVisible. Bounds of the main window and of each device window
  *   are remembered in <userData>/window-state.json. */
@@ -19,7 +22,7 @@ var Separation = require('./separation');
 var Files = require('./files');
 
 var app = electron.app, BrowserWindow = electron.BrowserWindow, ipcMain = electron.ipcMain;
-var dialog = electron.dialog, protocol = electron.protocol, screen = electron.screen, Menu = electron.Menu;
+var session = electron.session, dialog = electron.dialog, protocol = electron.protocol, screen = electron.screen, Menu = electron.Menu;
 
 var SCHEME = 'havantechno';
 var APP_DIR = path.resolve(__dirname, '..');
@@ -115,6 +118,27 @@ function registerAppProtocol() {
     } catch (e) {
       return new Response('Not found', { status: 404 });
     }
+  });
+}
+
+// ------------------------------------------------------------------ permissions
+// Granted to the app's own origin and nothing else: 'media' (audio only: enumerateDevices shows device labels once an
+// audio permission exists), 'speaker-selection' (setSinkId, the output device) and 'midi' (not 'midiSysex'). A request
+// for video, or for any other permission or origin, is denied. The check handler answers synchronous queries.
+var ALLOWED_PERMISSIONS = ['media', 'speaker-selection', 'midi'];
+function ownOrigin(url) { return sameOrigin(url); }
+function installPermissions(ses) {
+  ses.setPermissionRequestHandler(function (wc, permission, callback, details) {
+    var url = (details && (details.requestingUrl || details.securityOrigin)) || (wc && wc.getURL && wc.getURL()) || '';
+    var ok = ALLOWED_PERMISSIONS.indexOf(permission) >= 0 && ownOrigin(url);
+    if (ok && permission === 'media' && details && Array.isArray(details.mediaTypes) && details.mediaTypes.indexOf('video') >= 0) ok = false;
+    callback(!!ok);
+  });
+  ses.setPermissionCheckHandler(function (wc, permission, requestingOrigin, details) {
+    var url = requestingOrigin || (details && details.requestingUrl) || '';
+    if (ALLOWED_PERMISSIONS.indexOf(permission) < 0 || !ownOrigin(url)) return false;
+    if (permission === 'media' && details && details.mediaType === 'video') return false;
+    return true;
   });
 }
 
@@ -469,6 +493,7 @@ if (!gotLock) {
   app.whenReady().then(function () {
     loadState();
     if (!DEV_URL) registerAppProtocol();
+    installPermissions(session.defaultSession);
     registerIpc();
     buildMenu();
     createMainWindow();

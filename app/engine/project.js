@@ -138,6 +138,7 @@
       var doc = parse(text);
       var host = o.host;
       if (!host || typeof host.loadDocument !== 'function') return doc;
+      if (filePath) lastBase = dirName(filePath);
       host.loadDocument(doc, { shell: sh, base: dirName(filePath) });
       var ready = typeof host.audioReady === 'function' ? host.audioReady() : Promise.resolve(null);
       return ready.then(function () { return host.document(); }, function () { return host.document(); });
@@ -339,6 +340,134 @@
     });
   }
 
+  // ------------------------------------------------------------ audio export and project bundles (Pressing Crew, V1)
+  var BUNDLE_FILE = 'project' + EXT, lastBase = null;
+  function join(sh, dir, name) {
+    if (fn(sh, 'joinPath')) { try { return sh.joinPath(dir, name); } catch (e) {} }
+    var sep = String(dir).indexOf('\\') >= 0 && String(dir).indexOf('/') < 0 ? '\\' : '/';
+    return String(dir).replace(/[\\/]+$/, '') + sep + name;
+  }
+  function isAbsPath(p) { return /^(\/|[A-Za-z]:[\\/]|\\\\)/.test(String(p || '')); }
+  function download(name, bytes, type) {
+    var d = root.document;
+    if (!d || !d.createElement || typeof root.Blob !== 'function' || !root.URL || !root.URL.createObjectURL) throw new Error('Project: no way to save here');
+    var url = root.URL.createObjectURL(new root.Blob([bytes], { type: type || 'audio/wav' }));
+    var a = d.createElement('a');
+    a.href = url; a.download = name; a.style.display = 'none';
+    (d.body || d.documentElement).appendChild(a);
+    a.click();
+    setTimeout(function () { try { a.parentNode.removeChild(a); root.URL.revokeObjectURL(url); } catch (e) {} }, 4000);
+  }
+  function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  // o: {host, shell, ...host.exportAudio options}. Electron (pickDirectory + writeFile): the folder is chosen first,
+  // then each file is written as soon as it is encoded and its bytes dropped. Web: one download per file, 400 ms apart.
+  // Chromium asks once, at the second file, whether the page may download several files; if the user blocks it the
+  // other files are not saved (each still resolves in the list, path-less). Resolves [{name, path?}], null on cancel.
+  function exportAudio(o) {
+    o = o || {};
+    var host = o.host, sh = shellOf(o);
+    if (!host || typeof host.exportAudio !== 'function') return Promise.reject(new Error('Project.exportAudio: a host with exportAudio is required'));
+    var electron = fn(sh, 'pickDirectory') && fn(sh, 'writeFile');
+    var dirP = electron ? asPromise(sh.pickDirectory({ title: 'Export audio to a folder' })) : Promise.resolve(null);
+    return dirP.then(function (dir) {
+      if (electron && !dir) return null;
+      var written = [], opts = {}, k, user = o.onFile, n = 0;
+      for (k in o) if (Object.prototype.hasOwnProperty.call(o, k) && k !== 'host' && k !== 'shell') opts[k] = o[k];
+      opts.onFile = function (f) {
+        var p;
+        if (electron) {
+          var path = join(sh, dir, f.name);
+          p = asPromise(sh.writeFile(path, f.bytes)).then(function () { written.push({ name: f.name, path: path }); });
+        } else {
+          p = (n++ ? pause(400) : Promise.resolve()).then(function () { download(f.name, f.bytes); written.push({ name: f.name }); });
+        }
+        return p.then(function () { return typeof user === 'function' ? user(f) : null; }).then(function () { f.bytes = null; });
+      };
+      return host.exportAudio(opts).then(function () { return written; });
+    });
+  }
+  function uniqueName(name, used) {
+    var m = /^(.*?)(\.[A-Za-z0-9]{1,5})?$/.exec(String(name || 'audio').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_') || 'audio'), b = m[1] || 'audio', x = m[2] || '', n = b + x, i = 2;
+    while (used[n.toLowerCase()]) n = b + '_' + (i++) + x;
+    used[n.toLowerCase()] = true;
+    return n;
+  }
+  // Electron: a project folder (chosen with pickDirectory) holding project.havantechno.json and audio/ with every file
+  // of doc.audio copied in (copyFile from its path, absolute or relative to o.base / the folder the project was opened
+  // from; a file with no readable path is written as a 32-bit float WAV of its decoded audio), the bundle's document
+  // pointing at audio/<file>, so the folder opens on another machine. audio/ needs HavantechnoShell.makeDirectory; without
+  // it the files go beside the document. The live document is not changed. Web: the document alone through save(); the
+  // audio is relinked by file name when the files are added again (the existing flow). Resolves {path, dir, files,
+  // missing, flat} (web: {path: null, name, missing}), null on cancel.
+  function saveBundle(o) {
+    o = o || {};
+    var host = o.host, sh = shellOf(o);
+    if (!host || typeof host.document !== 'function') return Promise.reject(new Error('Project.saveBundle: a host is required'));
+    var doc = JSON.parse(JSON.stringify(host.document())), audio = doc.audio || {}, ids = Object.keys(audio);
+    if (!(fn(sh, 'pickDirectory') && fn(sh, 'writeFile'))) {
+      return save(doc, { shell: sh, name: o.name }).then(function (r) { return r ? { path: (r && r.path) || null, name: r.name, missing: ids, web: true } : null; });
+    }
+    var base = o.base || lastBase;
+    return asPromise(sh.pickDirectory({ title: 'Choose the project folder' })).then(function (dir) {
+      if (!dir) return null;
+      var sub = join(sh, dir, 'audio'), flat = !fn(sh, 'makeDirectory');
+      var mk = flat ? Promise.resolve(false) : asPromise(sh.makeDirectory(sub)).then(function () { return true; }, function () { return false; });
+      return mk.then(function (made) {
+        flat = !made;
+        var used = {}, files = [], missing = [], chain = Promise.resolve();
+        used[BUNDLE_FILE.toLowerCase()] = true;
+        ids.forEach(function (id) {
+          chain = chain.then(function () {
+            var e = audio[id], src = String(e.src || ''), from = isAbsPath(src) ? src : (base && src && !/^[a-z][a-z0-9+.-]*:/i.test(src) ? join(sh, base, src) : null);
+            var fname = uniqueName(e.name || String(src).split(/[\\/]/).pop() || id, used), dst = join(sh, flat ? dir : sub, fname), rel = flat ? fname : 'audio/' + fname;
+            var buf = typeof host.buffer === 'function' ? host.buffer(id) : null;
+            function asWav() {
+              if (!buf || typeof host.wav !== 'function') { missing.push(id); return null; }
+              var wname = /\.wav$/i.test(fname) ? fname : fname.replace(/\.[A-Za-z0-9]{1,5}$/, '') + '.wav';
+              if (wname !== fname) { delete used[fname.toLowerCase()]; wname = uniqueName(wname, used); }
+              var wdst = join(sh, flat ? dir : sub, wname);
+              return asPromise(sh.writeFile(wdst, host.wav(buf, { bitDepth: 32 }))).then(function () {
+                e.src = flat ? wname : 'audio/' + wname; files.push({ id: id, path: wdst, how: 'decoded' });
+              }, function () { missing.push(id); });
+            }
+            if (from && fn(sh, 'copyFile')) {
+              return asPromise(sh.copyFile(from, dst)).then(function () { e.src = rel; files.push({ id: id, path: dst, how: 'copied' }); }, asWav);
+            }
+            return asWav();
+          });
+        });
+        return chain.then(function () {
+          var path = join(sh, dir, BUNDLE_FILE);
+          return asPromise(sh.writeFile(path, serialize(doc))).then(function () {
+            lastBase = dir;
+            return { path: path, dir: dir, files: files, missing: missing, flat: flat };
+          });
+        });
+      });
+    });
+  }
+  // Electron: a folder chosen with pickDirectory, its project.havantechno.json read with readText and loaded into
+  // o.host with the folder as the base for audio/ paths; when the folder has no such file (or the shell cannot read
+  // it) the open dialog is shown instead (open()). Web: open() (the document; missing audio relinks by name).
+  // Resolves the document (after the host's audio reload when o.host is given), null on cancel.
+  function openBundle(o) {
+    o = o || {};
+    var sh = shellOf(o);
+    if (!(fn(sh, 'pickDirectory') && fn(sh, 'readText'))) return open(o);
+    return asPromise(sh.pickDirectory({ title: 'Open a project folder' })).then(function (dir) {
+      if (!dir) return null;
+      return asPromise(sh.readText(join(sh, dir, BUNDLE_FILE), {})).then(null, function () { return null; }).then(function (text) {
+        if (text == null) return open(o);
+        var doc = parse(text), host = o.host;
+        lastBase = dir;
+        if (!host || typeof host.loadDocument !== 'function') return doc;
+        host.loadDocument(doc, { shell: sh, base: dir });
+        var ready = typeof host.audioReady === 'function' ? host.audioReady() : Promise.resolve(null);
+        return ready.then(function () { return host.document(); }, function () { return host.document(); });
+      });
+    });
+  }
+
   // ------------------------------------------------------------ autosave
   // Synchronous to localStorage (web and Electron alike, so restore() can be synchronous); in Electron also mirrored
   // to the app-data folder when the shell offers writeAppData(fileName, text).
@@ -377,7 +506,7 @@
     try { return asPromise(sh.appDataPath()).then(function (p) { return p || null; }, function () { return null; }); } catch (e) { return Promise.resolve(null); }
   }
 
-  root.Project = { serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, pickFiles: pickFiles, importProgram: importProgram, importTrack: importTrack, missing: missing, autosave: autosave, restore: restore,
+  root.Project = { exportAudio: exportAudio, saveBundle: saveBundle, openBundle: openBundle, BUNDLE_FILE: BUNDLE_FILE, serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, pickFiles: pickFiles, importProgram: importProgram, importTrack: importTrack, missing: missing, autosave: autosave, restore: restore,
                    restoreAsync: restoreAsync, clearAutosave: clearAutosave, appDataPath: appDataPath, fileName: fileName,
                    EXT: EXT, AUTOSAVE_KEY: AUTOSAVE_KEY, FORMAT: FORMAT };
 })();

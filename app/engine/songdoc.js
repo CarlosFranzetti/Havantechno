@@ -157,6 +157,23 @@
     else t.params.buffer = String(t.params.buffer);
     return t;
   }
+  // an audio track (Pressing Crew, V1): type 'audio' and inst 'audio' (either marks it), clips [{audio, bar, offset,
+  // length, gain}]: audio a doc.audio id, bar 0-based (fractions allowed), offset and length in seconds of the file
+  // (length 0 = to the end of the file), gain linear. A clip without an audio id is dropped. No variants are played.
+  function isAudioTrack(t) { return !!t && (t.type === 'audio' || t.inst === 'audio'); }
+  function fin(v, d) { v = Number(v); return v === v && isFinite(v) ? v : d; }
+  function normClip(c) {
+    if (!c || typeof c !== 'object' || isArr(c) || c.audio == null || c.audio === '') return null;
+    return { audio: String(c.audio), bar: Math.max(0, fin(c.bar, 0)), offset: Math.max(0, fin(c.offset, 0)), length: Math.max(0, fin(c.length, 0)), gain: Math.max(0, fin(c.gain, 1)) };
+  }
+  function normAudioTrack(t) {
+    if (!isAudioTrack(t)) return t;
+    t.type = 'audio'; t.inst = 'audio';
+    var list = isArr(t.clips) ? t.clips : [], out = [];
+    for (var i = 0; i < list.length; i++) { var c = normClip(list[i]); if (c) out.push(c); }
+    t.clips = out;
+    return t;
+  }
   // doc.audio: {bufferId: {name, src, duration, sampleRate, channels}}, references to audio files, never their bytes
   var AUDIO_KEYS = { name: 'string', src: 'string', duration: 'number', sampleRate: 'number', channels: 'number' };
   function normAudio(a) {
@@ -240,7 +257,7 @@
       if (isArr(t.melody) || typeof t.melody === 'string') tr.variants.A = parseMelody(t.melody);
       else for (k in t.melody) if (has(t.melody, k)) tr.variants[k] = parseMelody(t.melody[k]);
     }
-    return normSampler(tr);
+    return normAudioTrack(normSampler(tr));
   }
   // document -> Song.GUIDANCE-style data with readable strings where the variants are plain.
   function toLegacy(doc) {
@@ -260,7 +277,7 @@
     var d = clone(doc);
     d.v = 1;
     for (var i = 0; i < d.tracks.length; i++) {
-      normSampler(d.tracks[i]);
+      normSampler(d.tracks[i]); normAudioTrack(d.tracks[i]);
       for (var k in d.tracks[i].variants) if (has(d.tracks[i].variants, k)) d.tracks[i].variants[k] = compact(d.tracks[i].variants[k]);
     }
     if (d.audio != null) d.audio = normAudio(d.audio);
@@ -278,7 +295,7 @@
       var vs = tr.variants || {};
       tr.variants = {};
       for (k in vs) if (has(vs, k)) tr.variants[k] = parseVariant(vs[k], tr.kind);
-      normSampler(tr);
+      normSampler(tr); normAudioTrack(tr);
     }
     d.progression = d.progression || []; d.sends = d.sends || {};
     if (d.audio != null) d.audio = normAudio(d.audio);
@@ -466,6 +483,41 @@
       if (an && isArr(an.elements)) for (i = 0; i < an.elements.length; i++) if (an.elements[i] && an.elements[i].track === name) an.elements[i].track = null;
       return true;
     };
+    // ---- audio track clips (Pressing Crew, V1): each operation is one undo step; refused ones take none
+    function audioTrack(name) { var t = ed.track(name); return isAudioTrack(t) ? t : null; }
+    function clipAt(name, index) { var t = audioTrack(name); return t && t.clips && index >= 0 && index < t.clips.length ? t.clips[index] : null; }
+    // add a clip {audio, bar, offset, length, gain}; returns its index or -1
+    ed.addClip = function (track, clip) {
+      var t = audioTrack(track), c = normClip(clip); if (!t || !c) return -1;
+      snap();
+      t.clips = t.clips || [];
+      t.clips.push(c);
+      return t.clips.length - 1;
+    };
+    // move a clip to another bar (0-based, fractions allowed)
+    ed.moveClip = function (track, index, bar) {
+      var c = clipAt(track, index), b = Number(bar); if (!c || !(b >= 0) || !isFinite(b)) return false;
+      snap(); c.bar = b; return true;
+    };
+    // trim: {offset, length} (seconds of the file) and, for a trim at the left edge, the new {bar}, in one step
+    ed.trimClip = function (track, index, patch) {
+      var c = clipAt(track, index); if (!c || !patch || typeof patch !== 'object') return false;
+      var n = { bar: c.bar, offset: c.offset, length: c.length }, k;
+      for (k in n) if (has(patch, k) && patch[k] != null) { var v = Number(patch[k]); if (!(v >= 0) || !isFinite(v)) return false; n[k] = v; }
+      snap(); c.bar = n.bar; c.offset = n.offset; c.length = n.length; return true;
+    };
+    // any clip field (audio, bar, offset, length, gain), validated as on load
+    ed.setClip = function (track, index, patch) {
+      var c = clipAt(track, index); if (!c || !patch || typeof patch !== 'object') return false;
+      var m = {}, k; for (k in c) if (has(c, k)) m[k] = c[k];
+      for (k in patch) if (has(patch, k) && has(m, k)) m[k] = patch[k];
+      var n = normClip(m); if (!n) return false;
+      snap(); for (k in n) if (has(n, k)) c[k] = n[k]; return true;
+    };
+    ed.removeClip = function (track, index) {
+      var t = audioTrack(track); if (!clipAt(track, index)) return false;
+      snap(); t.clips.splice(index, 1); return true;
+    };
     ed.canUndo = function () { return ed._undo.length > 0; };
     ed.canRedo = function () { return ed._redo.length > 0; };
     ed.undo = function () { if (!ed._undo.length) return false; ed._redo.push(JSON.stringify(ed.doc)); ed.doc = JSON.parse(ed._undo.pop()); return true; };
@@ -475,5 +527,5 @@
 
   root.SongDoc = { STEPS: STEPS, parsePattern: parsePattern, parseMelody: parseMelody, parseVariant: parseVariant, formatVariant: formatVariant,
                    emptyVariant: emptyVariant, fromLegacy: fromLegacy,
-                   isSampler: isSampler, normAudio: normAudio, normPrograms: normPrograms, MAX_REGIONS: MAX_REGIONS, toLegacy: toLegacy, save: save, load: load, createEditor: createEditor };
+                   isSampler: isSampler, isAudioTrack: isAudioTrack, normClip: normClip, normAudio: normAudio, normPrograms: normPrograms, MAX_REGIONS: MAX_REGIONS, toLegacy: toLegacy, save: save, load: load, createEditor: createEditor };
 })();

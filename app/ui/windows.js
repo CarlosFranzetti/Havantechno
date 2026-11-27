@@ -15,6 +15,9 @@
  * "Panel" button (first) and the body shows Panels.render(device, host) (a hardware-style panel that scales with the window).
  * A device with a panel opens on it unless a view was chosen for that device before; without panels.js nothing changes.
  *
+ * Preset menu (Showroom Crew W1): when engine/presets.js is loaded, an instrument window's "Preset ▾" button opens
+ * Presets.menu (factory and user presets, the machine's kits for a drum voice, the track's patterns); otherwise it stays hidden.
+ *
  * Window rules: F-H2 round 5 (Logic Link Off/Single/Multi, V hides all, size and position per device id),
  * F-O1 round 5 (one window per device, Single link follows the selection, Pin freezes), REPORT.md section 11. */
 (function (root) {
@@ -182,8 +185,9 @@
     var glyph = el('span', 'wn-wg');
     glyph.setAttribute('aria-hidden', 'true');
     var title = el('span', 'wn-wt');
-    var preset = btn('wn-preset', 'Preset ▾', 'Presets (not available yet)');
+    var preset = btn('wn-preset', 'Preset ▾', 'Presets');
     preset.disabled = true;
+    preset.hidden = true;
     var sp = el('span', 'wn-sp');
     var bRelink = btn('wn-relink', 'Re-add sample\u2026', 'The audio file for this sampler is missing: choose it again');
     bRelink.hidden = true;
@@ -287,6 +291,20 @@
       bPin.title = pl; bPin.setAttribute('aria-label', pl);
     };
 
+    // The Preset menu (Presets.menu in engine/presets.js): instrument devices only; rebuilt when the device or its type changes.
+    c.menuKey = '';
+    c.syncMenu = function () {
+      var d = c.dev, P = root.Presets;
+      var key = (d && d.kind === 'instrument' && P && typeof P.menu === 'function') ? d.id + '|' + d.type : '';
+      if (key === c.menuKey) return;
+      if (c.menu) { try { c.menu.dispose(); } catch (e) { note(e); } c.menu = null; }
+      c.menuKey = key;
+      preset.hidden = !key; preset.disabled = !key;
+      if (!key) return;
+      try { c.menu = P.menu(preset, { host: h, device: d, track: d.track, container: doc.body }); }
+      catch (e) { note(e); c.menu = null; preset.hidden = true; preset.disabled = true; }
+    };
+
     c.build = function () {
       if (c.face && typeof c.face.dispose === 'function') { try { c.face.dispose(); } catch (e) { note(e); } }
       c.face = null;
@@ -299,6 +317,7 @@
       bPanel.hidden = !hasPanel;
       if (!c.view || (c.view === 'panel' && !hasPanel)) c.view = hasPanel ? 'panel' : 'editor';
       body.className = 'wn-wbody' + (c.view === 'controls' ? ' wn-ctl' : '') + (c.view === 'panel' ? ' wn-pnl' : '');
+      c.syncMenu();
       if (!d) { body.appendChild(el('div', 'wn-wmsg', 'This device is not in the current song.')); c.refreshHead(true); return; }
       var F = root.Faces;
       var made = null;
@@ -379,6 +398,7 @@
 
     c.setDevice = function (nid) { c.id = nid; var s = lsGet(LS_RECT + nid); c.view = (s && (s.v === 'controls' || s.v === 'editor' || s.v === 'panel')) ? s.v : null; c.build(); };
     c.dispose = function () {
+      if (c.menu) { try { c.menu.dispose(); } catch (e) { note(e); } c.menu = null; }
       if (c._ro) { try { c._ro.disconnect(); } catch (e) { /* ignore */ } c._ro = null; }
       if (c.face && typeof c.face.dispose === 'function') { try { c.face.dispose(); } catch (e) { note(e); } }
       c.face = null;

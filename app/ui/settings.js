@@ -271,22 +271,32 @@
     devSel.parentNode.appendChild(hint);
     if (!av.outputDevices.ok) { setOff(devSel, true, av.outputDevices.why); devHint(av.outputDevices.why); }
     else {
-      devHint('Listing devices…');
-      Promise.resolve(safe(function () { return h.outputDevices(); }, null)).then(function (list) {
-        list = Array.isArray(list) ? list : [];
-        var named = list.filter(function (d) { return d && d.id && d.id !== 'default' && d.label; });
-        var hidden = list.filter(function (d) { return d && d.id && d.id !== 'default' && !d.label; }).length;
-        var opts = [{ value: '', label: 'Default output' }].concat(named.map(function (d) { return { value: String(d.id), label: String(d.label) }; }));
-        var keep = get('audio.sinkId');
-        if (keep && !opts.some(function (o) { return o.value === keep; })) opts.push({ value: keep, label: 'Saved device (not found now)' });
-        clear(devSel);
-        opts.forEach(function (o, i) { devSel.appendChild(el('option', null, o.label, { value: String(i) })); });
-        devSel._options.length = 0; Array.prototype.push.apply(devSel._options, opts);
-        devSel._paint(keep);
-        if (!named.length && hidden) devHint('The browser hides the names of ' + hidden + ' output device' + (hidden === 1 ? '' : 's') + ' until this page is allowed to use a microphone, so only the default output can be chosen here. Choose the device in your system settings, or use the desktop app.');
-        else if (!list.length) devHint('The engine reported no output devices; the default output is used.');
-        else devHint(named.length + ' device' + (named.length === 1 ? '' : 's') + ' found.');
-      }, function (e) { devHint('Could not list devices: ' + msg(e) + '. The default output is used.'); });
+      var askBtn = btn('sv-ask', 'Show device names…', 'Ask for microphone access once, which is what lets the browser name the output devices; nothing is recorded');
+      askBtn.hidden = true;
+      on(askBtn, 'click', function () { listDevices(true); });
+      hint.parentNode.appendChild(askBtn);
+      var listDevices = function (ask) {
+        devHint(ask ? 'Asking the browser for device names…' : 'Listing devices…');
+        Promise.resolve(safe(function () { return ask ? h.outputDevices({ ask: true }) : h.outputDevices(); }, null)).then(function (list) {
+          list = Array.isArray(list) ? list : [];
+          // V1: [{id, label, named}], id '' = the system default; an entry with named false has a made-up label
+          var isDefault = function (d) { return !d || !d.id || d.id === 'default'; };
+          var named = list.filter(function (d) { return !isDefault(d) && d.label && d.named !== false; });
+          var hidden = list.filter(function (d) { return !isDefault(d) && (d.named === false || !d.label); }).length;
+          var opts = [{ value: '', label: 'Default output' }].concat(named.map(function (d) { return { value: String(d.id), label: String(d.label) }; }));
+          var keep = get('audio.sinkId');
+          if (keep && !opts.some(function (o) { return o.value === keep; })) opts.push({ value: keep, label: 'Saved device (not found now)' });
+          clear(devSel);
+          opts.forEach(function (o, i) { devSel.appendChild(el('option', null, o.label, { value: String(i) })); });
+          devSel._options.length = 0; Array.prototype.push.apply(devSel._options, opts);
+          devSel._paint(keep);
+          askBtn.hidden = !(hidden && !named.length) || !!ask;
+          if (!named.length && hidden) devHint('The browser hides the names of ' + hidden + ' output device' + (hidden === 1 ? '' : 's') + ' until this page has been allowed to use a microphone, so only the default output is offered. Allow it below, or choose the device in your system settings.');
+          else if (!named.length) devHint(ask ? 'No named output devices were reported (microphone access may have been refused); the default output is used.' : 'Only the default output is available here (the browser named no other output device).');
+          else devHint(named.length + ' output device' + (named.length === 1 ? '' : 's') + ' besides the default.');
+        }, function (e) { devHint('Could not list devices: ' + msg(e) + '. The default output is used.'); });
+      };
+      listDevices(false);
     }
     panel.appendChild(settingSelect('audio.sampleRate', rateOptions('Device rate'), 'Sample rate',
       'The rate the audio engine runs at. Changing it restarts the engine’s audio context.', applyAudio));

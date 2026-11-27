@@ -28,7 +28,7 @@
 
   var FAMILY = {
     kick: 'drums', clap: 'drums', hat_closed: 'drums', hat_open: 'drums', shaker: 'drums', perc: 'drums',
-    sub: 'bass', bass: 'bass', tb303: 'bass', modeld: 'bass', juno: 'keys', stab: 'keys', lead: 'keys', pad: 'keys', riser: 'fx', impact: 'fx', sampler: 'drums',
+    sub: 'bass', bass: 'bass', tb303: 'bass', modeld: 'bass', juno: 'keys', stab: 'keys', lead: 'keys', pad: 'keys', riser: 'fx', impact: 'fx', sampler: 'drums', audio: 'fx',
     compressor: 'dynamics', limiter: 'dynamics', sidechain: 'dynamics', delay: 'time', reverb: 'time', chorus: 'time',
     filter: 'tone', eq3: 'tone', saturator: 'tone', widener: 'utility', channel: 'utility'
   };
@@ -42,6 +42,7 @@
   var FAMILIES = { drums: 1, bass: 1, keys: 1, fx: 1, dynamics: 1, time: 1, tone: 1, utility: 1 };
   function family(type) { return FAMILY[type] || 'utility'; }
   function isSamplerDef(t) { return !!t && (t.type === 'sampler' || t.inst === 'sampler'); }
+  function isAudioDef(t) { return !!t && (t.type === 'audio' || t.inst === 'audio'); }
   function isBuf(x) { return Object.prototype.toString.call(x) === '[object ArrayBuffer]'; }
   function isView(x) { return typeof ArrayBuffer !== 'undefined' && typeof ArrayBuffer.isView === 'function' && ArrayBuffer.isView(x); }
   var URLISH = /^(https?:|blob:|data:)/i;
@@ -52,7 +53,7 @@
     var tr = [], i, k;
     for (i = 0; i < (doc.tracks || []).length; i++) {
       var t = doc.tracks[i], o = {};
-      for (k in t) if (has(t, k) && k !== 'variants') o[k] = t[k];
+      for (k in t) if (has(t, k) && k !== 'variants' && !(k === 'clips' && isAudioDef(t))) o[k] = t[k];   // clips apply in place
       tr.push(o);
     }
     return JSON.stringify({ bpm: doc.bpm, swing: doc.swing, sends: doc.sends, master: doc.master || null, tracks: tr });
@@ -204,14 +205,18 @@
     // Song.build with every sampler track's instrument made here, so it gets the Host's buffer resolver
     function buildSong(s, doc) {
       var def = doc, i, k;
-      for (i = 0; i < doc.tracks.length; i++) if (isSamplerDef(doc.tracks[i])) break;
+      for (i = 0; i < doc.tracks.length; i++) if (isSamplerDef(doc.tracks[i]) || isAudioDef(doc.tracks[i])) break;
       if (i < doc.tracks.length) {
         def = {};
         for (k in doc) if (has(doc, k)) def[k] = doc[k];
         def.tracks = doc.tracks.map(function (t) {
-          if (!isSamplerDef(t)) return t;
+          if (!isSamplerDef(t) && !isAudioDef(t)) return t;
           var t2 = {}, o = {}, q;
           for (q in t) if (has(t, q)) t2[q] = t[q];
+          if (isAudioDef(t)) {                               // an audio track: clips on the timeline (audiotrack.js)
+            if (root.AudioTrack) t2.inst = root.AudioTrack.create(s.ctx, { clips: t.clips, getBuffer: getBuffer });
+            return t2;
+          }
           if (t.params) for (q in t.params) if (has(t.params, q)) o[q] = t.params[q];
           o.getBuffer = getBuffer;
           o.getProgram = getProgram;
@@ -273,6 +278,7 @@
         var vs = {};
         for (k in t.variants) if (has(t.variants, k)) vs[k] = SongDoc.parseVariant(t.variants[k], tr.kind);
         tr.variants = vs;
+        if (isAudioDef(t) && tr.inst && typeof tr.inst.setClips === 'function') tr.inst.setClips(t.clips);
       }
       seq.progression = (doc.progression || []).slice();
       seq.setArrangement(doc.sections);
@@ -319,8 +325,8 @@
       startPromise = new Promise(function (resolve) {
         try {
           if (!ctx) {
-            var AC = opts.AudioContext || root.AudioContext || root.webkitAudioContext;
-            ctx = opts.context || (AC ? new AC({ latencyHint: 'interactive' }) : null);
+            ctx = opts.context || makeContext();     // latency hint and rate from setAudioOptions (or opts.audio)
+            if (ctx && !opts.context && prefs.sinkId) applySink(ctx, prefs.sinkId);
           }
           if (!ctx) { startPromise = null; resolve(false); return; }
           // resume inside the user gesture; build only after the worklet modules resolved on ctx (worklets.js)
@@ -524,7 +530,10 @@
     // who uses an audio file: sampler tracks by name, programs as 'program:<id>' (a program region keeps it alive)
     function usedBy(id) {
       var out = [], t = ed.doc.tracks, m = ed.doc.programs, pid, j;
-      for (var i = 0; i < t.length; i++) if (isSamplerDef(t[i]) && t[i].params && t[i].params.buffer === id) out.push(t[i].name);
+      for (var i = 0; i < t.length; i++) {
+        if (isSamplerDef(t[i]) && t[i].params && t[i].params.buffer === id) out.push(t[i].name);
+        else if (isAudioDef(t[i]) && isArr(t[i].clips) && t[i].clips.some(function (c) { return c && c.audio === id; })) out.push(t[i].name);
+      }
       if (ed.doc.reference && ed.doc.reference.audio === id) out.push('reference');
       var an = ed.doc.analysis;
       if (an && isArr(an.stems)) for (j = 0; j < an.stems.length; j++) if (an.stems[j] && an.stems[j].audio === id) { out.push('analysis'); break; }
@@ -611,6 +620,7 @@
     function refreshSamplers(id) {
       for (var n in seq.tracks) if (has(seq.tracks, n)) {
         var inst = seq.tracks[n].inst;
+        if (inst && inst.type === 'audio' && typeof inst.resync === 'function') { inst.resync(); continue; }
         if (!inst || inst.type !== 'sampler' || !inst.params) continue;
         try {
           if (inst.params.buffer === id) inst.set('buffer', id);
@@ -1550,7 +1560,7 @@
       for (var i = 0; i < seq.order.length; i++) {
         var tr = seq.tracks[seq.order[i]], sends = {};
         for (var j = 0; j < seq.sendOrder.length; j++) sends[seq.sendOrder[j]] = host.getParam(tr.name + '.send.' + seq.sendOrder[j]);
-        out.push({ name: tr.name, type: tr.inst.type, kind: tr.kind, family: trackFamily(tr), muted: !!tr.muted, solo: !!tr.solo, sampler: isSamplerDef(tr.def),
+        out.push({ name: tr.name, type: tr.inst.type, kind: tr.kind, family: trackFamily(tr), muted: !!tr.muted, solo: !!tr.solo, sampler: isSamplerDef(tr.def), audio: isAudioDef(tr.def), clips: isAudioDef(tr.def) ? clone((docTrack(ed.doc, tr.name) || {}).clips || []) : undefined,
                    gate: tr.gate, sends: sends, inserts: tr.chain.procs.map(function (p) { return p.name; }), device: 'track:' + tr.name });
       }
       return out;
@@ -1573,21 +1583,279 @@
       if (!s) return NaN;
       return end ? s.start + s.bars : s.start;
     }
+    // render options beyond {from, to, sampleRate, tail}: seed (Math.random seeded for the render, so two renders
+    // with the same seed are identical; see seeded()), onProgress(fraction)
     host.render = function (o) {
       o = o || {};
       var from = barOf(o.from, false), to = barOf(o.to, true);
       if (from !== from || to !== to) return Promise.reject(new Error('Host.render: unknown section'));
       var doc = clone(ed.doc), st = capture(seq);
-      return Sequencer.render(function (s) {
+      var run = function () {
+        return Sequencer.render(function (s) {
+          buildSong(s, doc);
+          var k;
+          for (k in st.mute) if (has(st.mute, k) && s.tracks[k]) s.mute(k, true);
+          for (k in st.solo) if (has(st.solo, k) && s.tracks[k]) s.solo(k, true);
+          for (k in st.held) if (has(st.held, k)) s.hold(k);     // export keeps what the user is holding, like playback
+          s.seed = st.seed;
+        }, { from: from || 0, to: to, sampleRate: o.sampleRate || (ctx && ctx.sampleRate) || 44100, tail: o.tail, onProgress: o.onProgress });
+      };
+      return o.seed == null ? run() : seeded(o.seed, run);
+    };
+    // host.wav(buffer) is the 16-bit writer as before; host.wav(buffer, {bitDepth: 16|24|32, dither, seed}) the new
+    // writers (Sequencer.wav: 16-bit with TPDF dither by default, 24-bit, 32-bit float)
+    host.wav = function (buffer, o) { return o && typeof o === 'object' ? Sequencer.wav(buffer, o) : Sequencer.wav(buffer); };
+
+    // ---------------------------------------------------------- audio export (Pressing Crew, V1)
+    // Math.random is replaced by a seeded generator for the length of one render, then restored. Every render of an
+    // export draws the same numbers in the same order (noise buffers, noise offsets, drum spread), so stems and the mix
+    // carry the same noise. Renders are queued, so two never overlap. Anything else drawing random numbers meanwhile
+    // (live playback's noise voices) shifts the stream: exact sums assume the transport is stopped.
+    var renderQueue = Promise.resolve();
+    function seeded(seed, fn) {
+      var job = renderQueue.then(function () {
+        var M = Math, orig = M.random, rnd = Sequencer.rng ? Sequencer.rng(seed) : null, p;
+        if (rnd) M.random = rnd;
+        var undo = function () { if (M.random === rnd) M.random = orig; };
+        try { p = Promise.resolve(fn()); } catch (e) { undo(); return Promise.reject(e); }
+        return p.then(function (v) { undo(); return v; }, function (e) { undo(); throw e; });
+      });
+      renderQueue = job.then(function () {}, function () {});
+      return job;
+    }
+    function scopeOf(sc) {
+      var tb = seq.totalBars, s;
+      if (sc == null || sc === 'song') return { from: 0, to: tb, label: '' };
+      if (typeof sc === 'object' && sc.section != null) {
+        s = seq.section(sc.section);
+        if (!s) throw new Error('Host.exportAudio: unknown section ' + sc.section);
+        return { from: s.start, to: s.start + s.bars, label: s.name };
+      }
+      if (typeof sc === 'object' && (sc.from != null || sc.to != null)) {
+        var a = Math.max(0, Math.floor(Number(sc.from) || 0)), b = sc.to == null ? tb : Math.min(tb, Math.floor(Number(sc.to)));
+        if (!(b > a)) throw new Error('Host.exportAudio: empty bar range');
+        return { from: a, to: b, label: 'bars ' + (a + 1) + '-' + b };
+      }
+      throw new Error('Host.exportAudio: scope is \'song\', {section} or {from, to}');
+    }
+    function audible(st) {
+      var anySolo = false, k, out = {};
+      for (k in st.solo) if (has(st.solo, k)) anySolo = true;
+      for (var i = 0; i < seq.order.length; i++) { k = seq.order[i]; if (!st.mute[k] && (!anySolo || st.solo[k])) out[k] = true; }
+      return out;
+    }
+    // the build of one export render. plan: {pull: {track: true} (instruments that feed their strip; the others are
+    // disconnected but still triggered), dry (channels feed the master input), wet: null | '*' | sendName (which send
+    // gains stay connected), master (the master chain, or its input straight to the output)}
+    function exportBuild(doc, st, plan) {
+      return function (s) {
         buildSong(s, doc);
         var k;
-        for (k in st.mute) if (has(st.mute, k) && s.tracks[k]) s.mute(k, true);
-        for (k in st.solo) if (has(st.solo, k) && s.tracks[k]) s.solo(k, true);
-        for (k in st.held) if (has(st.held, k)) s.hold(k);     // export keeps what the user is holding, like playback
+        for (k in st.held) if (has(st.held, k)) s.hold(k);
         s.seed = st.seed;
-      }, { from: from || 0, to: to, sampleRate: o.sampleRate || (ctx && ctx.sampleRate) || 44100, tail: o.tail });
+        if (!s.ctx) return;                                    // the dry pass reads the arrangement only
+        var wetOk = function (send) { return plan.wet === '*' || plan.wet === send; };
+        for (var i = 0; i < s.order.length; i++) {
+          var name = s.order[i], tr = s.tracks[name], g;
+          try {
+            if (!plan.pull[name] && tr.inst.out) tr.inst.out.disconnect();
+            if (!plan.dry) {
+              tr.channel.output.disconnect();
+              for (g in tr.sendGains) if (has(tr.sendGains, g)) tr.channel.output.connect(tr.sendGains[g]);
+            }
+            for (g in tr.sendGains) if (has(tr.sendGains, g) && !wetOk(g)) tr.sendGains[g].disconnect();
+          } catch (e) { warn('export routing: ' + (e && e.message)); }
+        }
+        var rawSend = s.setSend;                               // a send gain the arrangement creates later follows the plan
+        s.setSend = function (track, send, level) {
+          var tr2 = s.tracks[track], had = !!(tr2 && tr2.sendGains[send]), r = rawSend.apply(s, arguments);
+          if (tr2 && !had && tr2.sendGains[send] && !wetOk(send)) { try { tr2.sendGains[send].disconnect(); } catch (e) {} }
+          return r;
+        };
+        if (!plan.master) { try { s.master.output.disconnect(); s.master.input.connect(s.out); } catch (e) { warn('export master bypass: ' + (e && e.message)); } }
+      };
+    }
+    function fileBase(doc, label) {
+      var n = String(doc.name || 'song');
+      if (label) n += ' - ' + label;
+      return n.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' - ').replace(/\s+/g, ' ').trim().slice(0, 100) || 'song';
+    }
+    // the export's frames of a rendered buffer: from the song's first sample (Sequencer.render starts it 0.05 s in)
+    function cut(buf, start, frames) {
+      var chans = [], c;
+      for (c = 0; c < buf.numberOfChannels; c++) chans.push(buf.getChannelData(c).subarray(start, start + frames));
+      return { numberOfChannels: buf.numberOfChannels, length: Math.min(frames, buf.length - start), sampleRate: buf.sampleRate, getChannelData: function (i) { return chans[i]; } };
+    }
+    // o: {scope: 'song' | {section} | {from, to}, what: 'mix' | 'stems' | [trackNames], bitDepth: 16 | 24 | 32 (24),
+    //     sampleRate (the context's, else 44100), tailSeconds (2), master (mix: true, stems: false), sends (stems: true),
+    //     dither (16-bit: true), seed (1), onProgress({index, total, name, part, stage, fraction}), onFile(file) (awaited;
+    //     it may set file.bytes = null to drop the bytes once written), signal (AbortSignal, checked between files)}
+    // Resolves [{name, part, bytes, seconds, frames, sampleRate, bitDepth, peak, peakDb, clipped, master}]. One render
+    // per file, one file at a time. Never includes the reference track.
+    host.exportAudio = function (o) {
+      o = o || {};
+      var sc, doc, st, plan = [], what = o.what == null ? 'mix' : o.what;
+      try {
+        sc = scopeOf(o.scope);
+        doc = clone(ed.doc); st = capture(seq);
+        var bits = o.bitDepth === 16 || o.bitDepth === 32 ? o.bitDepth : 24;
+        var sr = Math.round(Number(o.sampleRate) || (ctx && ctx.sampleRate) || 44100);
+        if (!(sr >= 8000 && sr <= 384000)) throw new Error('Host.exportAudio: sample rate out of range ' + sr);
+        var tail = o.tailSeconds == null ? 2 : Math.max(0, Number(o.tailSeconds) || 0), base = fileBase(doc, sc.label);
+        var all = {}, i;
+        for (i = 0; i < seq.order.length; i++) all[seq.order[i]] = true;
+        if (what === 'mix') plan.push({ part: 'mix', name: base + ' - mix.wav', pull: audible(st), dry: true, wet: '*', master: o.master !== false });
+        else {
+          var names = what === 'stems' ? seq.order.filter(function (n) { return audible(st)[n]; }) : (isArr(what) ? what.map(String) : null);
+          if (!names) throw new Error('Host.exportAudio: what is \'mix\', \'stems\' or a list of track names');
+          var set = {}, master = o.master === true;
+          names.forEach(function (n) { if (!all[n]) throw new Error('Host.exportAudio: no track ' + n); set[n] = true; });
+          names.forEach(function (n) { var p = {}; p[n] = true; plan.push({ part: n, name: base + ' - ' + n + '.wav', pull: p, dry: true, wet: null, master: master }); });
+          if (o.sends !== false) seq.sendOrder.forEach(function (sn) { plan.push({ part: 'send:' + sn, name: base + ' - return-' + sn + '.wav', pull: set, dry: false, wet: sn, master: master, dropSilent: true }); });
+        }
+      } catch (e) { return Promise.reject(e); }
+      var bs = 240 / clamp(Number(doc.bpm) || 120, 40, 300), lead = Math.round(0.05 * sr), frames = Math.round(((sc.to - sc.from) * bs + tail) * sr);
+      var out = [], total = plan.length, seed = o.seed == null ? 1 : o.seed;
+      function prog(i, p, stage, f) {
+        if (typeof o.onProgress !== 'function') return;
+        try { o.onProgress({ index: i, total: total, name: p.name, part: p.part, stage: stage, fraction: f }); } catch (e) {}
+      }
+      var chain = Promise.resolve();
+      plan.forEach(function (p, i) {
+        chain = chain.then(function () {
+          if (o.signal && o.signal.aborted) { var ae = new Error('Host.exportAudio: cancelled'); ae.name = 'AbortError'; throw ae; }
+          prog(i, p, 'render', 0);
+          return seeded(seed, function () {
+            return Sequencer.render(exportBuild(doc, st, p), { from: sc.from, to: sc.to, sampleRate: sr, tail: tail, onProgress: function (f) { prog(i, p, 'render', f); } });
+          }).then(function (buf) {
+            prog(i, p, 'encode', 1);
+            var c = cut(buf, lead, frames), bytes = Sequencer.wav(c, { bitDepth: bits, dither: o.dither, seed: i + 1 }), info = Sequencer.wav.info || {};
+            buf = null; c = null;
+            if (p.dropSilent && !(info.peak > 0)) { prog(i, p, 'skipped', 1); return null; }
+            var f = { name: p.name, part: p.part, bytes: bytes, seconds: frames / sr, frames: frames, sampleRate: sr, bitDepth: bits, peak: info.peak,
+                      peakDb: info.peak > 0 ? Math.round(2000 * Math.log(info.peak) / Math.LN10) / 100 : -Infinity, clipped: info.clipped || 0, master: p.master };
+            out.push(f);
+            return Promise.resolve(typeof o.onFile === 'function' ? o.onFile(f) : null).then(function () { prog(i, p, 'done', 1); });
+          });
+        });
+      });
+      return chain.then(function () { return out; });
     };
-    host.wav = function (buffer) { return Sequencer.wav(buffer); };
+
+    // ---------------------------------------------------------- audio tracks (Pressing Crew, V1)
+    // load a file and add a track of type 'audio' with one clip at o.bar (0-based); o.gain is the track's channel gain
+    // (default 1). One undo step, commits, resolves the track name.
+    host.addAudioTrack = function (source, o) {
+      o = o || {};
+      return host.loadAudio(source, { name: o.fileName, src: o.src, analyze: false }).then(function (id) {
+        var a = audioMap()[id] || {}, b = String(o.name || String(a.name || id).replace(/\.[A-Za-z0-9]{1,5}$/, '')).replace(/[^A-Za-z0-9_-]+/g, '_') || 'audio', name = b, n = 2;
+        while (ed.track(name) || name === 'send' || name === 'master') name = b + '_' + (n++);
+        var bar = Number(o.bar); bar = bar >= 0 && isFinite(bar) ? bar : 0;
+        var t = { name: name, type: 'audio', inst: 'audio', gain: o.gain == null ? 1 : clamp(Number(o.gain) || 0, 0, 2), pan: 0, variants: {},
+                  clips: [{ audio: id, bar: bar, offset: 0, length: typeof a.duration === 'number' ? a.duration : 0, gain: 1 }] };
+        if (o.family && has(FAMILIES, o.family)) t.family = o.family;
+        if (!ed.addTrack(t)) throw new Error('Host.addAudioTrack: the track could not be added');
+        host.commit();
+        return name;
+      });
+    };
+
+    // ---------------------------------------------------------- audio options (Pressing Crew, V1)
+    // latencyHint and sampleRate apply when the context is made (start) or by making a new one (setAudioOptions);
+    // sinkId through AudioContext.setSinkId where the browser has it.
+    var prefs = { latencyHint: (opts.audio && opts.audio.latencyHint) || 'interactive', sampleRate: (opts.audio && opts.audio.sampleRate) || 0, sinkId: (opts.audio && opts.audio.sinkId) || '' };
+    var HINTS = { interactive: 1, balanced: 1, playback: 1 };
+    function makeContext() {
+      var AC = opts.AudioContext || root.AudioContext || root.webkitAudioContext;
+      if (!AC) return null;
+      var co = { latencyHint: prefs.latencyHint };
+      if (prefs.sampleRate > 0) co.sampleRate = prefs.sampleRate;
+      try { return new AC(co); }
+      catch (e) { warn('AudioContext(' + JSON.stringify(co) + ') failed (' + (e && e.message) + '); using the defaults'); return new AC({ latencyHint: 'interactive' }); }
+    }
+    function applySink(c, id) {
+      if (!c || typeof c.setSinkId !== 'function') return Promise.resolve(!id);
+      try { return Promise.resolve(c.setSinkId(id || '')).then(function () { return true; }, function (e) { warn('setSinkId failed: ' + (e && e.message)); return false; }); }
+      catch (e) { return Promise.resolve(false); }
+    }
+    function sinkOf(c) {
+      if (!c || c.sinkId == null) return prefs.sinkId || '';
+      if (typeof c.sinkId === 'string') return c.sinkId;
+      return c.sinkId.type === 'none' ? 'none' : (prefs.sinkId || '');
+    }
+    host.audioOptions = function () {
+      var num2 = function (v) { return typeof v === 'number' && isFinite(v) ? v : null; };
+      return { sinkId: sinkOf(ctx), latencyHint: prefs.latencyHint, sampleRate: ctx ? ctx.sampleRate : (prefs.sampleRate || null),
+               baseLatency: ctx ? num2(ctx.baseLatency) : null, outputLatency: ctx ? num2(ctx.outputLatency) : null,
+               state: ctx ? (ctx.state || 'running') : 'none', canSetSink: !!(ctx ? typeof ctx.setSinkId === 'function' : (root.AudioContext && root.AudioContext.prototype && typeof root.AudioContext.prototype.setSinkId === 'function')) };
+    };
+    // o: {sinkId, latencyHint: 'interactive'|'balanced'|'playback'|seconds, sampleRate (0 = the device's)}. Before start
+    // the values are kept for it. A new latency hint or rate makes a new context: the transport stops where it is, the
+    // document, held paths, mute and solo stay, the worklet module is loaded on the new context before the engine is
+    // built again, and 'document' {reason: 'audio', rebuilt: true} and 'audiooptions' are emitted. Resolves false when
+    // something could not be applied (a context given in create's opts cannot be replaced; setSinkId missing or refused).
+    host.setAudioOptions = function (o) {
+      o = o || {};
+      var next = { latencyHint: prefs.latencyHint, sampleRate: prefs.sampleRate, sinkId: prefs.sinkId };
+      if (o.latencyHint != null) {
+        if (HINTS[o.latencyHint] || (typeof o.latencyHint === 'number' && o.latencyHint >= 0 && o.latencyHint <= 2)) next.latencyHint = o.latencyHint;
+        else return Promise.resolve(false);
+      }
+      if (o.sampleRate != null) {
+        var r = Math.round(Number(o.sampleRate) || 0);
+        if (r !== 0 && !(r >= 8000 && r <= 384000)) return Promise.resolve(false);
+        next.sampleRate = r;
+      }
+      if (o.sinkId != null) next.sinkId = String(o.sinkId);
+      if (!live || !ctx) { prefs = next; return Promise.resolve(true); }
+      var rateChange = next.sampleRate !== prefs.sampleRate && !(next.sampleRate > 0 && next.sampleRate === ctx.sampleRate);
+      var newCtx = next.latencyHint !== prefs.latencyHint || rateChange;
+      if (!newCtx) {
+        if (next.sinkId === sinkOf(ctx)) { prefs = next; return Promise.resolve(true); }
+        return applySink(ctx, next.sinkId).then(function (ok) { if (ok) prefs.sinkId = next.sinkId; emit('audiooptions', host.audioOptions()); return ok; });
+      }
+      if (opts.context) return Promise.resolve(false);
+      var old = ctx, oldPrefs = prefs, c;
+      try { seq.stop(); } catch (e) {}
+      stopRef();
+      prefs = next;
+      try { c = makeContext(); } catch (e) { c = null; }
+      if (!c) { prefs = oldPrefs; return Promise.resolve(false); }
+      try { var rs = c.resume && c.resume(); if (rs && rs.catch) rs.catch(function () {}); } catch (e) {}
+      var W = root.Worklets, wl = (W && typeof W.load === 'function') ? W.load(c) : null;
+      return Promise.resolve(wl).then(null, function () {}).then(function () {
+        ctx = c;
+        ref.cur = null;
+        measureLatency();
+        rebuild(true);                                   // stopped (seq.stop above), position, loop, held, mute, solo kept
+        if (old && old !== c && old.close) { try { var p = old.close(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+        startPromise = Promise.resolve(true);
+        return next.sinkId ? applySink(c, next.sinkId) : true;
+      }).then(function (ok) {
+        emit('document', { reason: 'audio', rebuilt: true });
+        emit('audiooptions', host.audioOptions());
+        return ok !== false;
+      });
+    };
+    // [{id, label, named}] of the audio outputs; id '' is the system default. Without a media permission Chromium lists
+    // no outputs by name (one entry with an empty id and label), so the list is the default only. o.ask: first ask for
+    // microphone access (getUserMedia, stopped at once), which is what makes Chromium list every output with its label.
+    host.outputDevices = function (o) {
+      var nav = root.navigator, md = nav && nav.mediaDevices, dflt = [{ id: '', label: 'System default', named: true }];
+      if (!md || typeof md.enumerateDevices !== 'function') return Promise.resolve(dflt);
+      var pre = (o && o.ask && typeof md.getUserMedia === 'function')
+        ? Promise.resolve(md.getUserMedia({ audio: true })).then(function (s) { try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} }, function () {})
+        : Promise.resolve();
+      return pre.then(function () { return md.enumerateDevices(); }).then(function (list) {
+        var out = dflt.slice(), seen = { '': 1, 'default': 1 };
+        (list || []).forEach(function (d) {
+          if (!d || d.kind !== 'audiooutput' || seen[d.deviceId || '']) return;
+          seen[d.deviceId] = 1;
+          out.push({ id: d.deviceId, label: d.label || ('Output ' + out.length), named: !!d.label });
+        });
+        return out;
+      }, function () { return dflt; });
+    };
 
     // ---------------------------------------------------------- go
     setDoc(opts.doc || null);

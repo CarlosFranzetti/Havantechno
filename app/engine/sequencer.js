@@ -61,7 +61,48 @@
   }
 
   // ------------------------------------------------------------ WAV encoder (16-bit PCM)
-  function wav(buffer) {
+  // mulberry32: a small seeded generator (dither noise; the Host's seeded export renders)
+  function rng(seed) {
+    var a = (seed >>> 0) || 1;
+    return function () { a = (a + 0x6D2B79F5) >>> 0; var t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  // WAV writer with options (Pressing Crew, V1): {bitDepth: 16 | 24 | 32, dither, seed}.
+  //   16 and 24: integer PCM (format 1), x * 2^(n-1) rounded and clamped to [-2^(n-1), 2^(n-1) - 1]. dither (default
+  //   true at 16 bits, false at 24): TPDF, the difference of two uniform draws, +-1 LSB peak, no noise shaping, from a
+  //   generator seeded by `seed` (default 1), so the same buffer always gives the same file.
+  //   32: IEEE float (format 3, an 18-byte fmt chunk and a fact chunk); samples are written as they are, over 1 included.
+  // Returns an ArrayBuffer; wav.info(last call) has {peak, clipped}. Without options: the 16-bit writer below, unchanged.
+  function wavx(buffer, o) {
+    var bits = o.bitDepth === 24 ? 24 : o.bitDepth === 32 ? 32 : 16, ch = buffer.numberOfChannels, n = buffer.length, sr = buffer.sampleRate;
+    var bps = bits / 8, isFloat = bits === 32, fmtLen = isFloat ? 18 : 16, head = 12 + 8 + fmtLen + (isFloat ? 12 : 0) + 8;
+    var dataLen = n * ch * bps, ab = new ArrayBuffer(head + dataLen + (dataLen & 1)), dv = new DataView(ab), p = 0, i, c;
+    function str(s) { for (var k = 0; k < s.length; k++) dv.setUint8(p++, s.charCodeAt(k)); }
+    function u32(v) { dv.setUint32(p, v, true); p += 4; }
+    function u16(v) { dv.setUint16(p, v, true); p += 2; }
+    str('RIFF'); u32(ab.byteLength - 8); str('WAVE');
+    str('fmt '); u32(fmtLen); u16(isFloat ? 3 : 1); u16(ch); u32(sr); u32(sr * ch * bps); u16(ch * bps); u16(bits);
+    if (isFloat) { u16(0); str('fact'); u32(4); u32(n); }
+    str('data'); u32(dataLen);
+    var data = [];
+    for (c = 0; c < ch; c++) data.push(buffer.getChannelData(c));
+    var dither = o.dither == null ? bits === 16 : !!o.dither, r = dither ? rng(o.seed == null ? 1 : o.seed) : null;
+    var scale = bits === 24 ? 8388608 : 32768, lo = -scale, hi = scale - 1, peak = 0, clipped = 0;
+    for (i = 0; i < n; i++) for (c = 0; c < ch; c++) {
+      var x = data[c][i], ax = x < 0 ? -x : x;
+      if (ax > peak) peak = ax;
+      if (isFloat) { dv.setFloat32(p, x, true); p += 4; continue; }
+      var v = x * scale;
+      if (r) v += r() - r();
+      v = Math.round(v);
+      if (v > hi) { v = hi; clipped++; } else if (v < lo) { v = lo; clipped++; }
+      if (bits === 16) { dv.setInt16(p, v, true); p += 2; }
+      else { dv.setUint8(p, v & 255); dv.setUint8(p + 1, (v >> 8) & 255); dv.setUint8(p + 2, (v >> 16) & 255); p += 3; }
+    }
+    wav.info = { peak: peak, clipped: clipped, bitDepth: bits, dither: dither };
+    return ab;
+  }
+  function wav(buffer, o) {
+    if (o && typeof o === 'object') return wavx(buffer, o);
     var ch = buffer.numberOfChannels, n = buffer.length, sr = buffer.sampleRate, i, c;
     var bytes = 44 + n * ch * 2, ab = new ArrayBuffer(bytes), dv = new DataView(ab), p = 0;
     function str(s) { for (var k = 0; k < s.length; k++) dv.setUint8(p++, s.charCodeAt(k)); }
@@ -142,7 +183,9 @@
       def = def || {};
       var tr = { name: name, def: def, inst: null, chain: null, sc: null, channel: null, sendGains: {}, variants: {},
                  muted: false, solo: false, noteIdx: 0, kind: 'drum' };
-      tr.inst = (def.inst && def.inst.trigger) ? def.inst : Synths.create(seq.ctx, def.inst || name, def.params);
+      tr.inst = (def.inst && def.inst.trigger) ? def.inst
+        : ((def.type === 'audio' || def.inst === 'audio') && root.AudioTrack) ? root.AudioTrack.create(seq.ctx, { clips: def.clips, getBuffer: def.getBuffer })
+        : Synths.create(seq.ctx, def.inst || name, def.params);
       if (def.params && tr.inst.set) for (var pk in def.params) if (def.params.hasOwnProperty(pk)) tr.inst.set(pk, def.params[pk]);
       var k;
       if (def.kind) tr.kind = def.kind;
@@ -394,6 +437,7 @@
       }
       for (n = 0; n < seq.order.length; n++) {
         tr = seq.tracks[seq.order[n]];
+        if (tr.inst.onStep) { try { tr.inst.onStep(absStep, t, seq); } catch (x) {} }   // audio tracks (audiotrack.js) follow the transport
         var variation = sec.play[tr.name];
         if (!variation) continue;
         if (variation === true) variation = 'A';
@@ -523,7 +567,7 @@
   }
 
   // ---------------------------------------------------------- offline rendering
-  // buildFn(seq) adds sends/tracks/arrangement. opts: {sampleRate, from (bar), to (bar), tail (s), chunked}
+  // buildFn(seq) adds sends/tracks/arrangement. opts: {sampleRate, from (bar), to (bar), tail (s), chunked, onProgress(fraction)}
   // A render from mid-song starts from the arrangement's state there (seq.chase). Steps are scheduled two bars ahead of
   // the render position through OfflineAudioContext.suspend, so finished voices leave the graph (rendering the whole
   // range up front kept every voice connected: about quadratic in the length). chunked: false, or a context without
@@ -561,7 +605,11 @@
           ahead(t0 + 2 * chunk);
           for (var k = 1; k <= to - from - 2 && k * chunk < seconds - 0.01; k++) {
             (function (k) {
-              octx.suspend(k * chunk).then(function () { ahead(t0 + (k + 2) * chunk); octx.resume(); },
+              octx.suspend(k * chunk).then(function () {
+                ahead(t0 + (k + 2) * chunk);
+                if (typeof opts.onProgress === 'function') { try { opts.onProgress(Math.min(1, k * chunk / seconds)); } catch (e) {} }
+                octx.resume();
+              },
                                            function () { ahead(Infinity); });
             })(k);
           }
@@ -573,6 +621,6 @@
     });
   }
 
-  root.Sequencer = { create: create, render: render, wav: wav, parsePattern: parsePattern, parseMelody: parseMelody,
+  root.Sequencer = { create: create, render: render, wav: wav, rng: rng, parsePattern: parsePattern, parseMelody: parseMelody,
                      parseVariant: SD ? SD.parseVariant : null, STEPS: STEPS };
 })();
