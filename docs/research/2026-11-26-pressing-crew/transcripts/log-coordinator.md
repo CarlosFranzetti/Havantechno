@@ -89,7 +89,7 @@ Published at 01:44 EST (06:44 UTC), all private to the owner, at their existing 
 
 Open, from the hand-backs: kits and patterns from the Presets menu do nothing on a sampled kit (tracks are matched by synthesized type only); assets.js asks for the Rob Roy set when the manifest cannot be read (153 failed requests instead of one on a copy without it); the app's toolbar is wider than a phone (726 px at 390); the small help lines under the 909's source buttons sit close to the title rule; nothing was run in Electron (readRoms, importRoms, makeDirectory, a packaged build's file list); macOS and Windows builds and the GitHub workflow have never run. Then: the rename to Recut as one change, and the ROM images into the repository once the owner says it is private.
 
-## 2026-11-27 02:25 EST (07:25 UTC) — the app renamed to Recut (the owner's decision of 26 November), by the coordinator
+## 2026-11-27 01:58 EST (06:58 UTC) — the app renamed to Recut (the owner's decision of 26 November), by the coordinator
 
 The owner chose to rename "the app" and gave the name Recut. The coordinator's reading, told to the owner on 26 November with no objection recorded: Recut is the app; Havantechno stays as the maker's mark on the instrument panels and pages, with the HVT model names. Done as one change by the coordinator (a scripted replacement over the tracked text files of app/, tools/, .github/ and docs/BUILD.md, 62 files, with the protected strings below, then edits by hand).
 

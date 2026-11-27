@@ -2,7 +2,7 @@
 
 This file is the project's working memory. The first part, **Now**, is rewritten as the project moves and is the place to look first; the dumps below it are the older record and stay as they were written. The periodic context dumps are in `context history.md`.
 
-## Now (updated 2026-11-27 02:25 EST (07:25 UTC))
+## Now (updated 2026-11-27 01:58 EST (06:58 UTC))
 
 **What this is.** **Recut** (called Havantechno until 27 November 2026; Havantechno stays as the maker's mark on the instrument panels and pages, and as the repository's name): a remixing DAW that takes a record apart and rebuilds it with its own instruments. Web app plus an Electron desktop shell, plain JavaScript with no build step, AGPL-3.0-or-later, for the owner and a few friends, not for sale. Repository `CarlosFranzetti/Havantechno`, all work on `main` (GitHub's default branch is still an old `claude/` branch: clone with `-b main`).
 
