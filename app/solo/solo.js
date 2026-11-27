@@ -6,7 +6,9 @@
  * opts: {title, label, device (track name whose panel is shown), tracks (SongDoc track defs), patterns [{name, variant: {bars,
  *   cells}} | {name, voices: {track: {bars, cells}}}], section ('loop'), bars (section length; default the longest pattern),
  *   bpm, swing, kick ('bd909' | false), drive (bool), presets ({patch: type, pattern: type} | false), help, global, onStart(api),
- *   onFrame(api), panelOpts (extra Panels.render options; {rec: true} is passed so a sequencer's keyboard writes steps)}
+ *   onFrame(api), panelOpts (extra Panels.render options; {rec: true} is passed so a sequencer's keyboard writes steps),
+ *   sections ([{name, bars, play}] : the song's own sections, used as given; the tracks then carry their variants. Default:
+ *   one looping section named `section` that plays the stored patterns. A machine page passes its two sections A and B)}
  * api: {host(), panel(), engine, started(), layout(), pattern(i), patterns, letters, el}
  *
  * Behaviour (as the first HVT-303 page): audio starts on a tap (host.start makes and resumes the context in the gesture and
@@ -156,7 +158,7 @@
       }
       if (kick) { tracks.push({ name: kick, type: kick, inst: kick, kind: 'drum', family: 'drums', gain: 0.75, variants: { A: 'x...x...x...x...' } }); play[kick] = 'A'; }
       return { v: 1, name: o.title, bpm: o.bpm || 120, swing: o.swing || 0, key: o.key || 'C', progression: [], sends: {}, tracks: tracks,
-        sections: [{ name: section, bars: o.bars || maxBars, play: play }] };
+        sections: o.sections && o.sections.length ? clone(o.sections) : [{ name: section, bars: o.bars || maxBars, play: play }] };
     }
     try { host = root.Host.create({ doc: song() }); } catch (e) { status('The engine could not load: ' + (e && e.message ? e.message : e), 'fallback'); return api; }
     api.host = function () { return host; };

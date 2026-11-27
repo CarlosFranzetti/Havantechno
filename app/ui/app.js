@@ -305,24 +305,6 @@
     if (!St || typeof St.open !== 'function') { toast('Settings are not available: ui/settings.js did not load.'); return false; }
     return St.open(tab);
   }
-  // device windows open on the panel or the controls (Settings 'view.deviceOpen'): Windows remembers the view per device
-  // in hv.win.<id>; a device opened for the first time gets 'controls' written there before Windows.open reads it
-  function wrapWindows() {
-    var W = root.Windows;
-    if (!W || W.__v2wrapped || typeof W.open !== 'function') return;
-    var orig = W.open;
-    W.open = function (id) {
-      try {
-        if (root.Settings && root.Settings.get('view.deviceOpen') === 'controls' && id) {
-          var k = 'hv.win.' + id, sv = null;
-          try { sv = JSON.parse(root.localStorage.getItem(k) || 'null'); } catch (e1) { sv = null; }
-          if (!sv || !sv.v) { sv = sv && typeof sv === 'object' ? sv : {}; sv.v = 'controls'; try { root.localStorage.setItem(k, JSON.stringify(sv)); } catch (e2) { /* blocked */ } }
-        }
-      } catch (e) { report('deviceOpen', e); }
-      return orig.apply(W, arguments);
-    };
-    W.__v2wrapped = true;
-  }
   // saved audio options (Settings 'audio.*'): passed to Host.create as opts.audio (bootMain); only the output device is
   // applied again once audio runs (setSinkId needs a running context; the rate and latency are already in it)
   function applyAudioSettings(host) {
@@ -831,7 +813,6 @@
     doc.body.appendChild(S.toastEl);
 
     if (root.Windows) root.Windows.init({ host: host, layer: doc.getElementById('windows') });
-    wrapWindows();
     if (root.Settings && typeof root.Settings.attach === 'function') { try { root.Settings.attach(host, { shell: shell, toast: toast }); } catch (e1) { report('Settings.attach', e1); } }
     buildBar(host);
     S.viewHost = el('div', 'ap-view');

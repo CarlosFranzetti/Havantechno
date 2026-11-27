@@ -155,12 +155,12 @@ async function nodeChecks() {
   p = S.pick('bd909s', { tune: 0.007, attack: 6, decay: 0.0155 + 0.7 * 0.3345 });   // attack 10, decay 7: attack 10 has decay 0 / 10 only
   ok(p.file === 'BT0AADA.WAV', 'bd909s at attack 10, decay 7 plays BT0AADA.WAV (' + p.file + ')');
   ok(S.pick('cr909s', {}).file === 'CSHD6.WAV' && S.pick('sd909s', {}).file === 'ST7T3S7.WAV', 'defaults: knob 5 ties go to the higher setting (crash 6, snare tune 7)');
-  var defs = TYPES.map(function (t) { return t + ' ' + (S.pick(t, {}, { step: 1 }) || {}).file; });
+  var defs = TYPES.map(function (t) { return t + ' ' + (S.pick(t, {}, { level909: 1 }) || {}).file; });
   console.log('   defaults play: ' + defs.join(', '));
   // the tune residual for `between`
   p = S.pick('lt909s', { tune: -0.5 + 0.45, decay: 0.15 });                       // knob 4.5 -> step 3 (tune -0.2), residual +0.15 oct
   ok(Math.abs(p.residual - 0.15) < 1e-9, 'between: the tune left over is 0.15 octave at knob 4.5 (' + p.residual + ')');
-  ok(S.pick('rs909s', {}, { step: 2 }).file === 'RIM127.WAV' && S.pick('rs909s', {}, { step: 1 }).file === 'RIM63.WAV' && S.pick('rs909s', {}, { step: 0 }).file === 'RIM63.WAV', 'rim shot: step 2 plays RIM127, steps 0 and 1 RIM63');
+  ok(S.pick('rs909s', {}, { level909: 2 }).file === 'RIM127.WAV' && S.pick('rs909s', {}, { level909: 1 }).file === 'RIM63.WAV' && S.pick('rs909s', {}, { level909: 0 }).file === 'RIM63.WAV', 'rim shot: step 2 plays RIM127, steps 0 and 1 RIM63');
   ok(S.pick('cp909s', {}, { accent: true }).file === 'HANDCLP2.WAV' && S.pick('cp909s', {}, {}).file === 'HANDCLP1.WAV', 'hand clap: accent plays HANDCLP2, else HANDCLP1');
 
   // ---------------------------------------------------------------- 4. absence: no fetch, a 404, nothing throws
@@ -169,7 +169,7 @@ async function nodeChecks() {
   try {
     res = await S.load(ctx);
     var inst = S.create(ctx, 'bd909s'); inst.out.connect(ctx.destination);
-    for (var i = 0; i < 4; i++) inst.trigger(i * 0.1, { step: 2 });
+    for (var i = 0; i < 4; i++) inst.trigger(i * 0.1, { level909: 2 });
     inst.set('decay', 0.3); inst.panic(); inst.dispose();
   } catch (e) { threw = e; }
   ok(!threw, 'load, create, trigger, panic and dispose without the files do not throw' + (threw ? ': ' + threw.message : ''));
@@ -193,12 +193,12 @@ async function nodeChecks() {
   sbl.fetch = function (u) { fetched.push(u); return Promise.resolve({ ok: true, arrayBuffer: function () { return Promise.resolve(fakeWav()); } }); };
   var c2 = new Rec();
   var early = SL.create(c2, 'sd909s'); early.out.connect(c2.destination);
-  early.trigger(0, { step: 2 });
+  early.trigger(0, { level909: 2 });
   ok(c2.srcs.length === 0 && early._missed === 1, 'a hit before the recordings arrive plays nothing');
   ok(fetched.length === 52, 'create() asks for its own voice\'s 52 files only (' + fetched.length + ')');
   for (i = 0; i < 5; i++) await tick();
   ok(SL.ready(c2, ['sd909s']) && !SL.ready(c2, ['bd909s']), 'ready(ctx, [sd909s]) once decoded; the bass drum is not loaded');
-  early.trigger(0.5, { step: 2 });
+  early.trigger(0.5, { level909: 2 });
   ok(c2.srcs.length === 1 && c2.srcs[0]._started, 'the same instrument plays once they arrive (catch-up)');
   ok(SL.available() === true, 'available() is true once a recording decoded');
   res = await SL.load(c2, { types: ['sd909s'] });
@@ -207,13 +207,15 @@ async function nodeChecks() {
   var c3 = new Rec(), g = [];
   await SL.loadFiles(c3, { 'BT0A0D0.WAV': fakeWav(), 'bt0aad0.wav': fakeWav() });
   var bd = SL.create(c3, 'bd909s'); bd.out.connect(c3.destination);
-  [{ step: 0, vel: 1 }, { step: 1, vel: 1 }, { step: 2, vel: 1 }, { vel: 1 }, { vel: 1, accent: true }].forEach(function (ev, j) {
+  [{ level909: 0, vel: 1 }, { level909: 1, vel: 1 }, { level909: 2, vel: 1 }, { vel: 1 }, { vel: 1, accent: true }, { vel: 0.4 }, { vel: 0.85, step: 2 }, { vel: 0.85, step: 37 }, { vel: 0.85, step: 0 }].forEach(function (ev, j) {
     bd.trigger(j, ev);
     var src = c3.srcs[c3.srcs.length - 1], gn = src.connections[0];
     g.push(gn.gain.calls.filter(function (c) { return c[0] === 'setValueAtTime'; })[0][1] / SL.GAIN.bd909s);
   });
   function near(a, b) { return Math.abs(a - b) < 1e-6; }
-  ok(near(g[0], Math.pow(10, -18 / 20)) && near(g[1], Math.pow(10, -9 / 20)) && near(g[2], 1) && near(g[3], 0.5) && near(g[4], 1), 'step levels -18 / -9 / 0 dB and the accent flag as drums.js (' + g.map(function (x) { return x.toFixed(3); }).join(', ') + ')');
+  ok(near(g[0], Math.pow(10, -18 / 20)) && near(g[1], Math.pow(10, -9 / 20)) && near(g[2], 1) && near(g[3], Math.pow(10, -9 / 20)) && near(g[4], 1), 'level909 0 / 1 / 2 = -18 / -9 / 0 dB; a plain hit -9 dB, an accent 0 dB, as drums.js ampOf9 (' + g.map(function (x) { return x.toFixed(3); }).join(', ') + ')');
+  ok(near(g[5], Math.pow(10, -18 / 20)), 'velocity under 0.5 plays the weak level, -18 dB (' + g[5].toFixed(3) + ')');
+  ok(near(g[6], g[7]) && near(g[7], g[8]) && near(g[6], Math.pow(10, -9 / 20)), 'ev.step (the absolute step: 2, 37, 0) does not change the level (' + [g[6], g[7], g[8]].map(function (x) { return x.toFixed(3); }).join(', ') + ')');
   // user files: names with folders, case, unknown names, a single File-like object
   var c4 = new Rec();
   res = await SL.loadFiles(c4, [{ name: 'kit/HHOD2.WAV', arrayBuffer: function () { return Promise.resolve(fakeWav()); } },
@@ -230,25 +232,96 @@ async function nodeChecks() {
   await SL.loadFiles(c5, { 'HHOD4.WAV': fakeWav(), 'HHCD0.WAV': fakeWav() });   // the defaults: oh knob 3.0 (a tie, goes to 4), ch knob 0
   var oh = SL.create(c5, 'oh909s'), ch = SL.create(c5, 'ch909s'), synOh = sbl.Drums.create(c5, 'oh909');
   oh.out.connect(c5.destination); ch.out.connect(c5.destination); synOh.out.connect(c5.destination);
-  synOh.trigger(0, { step: 2 }); var synSrc = c5.srcs[c5.srcs.length - 1];
-  oh.trigger(0, { step: 2 }); var ohSrc = c5.srcs[c5.srcs.length - 1];
-  ch.trigger(0.05, { step: 2 }); var chSrc = c5.srcs[c5.srcs.length - 1];
+  synOh.trigger(0, { level909: 2 }); var synSrc = c5.srcs[c5.srcs.length - 1];
+  oh.trigger(0, { level909: 2 }); var ohSrc = c5.srcs[c5.srcs.length - 1];
+  ch.trigger(0.05, { level909: 2 }); var chSrc = c5.srcs[c5.srcs.length - 1];
   var ohG = ohSrc.connections[0], ramp = ohG.gain.calls.filter(function (c) { return c[0] === 'linearRampToValueAtTime'; });
   var stops = ohSrc._stops || [];
   ok(ramp.length === 1 && near(ramp[0][2], 0.055) && Math.min.apply(null, stops) <= 0.0561, 'ch909s at 50 ms chokes the open hat: 5 ms fade to 50.5 ms + stop (' + JSON.stringify(ramp) + ' stops ' + JSON.stringify(stops) + ')');
   ok(!(synSrc._stops && synSrc._stops.some(function (t) { return t < 0.5; })), 'the synthesized oh909 is not choked by the sampled hats');
-  oh.trigger(0.08, { step: 1 });
+  oh.trigger(0.08, { level909: 1 });
   ok(chSrc._stops && chSrc._stops.some(function (t) { return t < 0.09; }), 'a new open hat chokes the closed hat (one hat channel)');
   // between: rate change only when asked, on a tom
   var c6 = new Rec(); await SL.loadFiles(c6, { 'LT3D3.WAV': fakeWav() });
   var lt = SL.create(c6, 'lt909s', { tune: -0.05, decay: 0.15 }); lt.out.connect(c6.destination);   // knob 4.5 -> LT3D3, +0.15 oct
-  lt.trigger(0, { step: 1 }); var r0 = c6.srcs[c6.srcs.length - 1].playbackRate.calls.length;
-  lt.set('between', 1); lt.trigger(0.2, { step: 1 }); var rc = c6.srcs[c6.srcs.length - 1].playbackRate.calls;
+  lt.trigger(0, { level909: 1 }); var r0 = c6.srcs[c6.srcs.length - 1].playbackRate.calls.length;
+  lt.set('between', 1); lt.trigger(0.2, { level909: 1 }); var rc = c6.srcs[c6.srcs.length - 1].playbackRate.calls;
   ok(r0 === 0 && rc.length === 1 && near(rc[0][1], Math.pow(2, 0.15)), 'between = 0 plays at the recorded rate; 1 bends by the left-over 0.15 octave (' + (rc[0] && rc[0][1]) + ')');
   // typesIn: a sequencer and a SongDoc
   ok(JSON.stringify(SL.typesIn({ tracks: { k: { inst: { type: 'bd909s' } }, s: { inst: { type: 'sd909' } }, h: { inst: { type: 'ch909s' } } } })) === '["bd909s","ch909s"]', 'typesIn(sequencer)');
   ok(JSON.stringify(SL.typesIn({ tracks: [{ name: 'a', type: 'oh909s' }, { name: 'b', inst: 'rd909s' }, { name: 'c', type: 'bd808' }] })) === '["oh909s","rd909s"]', 'typesIn(SongDoc)');
   ok(SL.sampledOf('bd909') === 'bd909s' && SL.synthOf('cp909s') === 'cp909', 'sampledOf / synthOf map the two 909s');
+  // the two-velocity choice follows the same rule as the level: accent (or level909 2), never ev.step
+  ok(SL.pick('rs909s', {}, { step: 37 }).file === 'RIM63.WAV' && SL.pick('rs909s', {}, { step: 5, accent: true }).file === 'RIM127.WAV' &&
+     SL.pick('cp909s', {}, { step: 2 }).file === 'HANDCLP1.WAV' && SL.pick('rs909s', {}, { level909: 1, accent: true }).file === 'RIM63.WAV',
+     'rim shot and clap: the high recording on an accent or level909 2; ev.step is ignored; level909 overrides accent');
+
+  // ---------------------------------------------------------------- 5b. accent through the real Host and Sequencer
+  console.log('5b. sampled 909 accent through the Sequencer (G1)');
+  var sbq = load(['core', 'synths', 'drums', 'sampled909', 'assets', 'worklets', 'classics', 'processors', 'songdoc', 'sequencer', 'song', 'host']);
+  async function seqLevels(type, accSteps) {
+    var rc = new Rec(), files = {};
+    sbq.Sampled909.files(type).forEach(function (f) { files[f] = fakeWav(); });
+    await sbq.Sampled909.loadFiles(rc, files);
+    var host = sbq.Host.create({ context: rc }), ed = host.editor(), cells = [], q;
+    await host.start();
+    for (q = 0; q < 16; q++) cells.push(q % 4 === 0 ? { vel: 0.85, acc: accSteps.indexOf(q + 1) >= 0 || undefined } : null);
+    ed.addTrack({ name: 'k9', inst: type, kind: 'drum', variants: { A: { bars: 1, cells: cells } } });
+    ed.doc.sections.forEach(function (sec) { ed.setPlay(sec.name, 'k9', 'A'); });
+    host.commit();
+    var seq = host.engine(), tr = seq.tracks.k9, out = {}, orig = tr.inst.trigger;
+    tr.inst.trigger = function (t, e) {
+      var n0 = rc.srcs.length; orig(t, e);
+      var src = rc.srcs.length > n0 ? rc.srcs[rc.srcs.length - 1] : null, gn = src && src.connections[0];
+      var c = gn ? gn.gain.calls.filter(function (x) { return x[0] === 'setValueAtTime'; })[0] : null;
+      out[(e.step % 16) + 1] = { amp: c ? c[1] : 0, step: e.step, file: tr.inst._lastHit && tr.inst._lastHit.file };
+    };
+    seq.scheduleAll(0, 2, 0);
+    return out;
+  }
+  var pl = await seqLevels('bd909s', []), ac = await seqLevels('bd909s', [5, 9]);
+  var d5 = 20 * Math.log10(ac[5].amp / pl[5].amp), d9 = 20 * Math.log10(ac[9].amp / pl[9].amp), d1 = 20 * Math.log10(pl[1].amp / pl[13].amp);
+  ok(pl[1] && pl[1].amp > 0 && pl[13] && pl[13].amp > 0, 'bd909s on a drum track plays steps 1, 5, 9 and 13 through Host and Sequencer');
+  ok(Math.abs(d5 - 9) < 1e-6 && Math.abs(d9 - 9) < 1e-6, 'cell.acc on steps 5 and 9 raises the sampled kick by 9 dB (' + d5.toFixed(2) + ', ' + d9.toFixed(2) + ' dB)');
+  ok(Math.abs(d1) < 1e-9 && Math.abs(ac[1].amp - pl[1].amp) < 1e-12, 'unaccented hits are level at every absolute step (step 1 against 13: ' + d1.toFixed(2) + ' dB)');
+  var rp = await seqLevels('rs909s', []), ra = await seqLevels('rs909s', [5, 9]);
+  ok(rp[5].file === 'RIM63.WAV' && rp[13].file === 'RIM63.WAV' && ra[5].file === 'RIM127.WAV' && ra[9].file === 'RIM127.WAV' && ra[13].file === 'RIM63.WAV',
+     'rim shot through the Sequencer: RIM127 only on the accented steps 5 and 9 (' + [ra[1].file, ra[5].file, ra[9].file, ra[13].file].join(' ') + ')');
+
+  // ---------------------------------------------------------------- 5c. Assets: manifest gating, what is fetched
+  console.log('5c. Assets.ready (G1)');
+  async function assetsRun(manifest, doc, shellRoms) {
+    var asked = [], sba = load(['core', 'drums', 'sampled909', 'assets'], shellRoms ? { HavantechnoShell: { readRoms: function () { asked.push('shell:readRoms'); return Promise.resolve(shellRoms); } } } : null);
+    sba.fetch = function (u) {
+      asked.push(u);
+      if (/manifest\.json$/.test(u)) return Promise.resolve(manifest ? { ok: true, json: function () { return Promise.resolve(manifest); } } : { ok: false });
+      return Promise.resolve({ ok: true, arrayBuffer: function () { return Promise.resolve(fakeWav()); } });
+    };
+    var r = await sba.Assets.ready(new Rec(), doc);
+    return { r: r, asked: asked, A: sba.Assets };
+  }
+  var kitDoc = { tracks: [{ name: 'k', type: 'bd909s' }, { name: 'h', type: 'ch909', params: { rom: 1 } }] };
+  var a1 = await assetsRun({ 'tr909-rom': false, 'tr909-robroy': true }, kitDoc);
+  ok(a1.asked[0] === 'assets/manifest.json' && a1.asked.filter(function (u) { return /tr909-rom/.test(u); }).length === 0 && a1.r.rom === null,
+     'manifest with the ROMs false: no ROM file is asked for (' + a1.asked.length + ' requests)');
+  ok(a1.r.robroy && a1.r.robroy.loaded === 24 && a1.asked.filter(function (u) { return /tr909-robroy\/BT/.test(u); }).length === 24, 'the Rob Roy files of the voices the document uses (24 for bd909s), from <assets>/tr909-robroy/');
+  var a2 = await assetsRun({ 'tr909-rom': false, 'tr909-robroy': false }, kitDoc);
+  ok(a2.asked.length === 1 && a2.r.robroy === null, 'both entries false: the manifest is the only request');
+  var a3 = await assetsRun({ 'tr909-rom': true, 'tr909-robroy': true }, { tracks: [{ name: 'k', type: 'bd909' }] });
+  ok(a3.asked.length === 1 && a3.r.rom === null && a3.r.robroy === null, 'a document with neither sampled voices nor ROM voices fetches nothing but the manifest');
+  var a4 = await assetsRun({ 'tr909-rom': true, 'tr909-robroy': true }, { tracks: [{ name: 'h', type: 'oh909' }] });
+  ok(a4.asked.filter(function (u) { return /tr909-rom\/hn61256p__c4[234]/.test(u); }).length === 3, 'ROMs true and an oh909 with rom on: the three chips are asked for from <assets>/tr909-rom/');
+  var a5 = await assetsRun({ 'tr909-rom': true, 'tr909-robroy': true }, { tracks: [{ name: 'h', type: 'oh909', params: { rom: 0 } }] });
+  ok(a5.asked.length === 1, 'the rom row off: no ROM request');
+  var a6 = await assetsRun({ 'tr909-rom': true, 'tr909-robroy': true }, undefined);
+  ok(a6.r.robroy && a6.r.robroy.types.length === 11 && a6.asked.filter(function (u) { return /tr909-rom\//.test(u); }).length === 3, 'no document (an instrument page): every sampled voice and the ROMs');
+  var a7 = await assetsRun(null, kitDoc);
+  ok(a7.r.manifest === null && a7.r.robroy && a7.asked.filter(function (u) { return /tr909-rom/.test(u); }).length === 0, 'no manifest: the Rob Roy set is still asked for (as before), the ROMs never');
+  var a8 = await assetsRun({ 'tr909-rom': false, 'tr909-robroy': false }, kitDoc, [new ArrayBuffer(16)]);
+  ok(a8.asked.indexOf('shell:readRoms') >= 0 && a8.r.rom && a8.r.rom.source === 'shell' && a8.r.rom.chips.length === 0, 'in the shell with the ROMs false: HavantechnoShell.readRoms is asked; a wrong image loads nothing and nothing throws');
+  ok(a1.A.romWanted({ tracks: { a: { inst: { type: 'cr909', params: { rom: 1 } } } } }) && !a1.A.romWanted({ tracks: { a: { inst: { type: 'cr909', params: { rom: 0 } } } } }), 'romWanted reads a Sequencer\'s instruments too');
+  var tracked = JSON.parse(fs.readFileSync(path.join(ROOT, 'app', 'assets', 'manifest.json'), 'utf8'));
+  ok(tracked['tr909-rom'] === false && tracked['tr909-robroy'] === true, 'the tracked app/assets/manifest.json says ROMs false, Rob Roy true');
 }
 
 // ==================================================================== browser measurements
@@ -310,15 +383,15 @@ async function measure() {
   var lc = new OfflineAudioContext(1, SR, SR), L = await S.load(lc);
   out.load = { loaded: L.loaded.length, missing: L.missing.length, ms: Math.round(performance.now() - t0), available: S.available() };
   // raw peaks of the decoded recordings (normalised per file: about 1.0)
-  S.types().forEach(function (t) { var b = S.buffer(lc, S.pick(t, {}, { step: 2 }).file), d = b.getChannelData(0), pk = 0; for (var i = 0; i < d.length; i++) pk = Math.max(pk, Math.abs(d[i])); out.rawPeaks[t] = pk; });
+  S.types().forEach(function (t) { var b = S.buffer(lc, S.pick(t, {}, { level909: 2 }).file), d = b.getChannelData(0), pk = 0; for (var i = 0; i < d.length; i++) pk = Math.max(pk, Math.abs(d[i])); out.rawPeaks[t] = pk; });
   // one hit of every voice at three knob settings (all knobs at min, at the defaults, at max); rs / cp at steps 0, 1, 2
   for (var t of S.types()) {
     var spec = S.spec(t), knobs = Object.keys(spec).filter(function (k) { return k !== 'level' && k !== 'between'; });
     var settings = knobs.length ? ['min', 'default', 'max'] : ['step 0', 'step 1', 'step 2'];
     for (var s of settings) {
-      var params = {}, ev = { step: 2, vel: 1 };
+      var params = {}, ev = { level909: 2, vel: 1 };
       knobs.forEach(function (k) { params[k] = s === 'min' ? spec[k].min : s === 'max' ? spec[k].max : spec[k].value; });
-      if (!knobs.length) ev.step = Number(s.slice(-1));
+      if (!knobs.length) ev.level909 = Number(s.slice(-1));
       var expect = S.pick(t, params, ev).file, chosen = null;
       var r = await render(3, async function (ctx) {
         await S.load(ctx, { types: [t] });
@@ -332,7 +405,7 @@ async function measure() {
   // the synthesized kit's peaks at the defaults, step 2 (the guide for GAIN)
   for (var t2 of S.types()) {
     var syn = S.synthOf(t2);
-    var r2 = await render(3, async function (ctx) { var i = D.create(ctx, syn); i.out.connect(ctx.destination); i.trigger(0.01, { step: 2, vel: 1 }); });
+    var r2 = await render(3, async function (ctx) { var i = D.create(ctx, syn); i.out.connect(ctx.destination); i.trigger(0.01, { level909: 2, vel: 1 }); });
     out.synthPeaks[t2] = stats(r2.buf).peak;
   }
   // a 16-step groove at 125 BPM, step levels 2 on the beats, 1 elsewhere
@@ -347,7 +420,7 @@ async function measure() {
       names.forEach(function (k) {
         var inst = kit === 's' ? S.create(ctx, k + '909s') : D.create(ctx, k + '909');
         inst.out.connect(ctx.destination);
-        G[k].forEach(function (s) { inst.trigger(0.05 + s * SD, { step: lvl(s), vel: 1 }); });
+        G[k].forEach(function (s) { inst.trigger(0.05 + s * SD, { level909: lvl(s), vel: 1 }); });
       });
     });
     return stats(r.buf, 0, 16 * SD + 2.5);
@@ -359,8 +432,8 @@ async function measure() {
   async function hats(o, c) {
     var r = await render(1, async function (ctx) {
       await S.load(ctx, { types: ['ch909s', 'oh909s'] });
-      if (o) { var oh = S.create(ctx, 'oh909s', { decay: 0.16 }); oh.out.connect(ctx.destination); oh.trigger(0.05, { step: 2 }); }
-      if (c) { var ch = S.create(ctx, 'ch909s'); ch.out.connect(ctx.destination); ch.trigger(0.15, { step: 2 }); }
+      if (o) { var oh = S.create(ctx, 'oh909s', { decay: 0.16 }); oh.out.connect(ctx.destination); oh.trigger(0.05, { level909: 2 }); }
+      if (c) { var ch = S.create(ctx, 'ch909s'); ch.out.connect(ctx.destination); ch.trigger(0.15, { level909: 2 }); }
     });
     return { win: stats(r.buf, 0.16, 0.4), pre: stats(r.buf, 0.10, 0.149) };
   }

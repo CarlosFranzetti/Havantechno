@@ -170,12 +170,20 @@
     }).catch(function (e) { note(e); return null; });
   }
 
+  // the view a device window opens on when none was chosen for that device before: Settings 'view.deviceOpen' ('panel' or
+  // 'controls'; Pressing Crew V2's setting). null lets build() pick the panel when the device has one, else the editor.
+  function firstView() {
+    try { var St = root.Settings; if (St && typeof St.get === 'function' && St.get('view.deviceOpen') === 'controls') return 'controls'; } catch (e) { /* ignore */ }
+    return null;
+  }
+
   // ------------------------------------------------------------------ chrome (shared by panels and child windows)
   // ctl: { getLink(), cycleLink(), isPinned(id), pin(id, b), close(id), touch(id), rectKey(id) }
   function Chrome(h, id, ctl, embedded) {
     var c = { id: id, host: h, view: null, dev: null, face: null, el: null, embedded: !!embedded, _frame: 0, _seen: -1, _hover: null };
     var saved = lsGet(LS_RECT + id);
     if (saved && (saved.v === 'controls' || saved.v === 'editor' || saved.v === 'panel')) c.view = saved.v;
+    else c.view = firstView();
 
     var root_ = el('div', 'wn-win' + (embedded ? ' wn-embedded' : ''));
     root_.setAttribute('role', 'dialog');
@@ -396,7 +404,7 @@
       if (c._frame % 3 === 0) c.footer();
     };
 
-    c.setDevice = function (nid) { c.id = nid; var s = lsGet(LS_RECT + nid); c.view = (s && (s.v === 'controls' || s.v === 'editor' || s.v === 'panel')) ? s.v : null; c.build(); };
+    c.setDevice = function (nid) { c.id = nid; var s = lsGet(LS_RECT + nid); c.view = (s && (s.v === 'controls' || s.v === 'editor' || s.v === 'panel')) ? s.v : firstView(); c.build(); };
     c.dispose = function () {
       if (c.menu) { try { c.menu.dispose(); } catch (e) { note(e); } c.menu = null; }
       if (c._ro) { try { c._ro.disconnect(); } catch (e) { /* ignore */ } c._ro = null; }

@@ -400,6 +400,29 @@ function registerIpc() {
     if (!fromMain(e)) return refuse('Files can only be copied from the main window.');
     return getGuard().copyFile(src, dst);
   });
+  // makeDirectory(path) -> true: one folder inside a granted folder or <userData> (shell/files.js). Main window only.
+  ipcMain.handle('shell:makeDirectory', function (e, p) {
+    if (!fromMain(e)) return refuse('Folders can only be made from the main window.');
+    return getGuard().makeDirectory(p);
+  });
+  // The owner's TR-909 sample ROMs in <userData>/roms/tr909/ (G1). readRoms() -> [{name, bytes}] (the three MAME names,
+  // 32768 bytes each; drums.js checks the hashes). importRoms(paths?) copies picked files there: with no paths a file
+  // dialog asks; refused files are listed with the reason. Main window only.
+  function romDir() { return path.join(app.getPath('userData'), 'roms', 'tr909'); }
+  ipcMain.handle('shell:readRoms', async function (e) {
+    if (!fromMain(e)) return [];
+    var list = await Files.readRoms(romDir());
+    return list.map(function (f) { return { name: f.name, bytes: new Uint8Array(f.bytes.buffer, f.bytes.byteOffset, f.bytes.byteLength) }; });
+  });
+  ipcMain.handle('shell:importRoms', async function (e, paths) {
+    if (!fromMain(e)) return refuse('ROM files can only be added from the main window.');
+    if (paths == null) {
+      var r = await dialog.showOpenDialog(parentFor(e), { properties: ['openFile', 'multiSelections'], title: 'TR-909 sample ROMs (hn61256p__c42.ic62, __c43.ic69, __c44.ic54)' });
+      if (r.canceled || !r.filePaths.length) return { copied: [], refused: [] };
+      paths = r.filePaths;
+    }
+    return Files.importRoms(paths, romDir());
+  });
   ipcMain.on('shell:appVersion', function (e) { e.returnValue = app.getVersion(); });
   ipcMain.handle('shell:appDataPath', function () { return app.getPath('userData'); });
   // Small named files in the app-data folder (autosave, preferences).

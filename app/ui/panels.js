@@ -74,6 +74,12 @@
     return 0;
   }
   function canEdit(h) { return !!h && isFn(h.document) && isFn(h.editor) && isFn(h.commit); }
+  // the panel column a voice type belongs to: a sampled 909 voice (engine/sampled909.js, 'bd909s') is drawn and edited as
+  // its synthesized twin ('bd909'); parameter names and ranges are the same. Every other type is its own column.
+  function voiceType(t) {
+    var S9 = root.Sampled909, s = (S9 && isFn(S9.synthOf) && typeof t === 'string') ? safe(function () { return S9.synthOf(t); }, null) : null;
+    return s || t;
+  }
 
   // ------------------------------------------------------------------ render
   function render(device, host, opts) {
@@ -114,12 +120,12 @@
 
     function voice(type) {
       var dev = null, i;
-      if (!type || type === device.type) {
+      if (!type || type === voiceType(device.type)) {
         for (i = 0; i < state.devs.length; i++) if (state.devs[i].id === device.id) { dev = state.devs[i]; break; }
-        if (!dev && (!type || type === device.type)) dev = type ? null : device;
-        if (!dev && type) for (i = 0; i < state.devs.length; i++) if (state.devs[i].type === type) { dev = state.devs[i]; break; }
+        if (!dev && (!type || type === voiceType(device.type))) dev = type ? null : device;
+        if (!dev && type) for (i = 0; i < state.devs.length; i++) if (voiceType(state.devs[i].type) === type) { dev = state.devs[i]; break; }
       } else {
-        for (i = 0; i < state.devs.length; i++) if (state.devs[i].type === type) { dev = state.devs[i]; break; }
+        for (i = 0; i < state.devs.length; i++) if (voiceType(state.devs[i].type) === type) { dev = state.devs[i]; break; }
       }
       var spec = (dev && dev.spec) || safe(function () { return root.Drums && root.Drums.has && root.Drums.has(type) ? root.Drums.spec(type) : null; }, null) || {};
       return {
@@ -783,7 +789,7 @@
   function machine(P, cfg) {
     var host = P.host, st = { sel: null, cellsSig: '', lastStep: -2, playing: null, bpm: null, mode: null, pending: null };
     var present = function (t) { return t === AC ? kit().length > 0 : !!P.voice(t).dev; };
-    st.sel = (cfg.voices.indexOf(P.device.type) >= 0) ? P.device.type : cfg.voices[0];
+    st.sel = (cfg.voices.indexOf(voiceType(P.device.type)) >= 0) ? voiceType(P.device.type) : cfg.voices[0];
     var api = { st: st, onSelect: [], AC: AC };
     P.machine = api;                                   // pages reach it as panel.kit.machine
     api.select = function (t) {
@@ -798,7 +804,7 @@
     function kit() {                                   // the kit's tracks, in document order: [{name, type}]
       var d = D(), out = [];
       if (!d || !d.tracks) return out;
-      d.tracks.forEach(function (t) { if (cfg.voices.indexOf(t.type) >= 0) out.push({ name: t.name, type: t.type }); });
+      d.tracks.forEach(function (t) { var vt = voiceType(t.type); if (cfg.voices.indexOf(vt) >= 0) out.push({ name: t.name, type: vt }); });
       return out;
     }
     function trackOf(type) { var vo = P.voice(type); return vo.dev ? vo.dev.track : null; }
@@ -1025,6 +1031,8 @@
     };
 
     api.update = function () {
+      var selType = st.sel === AC ? '' : safe(function () { var vo = P.voice(st.sel); return vo.dev ? String(vo.dev.type) : ''; }, '');
+      if (selType !== st.selType) { var first = st.selType === undefined; st.selType = selType; if (!first) buildTrims(); }   // a voice source switch changes the trims
       var acc = st.sel === AC, fresh = (P.state.frame % 4 === 0 || st.cellsSig === '');
       var vw = fresh ? view(st.sel) : st.vw, cells = fresh ? (acc ? api.accentRow() : (vw ? vw.cells : null)) : st.cells;
       st.vw = vw; st.cells = cells;
@@ -1148,7 +1156,8 @@
     P.text(svg, X0, 42, o.model, { 'text-anchor': 'start', fill: C.ink, 'font-size': 28, 'font-weight': 800, 'font-style': 'italic' });
     P.text(svg, X0 + IW, 40, 'HAVANTECHNO', { 'text-anchor': 'end', fill: C.brand, 'font-size': 18, 'font-weight': 800, 'letter-spacing': 3 });
     // instrument grid: tap selects; a red lamp = muted; dim = no track
-    var cols = 6, cw = (IW - (cols - 1) * 4) / cols, ch = 42, gy = 62, cells = [];
+    var cols = 6, cw = (IW - (cols - 1) * 4) / cols, ch = 42, gy = 62 + (o.headH || 0), cells = [];
+    if (o.head) o.head(svg, X0, 62, IW);
     o.grid.forEach(function (t, i) {
       var x = X0 + (i % cols) * (cw + 4), y = gy + Math.floor(i / cols) * (ch + 6);
       var b = P.button(svg, { x: x, y: y, w: cw, h: ch, rx: 4, label: t === AC ? 'AC' : abbr(t), size: 15, fill: C.btn, ink: C.btnInk, stroke: C.edge,
@@ -1483,6 +1492,266 @@
     }
   });
 
+
+  // ------------------------------------------------------------------ HVT-909 voice source (G2): SYNTH / SAMPLE / ROM
+  // SYNTH: every voice synthesized (drums.js; the four ROM voices with their rom row off when a chip is loaded).
+  // SAMPLE: every 909 track switched to its sampled twin (engine/sampled909.js, Rob Roy's recordings of a 909; Sampled909.
+  //   sampledOf / synthOf; the parameters carry over because names and ranges match). Needs the sample files.
+  // ROM: the four voices the machine plays from its sample ROMs (closed and open hat, crash, ride) play the owner's chip
+  //   images through drums.js's rom row (Drums.loadRom); the other seven voices keep their source. Needs ROM images: with
+  //   none loaded, ROM opens a file picker; each file's bytes go to Drums.loadRom, which verifies the checksum. Nothing is
+  //   uploaded: the bytes stay in the page.
+  // A switch that changes the document (a track's type, a rom row) is one undo entry. The panel shows which source each
+  // group (drums; hats and cymbals) is using, and the chips present. P.source on the panel (panel.kit.source) is the API.
+  var ROMV909 = ['ch909', 'oh909', 'cr909', 'rd909'], CHIP909 = { ch909: 'hat', oh909: 'hat', cr909: 'crash', rd909: 'ride' };
+  var SOURCES = ['SYNTH', 'SAMPLE', 'ROM'], SRC_HEAD_H = 110;
+  var SRC_HELP = 'SYNTH: synthesized voices  \u00b7  SAMPLE: recordings of a real 909 (Rob Roy set)  \u00b7  ROM: hats and cymbals from the 909\u2019s own chips';
+  var manifest909;                                     // undefined: not asked; null: none; else app/assets/manifest.json (engine/assets.js)
+  function readManifest909() {
+    if (manifest909 !== undefined) return;
+    manifest909 = null;
+    var A = root.Assets;
+    if (A && isFn(A.manifest)) safe(function () { A.manifest().then(function (m) { manifest909 = m || null; }, function () {}); });
+  }
+  function source909(P) {
+    var host = P.host, S = { msg: '', results: null }, input = null;
+    readManifest909();
+    function Dr() { return root.Drums || null; }
+    function S9() { return root.Sampled909 || null; }
+    function tracks() {
+      var d = safe(function () { return host.document(); }, null), out = [];
+      if (d && d.tracks) d.tracks.forEach(function (t) { if (V909.indexOf(voiceType(t.type)) >= 0) out.push(t); });
+      return out;
+    }
+    S.chips = function () {
+      var D0 = Dr(), st = D0 && isFn(D0.romStatus) ? safe(function () { return D0.romStatus(); }, null) : null, out = {};
+      ['hat', 'crash', 'ride'].forEach(function (c) { var x = st && st.chips ? st.chips[c] : null; out[c] = x && x.loaded ? (x.verified ? 'verified' : 'unverified') : null; });
+      return out;
+    };
+    function chipOn(base) { return !!S.chips()[CHIP909[base]]; }
+    function romRow(t) { var v = t.params && t.params.rom; return v == null ? 1 : Number(v); }
+    S.of = function (t) {                               // one track's source
+      var b = voiceType(t.type);
+      if (b !== t.type) return 'SAMPLE';
+      if (ROMV909.indexOf(b) >= 0 && chipOn(b) && romRow(t) >= 0.5) return 'ROM';
+      return 'SYNTH';
+    };
+    function groupOf(list) { var seen = {}, n = 0, v = null; list.forEach(function (t) { var s = S.of(t); if (!seen[s]) { seen[s] = 1; n++; v = s; } }); return !n ? null : n === 1 ? v : 'MIXED'; }
+    S.groups = function () {
+      var ts = tracks();
+      return { drums: groupOf(ts.filter(function (t) { return ROMV909.indexOf(voiceType(t.type)) < 0; })),
+               hats: groupOf(ts.filter(function (t) { return ROMV909.indexOf(voiceType(t.type)) >= 0; })) };
+    };
+    S.value = function () {                             // the kit's source, or null when the groups differ (other than ROM)
+      var g = S.groups(), hs = tracks().filter(function (t) { return ROMV909.indexOf(voiceType(t.type)) >= 0; });
+      var romNow = hs.filter(function (t) { return S.of(t) === 'ROM'; }).length, romable = hs.filter(function (t) { return chipOn(voiceType(t.type)); }).length;
+      if (romNow && romNow === romable) return 'ROM';    // every voice whose chip is loaded plays it (a missing chip leaves its voice as it was)
+      if (g.drums && g.hats && g.drums !== g.hats) return null;
+      return g.drums || g.hats;
+    };
+    // why a source cannot be chosen now ('' = it can)
+    S.reason = function (s) {
+      if (!P.canEdit()) return 'switch it in the main window';
+      if (s === 'SAMPLE') {
+        var X = S9();
+        if (!X || !isFn(X.sampledOf)) return 'the sampled kit is not on this page';
+        if (isFn(X.available) && X.available()) return '';
+        if (manifest909 && manifest909['tr909-robroy'] === true) return '';
+        return manifest909 && manifest909['tr909-robroy'] === false ? 'the sample files are not installed' : 'the sample files are not loaded';
+      }
+      if (s === 'ROM') {
+        var D0 = Dr();
+        if (!D0 || !isFn(D0.loadRom)) return 'this engine has no ROM voices';
+        var c = S.chips();
+        return (c.hat || c.crash || c.ride) ? '' : 'no ROM images loaded';
+      }
+      return '';
+    };
+    S.say = function (t) { S.msg = String(t || ''); };
+    function snap(e) {                                  // one undo snapshot, as the editor's own operations take
+      if (isFn(e.snapshot)) { e.snapshot(); return; }
+      if (e._undo && e.doc) { e._undo.push(JSON.stringify(e.doc)); if (e._redo) e._redo.length = 0; }
+    }
+    // switch the kit; returns true when the document now uses that source. o.quiet: no message
+    S.set = function (s, o) {
+      o = o || {};
+      if (SOURCES.indexOf(s) < 0) return false;
+      var why = S.reason(s);
+      if (s === 'ROM' && why === 'no ROM images loaded') { S.pick(); return false; }
+      if (why) { S.say(s + ' is not available: ' + why + '.'); return false; }
+      var ed = safe(function () { return host.editor(); }, null); if (!ed) return false;
+      var X = S9(), plan = [];
+      tracks().forEach(function (t) {
+        var b = voiceType(t.type), isRom = ROMV909.indexOf(b) >= 0, type = t.type, rom = null;
+        if (s === 'SYNTH') { type = b; if (isRom && chipOn(b) && romRow(t) >= 0.5) rom = 0; }
+        else if (s === 'SAMPLE') type = (X && safe(function () { return X.sampledOf(b); }, null)) || t.type;
+        else if (isRom && chipOn(b)) { type = b; if (romRow(t) < 0.5) rom = 1; }
+        if (type !== t.type || rom != null) plan.push({ name: t.name, type: type, rom: rom });
+      });
+      if (plan.length) {
+        var run = function (e) {
+          snap(e);
+          plan.forEach(function (p) {
+            var tr = e.track(p.name); if (!tr) return;
+            if (tr.inst == null || tr.inst === tr.type) tr.inst = p.type;
+            tr.type = p.type;
+            if (p.rom != null) { tr.params = tr.params || {}; tr.params.rom = p.rom; }
+          });
+          return true;
+        };
+        if (isFn(ed.group)) ed.group(run); else run(ed);
+        safe(function () { host.commit(); });
+        P.refresh();
+      }
+      if (!o.quiet) {
+        var g = S.groups();
+        S.say(plan.length ? 'Source: drums ' + (g.drums || '—') + ', hats and cymbals ' + (g.hats || '—') + ' (Undo takes it back).' : 'The kit already plays ' + s + '.');
+      }
+      return true;
+    };
+    // the ROM file picker: an <input type=file> the panel keeps (removed with the panel)
+    S.pick = function () {
+      var D0 = Dr(), d = doc();
+      if (!D0 || !isFn(D0.loadRom) || !d || !d.body || !P.canEdit()) return false;
+      if (!input) {
+        input = d.createElement('input');
+        input.type = 'file'; input.multiple = true; input.accept = '.ic62,.ic69,.ic54,.bin,.rom';
+        input.className = 'pn-romfile'; input.setAttribute('aria-label', 'Load 909 ROM files');
+        input.style.position = 'fixed'; input.style.left = '-10000px'; input.style.top = '0'; input.style.width = '1px'; input.style.height = '1px'; input.style.opacity = '0';
+        input.addEventListener('change', function () {
+          var fl = []; for (var i = 0; input.files && i < input.files.length; i++) fl.push(input.files[i]);
+          try { input.value = ''; } catch (e) { /* ignore */ }
+          if (fl.length) S.loadFiles(fl);
+        });
+        d.body.appendChild(input);
+        P.onDispose(function () { if (input && input.parentNode) input.parentNode.removeChild(input); input = null; });
+      }
+      S.say('Choose the ROM chip files (hn61256p__c42.ic62, __c43.ic69, __c44.ic54; 32 KB each). They are read here and never uploaded.');
+      safe(function () { input.click(); });
+      return true;
+    };
+    S.input = function () { return input; };
+    function bytesOf(f) {
+      if (f && isFn(f.arrayBuffer)) return f.arrayBuffer();
+      return new Promise(function (res, rej) { var r = new root.FileReader(); r.onload = function () { res(r.result); }; r.onerror = function () { rej(r.error); }; r.readAsArrayBuffer(f); });
+    }
+    function describe(r) {
+      if (!r) return 'refused';
+      if (r.chips) return r.chips.map(describe).join(', ');
+      if (r.ok) return r.chip + ' chip ' + (r.verified ? 'verified by checksum' : 'loaded, NOT verified');
+      var e = String(r.error || '');
+      if (/^size /.test(e)) return 'refused: ' + (r.size != null ? r.size : '?') + ' bytes, a 909 sample ROM has 32768';
+      if (/checksum/.test(e)) return 'refused: its checksum matches none of the three 909 sample ROMs';
+      return 'refused: ' + (e || 'not read');
+    }
+    // files: File objects (or {name, arrayBuffer()}) -> Promise<[{name, result, text}]>; a verified chip switches its voices to ROM
+    S.loadFiles = function (files) {
+      var D0 = Dr();
+      if (!D0 || !isFn(D0.loadRom)) return Promise.resolve([]);
+      return Promise.all((files || []).map(function (f) {
+        var name = (f && f.name) || 'file';
+        return Promise.resolve().then(function () { return bytesOf(f); }).then(function (ab) { return { name: name, result: D0.loadRom(ab) }; },
+          function () { return { name: name, result: { ok: false, error: 'could not be read' } }; });
+      })).then(function (res) {
+        res.forEach(function (x) { x.text = x.name + ': ' + describe(x.result); });
+        S.results = res;
+        var any = res.some(function (x) { return x.result && x.result.ok; });
+        if (any) S.set('ROM', { quiet: true });
+        S.say(res.map(function (x) { return x.text; }).join('  ·  '));
+        return res;
+      });
+    };
+    S.status = function () {                            // the text lines the panel draws
+      var g = S.groups(), c = S.chips(), mark = function (k) { return k + (c[k] === 'verified' ? ' ✓' : c[k] ? ' (unverified)' : ' —'); };
+      var why = [];
+      ['SAMPLE', 'ROM'].forEach(function (s) { var r = S.reason(s); if (r && r !== 'switch it in the main window') why.push(s + ': ' + r); });
+      function said(v, rom) {                           // MIXED spelled out per voice: 'ROM CH OH, SYNTH CR RD'
+        if (v !== 'MIXED') return v || '—';
+        var by = {}, order = [];
+        tracks().forEach(function (t) { if ((ROMV909.indexOf(voiceType(t.type)) >= 0) !== rom) return; var k = S.of(t); if (!by[k]) { by[k] = []; order.push(k); } by[k].push(voiceType(t.type).slice(0, 2).toUpperCase()); });
+        return order.map(function (k) { return k + ' ' + by[k].join(' '); }).join(', ');
+      }
+      return { drums: 'DRUMS: ' + said(g.drums, false), hats: 'HATS + CYMBALS: ' + said(g.hats, true),
+               chips: 'ROM chips: ' + mark('hat') + '  ' + mark('crash') + '  ' + mark('ride') + (why.length ? '   ·   ' + why.join('   ·   ') : ''),
+               msg: S.msg || SRC_HELP };
+    };
+    P.source = S;
+    return S;
+  }
+  // wrap a line at about n characters
+  function wrapText(t, n) {
+    var out = [], line = '';
+    String(t).split(' ').forEach(function (w) { if ((line + ' ' + w).trim().length > n && line) { out.push(line); line = w; } else line = (line ? line + ' ' : '') + w; });
+    if (line) out.push(line);
+    return out;
+  }
+  // the source control: three segments, LOAD ROM…, the group sources, the chips and a help or message line.
+  // o: {portrait, x, y, w, C}
+  function sourceBlock(P, S, parent, o) {
+    var C = o.C, g = P.g(parent, { 'class': 'pn-source', role: 'radiogroup', 'aria-label': 'Voice source of the kit' }), btn = {}, i;
+    var L = o.portrait
+      ? { by: o.y, bh: 40, size: 14, ws: [104, 116, 84], load: 192, gap: 4, lines: [o.y + 57, o.y + 73, o.y + 88, o.y + 103], fs: [13, 11.5, 11.5, 11.5], wrap: 82 }
+      : { by: o.y, bh: 26, size: 11, ws: [62, 72, 50], load: 92, gap: 4, lines: [o.y + 12, o.y + 26, o.y + 48, o.y + 60], fs: [10.5, 10.5, 10, 10], wrap: 140 };
+    var x = o.x;
+    SOURCES.forEach(function (s, k) {
+      btn[s] = P.button(g, { x: x, y: L.by, w: L.ws[k], h: L.bh, rx: 3, label: s, size: L.size, fill: C.btn, ink: C.btnInk, stroke: C.edge,
+        role: 'radio', cls: 'pn-src', aria: s === 'SYNTH' ? 'Source: synthesized voices' : s === 'SAMPLE' ? 'Source: sampled voices (recordings of a 909)' : 'Source: ROM hats and cymbals',
+        onClick: function () { S.set(s); } });
+      btn[s].g.setAttribute('data-source', s);
+      x += L.ws[k] + L.gap;
+    });
+    var load = P.button(g, { x: x, y: L.by, w: L.load, h: L.bh, rx: 3, label: 'LOAD ROM…', size: L.size - 1, fill: C.tool || C.btn, ink: C.toolInk || C.btnInk, stroke: C.edge,
+      cls: 'pn-romload', aria: 'Load ROM files (the three 909 sample chip images)', onClick: function () { S.pick(); } });
+    var tx = [], lx = o.portrait ? o.x : x + L.load + 12;
+    if (o.portrait) {
+      for (i = 0; i < 4; i++) tx.push(P.text(g, o.x, L.lines[i], '', { 'text-anchor': 'start', fill: i === 0 ? C.ink : (C.dim || C.ink), 'font-size': L.fs[i], 'font-weight': i === 0 ? 700 : 500, 'class': 'pn-src-line' }));
+    } else {
+      tx.push(P.text(g, lx, L.lines[0], '', { 'text-anchor': 'start', fill: C.ink, 'font-size': L.fs[0], 'font-weight': 700, 'class': 'pn-src-line' }));
+      tx.push(P.text(g, lx, L.lines[1], '', { 'text-anchor': 'start', fill: C.ink, 'font-size': L.fs[1], 'font-weight': 700, 'class': 'pn-src-line' }));
+      tx.push(P.text(g, o.x - 200, L.lines[2], '', { 'text-anchor': 'start', fill: C.dim || C.ink, 'font-size': L.fs[2], 'class': 'pn-src-line' }));
+      tx.push(P.text(g, o.x - 200, L.lines[3], '', { 'text-anchor': 'start', fill: C.ink, 'font-size': L.fs[3], 'class': 'pn-src-line pn-src-msg' }));
+    }
+    var last = '';
+    function paint() {
+      var v = S.value(), st = S.status(), ed = P.canEdit();
+      var sig = v + '|' + st.drums + st.hats + st.chips + st.msg + ed;
+      if (sig === last) return;
+      last = sig;
+      SOURCES.forEach(function (s) {
+        var b = btn[s], on = v === s, why = S.reason(s), loader = s === 'ROM' && why === 'no ROM images loaded';
+        b.rect.setAttribute('fill', on ? C.on : C.btn);
+        if (b.txt) b.txt.setAttribute('fill', on ? C.onInk : C.btnInk);
+        b.g.setAttribute('aria-checked', on ? 'true' : 'false');
+        if (loader) {                                    // unavailable, but a tap offers the file picker
+          b.setDisabled(false);
+          b.g.setAttribute('aria-disabled', 'true'); b.g.setAttribute('opacity', '0.55');
+          b.g.setAttribute('aria-label', 'Source: ROM hats and cymbals (unavailable: ' + why + '; tap to load ROM files)');
+        } else {
+          b.setDisabled(!!why);
+          b.g.setAttribute('aria-disabled', why ? 'true' : 'false'); b.g.setAttribute('opacity', why ? '0.4' : '1');
+          b.g.setAttribute('aria-label', (s === 'SYNTH' ? 'Source: synthesized voices' : s === 'SAMPLE' ? 'Source: sampled voices (recordings of a 909)' : 'Source: ROM hats and cymbals') + (why ? ' (unavailable: ' + why + ')' : ''));
+        }
+        b.g.setAttribute('data-reason', why || '');
+      });
+      load.setDisabled(!ed || S.reason('ROM') === 'this engine has no ROM voices');
+      if (o.portrait) {
+        tx[0].textContent = st.drums + '   ·   ' + st.hats;
+        var rest = [st.chips].concat(wrapText(st.msg, L.wrap));
+        for (var k = 1; k < 4; k++) tx[k].textContent = rest[k - 1] || '';
+        if (rest.length > 3) tx[3].textContent = rest.slice(2).join(' ').slice(0, L.wrap - 1) + '…';
+      } else {
+        tx[0].textContent = st.drums; tx[1].textContent = st.hats;
+        tx[2].textContent = st.chips;
+        var m = st.msg; tx[3].textContent = m.length > L.wrap ? m.slice(0, L.wrap - 1) + '…' : m;
+      }
+      tx[tx.length - 1].setAttribute('data-full', st.msg);
+      g.setAttribute('aria-description', st.drums + '; ' + st.hats + '; ' + st.chips + '; ' + st.msg);
+    }
+    P.onUpdate(paint);
+    paint();
+    return { buttons: btn, load: load, lines: tx, paint: paint };
+  }
+
   // ------------------------------------------------------------------ HVT-909
   // groups of knob columns, as on the hardware: [col, row, legend, voice, param]
   var GRP909 = [
@@ -1504,13 +1773,15 @@
 
   Panels.define('hvt909', {
     label: 'HVT-909 rhythm machine', size: { w: 1200, h: 720 }, win: { w: 1080 },
-    layouts: { landscape: { w: 1200, h: 720 }, portrait: { w: 560, h: portraitH(GRID909.length) } },
-    match: function (d) { return d.kind === 'instrument' && V909.indexOf(d.type) >= 0; },
+    layouts: { landscape: { w: 1200, h: 720 }, portrait: { w: 560, h: portraitH(GRID909.length) + SRC_HEAD_H } },
+    match: function (d) { return d.kind === 'instrument' && V909.indexOf(voiceType(d.type)) >= 0; },
     build: function (P) {
       if (P.layout === 'portrait') {
         var Mp = machine(P, { voices: V909, tempo: [37, 290], trimInk: P909.ink, columnParams: function () { return []; }, trimTitle: 'VOICE', trimLayer: null,
-          trimBox: portraitTrims(62 + Math.ceil(GRID909.length / 6) * 48 + 6 + 56, P909) });
-        return portraitMachine(P, Mp, { model: 'HVT-909', grid: GRID909, C: P909, swing: true });
+          trimBox: portraitTrims(62 + SRC_HEAD_H + Math.ceil(GRID909.length / 6) * 48 + 6 + 56, P909) });
+        var Sp = source909(P);
+        return portraitMachine(P, Mp, { model: 'HVT-909', grid: GRID909, C: P909, swing: true, headH: SRC_HEAD_H,
+          head: function (svg, x, y, w) { sourceBlock(P, Sp, svg, { portrait: true, x: x, y: y, w: w, C: P909 }); } });
       }
       var svg = P.svg, C = C909, colW = 64, x0 = 52, ROWY = [150, 238];
       var colParams = {};
@@ -1522,8 +1793,9 @@
       P.el('rect', { x: 10, y: 10, width: 1180, height: 410, rx: 6, fill: C.face, stroke: C.faceEdge, 'stroke-width': 2 }, svg);
       // model name top left (plain), wordmark top right
       P.text(svg, 40, 56, 'HVT-909', { 'text-anchor': 'start', fill: C.ink, 'font-size': 34, 'font-weight': 800, 'letter-spacing': 1, 'font-style': 'italic' });
-      P.el('rect', { x: 210, y: 36, width: 520, height: 6, fill: C.orange }, svg);
-      P.el('rect', { x: 210, y: 46, width: 520, height: 2, fill: C.orange }, svg);
+      P.el('rect', { x: 210, y: 36, width: 180, height: 6, fill: C.orange }, svg);
+      P.el('rect', { x: 210, y: 46, width: 180, height: 2, fill: C.orange }, svg);
+      sourceBlock(P, source909(P), svg, { portrait: false, x: 410, y: 14, w: 540, C: P909 });
       P.text(svg, 1160, 54, 'HAVANTECHNO', { 'text-anchor': 'end', fill: '#d9407e', 'font-size': 22, 'font-weight': 800, 'letter-spacing': 4 });
 
       var gx = x0, grpState = [];

@@ -320,6 +320,17 @@
     };
 
     // ---------------------------------------------------------- audio
+    // what a context needs before the document is built on it: Assets.ready (assets.js: the manifest, the sampled 909's
+    // recordings, the 909 ROMs) or, without assets.js, Sampled909.load for the sampled types used (K1). null when
+    // neither module is loaded, so nothing changes then. Never rejects.
+    function assetsFor(c, doc) {
+      var A = root.Assets, S9 = root.Sampled909, p = null;
+      try {
+        if (A && typeof A.ready === 'function') p = A.ready(c, doc);
+        else if (S9 && typeof S9.load === 'function') { var ty = S9.typesIn(doc); if (ty.length) p = S9.load(c, { types: ty }); }
+      } catch (e) { p = null; }
+      return p ? Promise.resolve(p).then(null, function () {}) : null;
+    }
     host.start = function () {
       if (startPromise) return startPromise;
       startPromise = new Promise(function (resolve) {
@@ -333,6 +344,8 @@
           var r = (ctx.state !== 'running' && ctx.resume) ? ctx.resume() : null;
           if (r && r.catch) r.catch(function () {});
           var W = root.Worklets, wl = (W && typeof W.load === 'function') ? W.load(ctx) : null;
+          var as = assetsFor(ctx, ed.doc);                // sampled 909 recordings and ROMs the document uses (G1)
+          if (as) wl = Promise.all([Promise.resolve(wl).then(null, function () {}), as]);
           var go = function () {
             try {
               live = true;
@@ -1828,6 +1841,8 @@
       if (!c) { prefs = oldPrefs; return Promise.resolve(false); }
       try { var rs = c.resume && c.resume(); if (rs && rs.catch) rs.catch(function () {}); } catch (e) {}
       var W = root.Worklets, wl = (W && typeof W.load === 'function') ? W.load(c) : null;
+      var as = assetsFor(c, ed.doc);                    // the new context decodes the recordings again: no silent first hits
+      if (as) wl = Promise.all([Promise.resolve(wl).then(null, function () {}), as]);
       return Promise.resolve(wl).then(null, function () {}).then(function () {
         ctx = c;
         ref.cur = null;

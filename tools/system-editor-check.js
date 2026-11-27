@@ -525,4 +525,40 @@ function drumTests() {
   return Promise.resolve();
 }
 
-samplerTests().then(programTests).then(drumTests).then(finish, function (e) { console.log('FAIL: ' + e.message); process.exitCode = 1; });
+// ------------------------------------------------------------------ the sampled TR-909 kit (Pressing Crew G2; engine/sampled909.js, K1)
+function sampledTests() {
+  if (hostKind !== 'real Host.create()' || !sb.Drums) { console.log('  (sampled 909 cases skipped: need the real Host and Drums)'); return Promise.resolve(); }
+  function plus() { return mountEl.find(function (x) { return hasClass(x, 'se-btn') && x.textContent === '+ track'; })[0]; }
+  function items() { return mountEl.find(function (x) { return hasClass(x, 'se-menuitem'); }); }
+  function item(re) { return items().filter(function (x) { return re.test(x.textContent); })[0]; }
+  function undoN() { return host.editor()._undo.length; }
+  function close() { var m = mountEl.find(function (x) { return hasClass(x, 'se-menu'); })[0]; if (m) plus().fire('click'); }
+  plus().fire('click');
+  var off = item(/TR-909 kit \(sampled\)/);
+  ok(off && off.disabled && /not on this page/.test(off.textContent), 'without sampled909.js the sampled kit is listed, disabled, with its reason (' + (off && off.textContent) + ')');
+  close();
+  load('engine/sampled909.js');
+  ok(!!sb.Sampled909, 'sampled909.js loads');
+  var n0 = host.document().tracks.length, u0 = undoN();
+  plus().fire('click');
+  var on = item(/TR-909 kit \(sampled\)/);
+  ok(on && !on.disabled && item(/^TR-909 kit$/), '"TR-909 kit (sampled)" sits beside "TR-909 kit" and is enabled');
+  on.fire('click');
+  var a = host.document().tracks.slice(n0);
+  ok(a.map(function (t) { return t.type; }).join() === 'bd909s,sd909s,cp909s,ch909s,oh909s,lt909s,mt909s,ht909s,rs909s,cr909s,rd909s' && a.every(function (t) { return t.inst === t.type && t.family === 'drums'; }) && undoN() === u0 + 1,
+    'the sampled kit adds eleven sampled voices in one undo entry (' + a.map(function (t) { return t.type; }).join(',') + ')');
+  plus().fire('click'); item(/Drum voice/).fire('click');
+  ok(items().length === sb.Drums.types().length + 11 && item(/^bd909s .*\(sampled\)/), 'Drum voice... also lists the eleven sampled voices, labelled (sampled)');
+  close();
+  view.select('sd909s');
+  plus().fire('click');
+  var rm = item(/Remove track/);
+  ok(rm && !rm.disabled && /sd909s/.test(rm.textContent), 'Remove track is offered for a sampled voice (' + (rm && rm.textContent) + ')');
+  var u1 = undoN(); rm.fire('click');
+  ok(!host.document().tracks.some(function (t) { return t.name === 'sd909s'; }) && undoN() === u1 + 1, 'Remove track removes the sampled voice, one undo entry');
+  host.editor().undo(); host.commit(); host.editor().undo(); host.commit();
+  ok(host.document().tracks.length === n0, 'undo brings the document back');
+  return Promise.resolve();
+}
+
+samplerTests().then(programTests).then(drumTests).then(sampledTests).then(finish, function (e) { console.log('FAIL: ' + e.message); process.exitCode = 1; });

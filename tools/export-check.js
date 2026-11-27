@@ -224,11 +224,70 @@ function nodePart() {
           return P.openBundle({ host: h2, shell: shell }).then(function (d) {
             ok(d && d.tracks.some(function (x) { return x.name === 'vox' && x.type === 'audio'; }) && h2.audio().filter(function (a) { return a.id === 'vox_take_1'; })[0].loaded === true, 'openBundle reads the folder\'s document and reloads audio/ relative to the folder');
             ok(/^(sha256|fnv1a32):[0-9a-f]+$/.test(String(doc.audio.vox_take_1.hash)) && P.missing(h2).audio.length === 0, 'the bundle records a content hash per file (' + doc.audio.vox_take_1.hash + ')');
+            return realShellBundles(H, P, host);
           });
         });
       });
     });
   });
+}
+
+// ------------------------------------------------------------------ bundles on disk through the shell's real file rules (G1)
+// A shell adapter over app/shell/files.js (the guard main.js uses) on a temporary folder: makeDirectory, writeFile and
+// copyFile are the real calls; readText / readFile read the disk the way main.js does (absolute, or relative to base).
+function realShellBundles(H, P, host) {
+  var os = require('os'), F = require('../app/shell/files.js');
+  var tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hv-bundle-')), src = path.join(tmp, 'src'), proj = path.join(tmp, 'proj'), flatDir = path.join(tmp, 'flat'), noMk = path.join(tmp, 'nomk');
+  [src, proj, flatDir, noMk].forEach(function (d) { fs.mkdirSync(d); });
+  fs.writeFileSync(path.join(src, 'vox take 1.wav'), Buffer.alloc(64, 3));
+  function shellFor(dir, o) {
+    o = o || {};
+    var g = F.createGuard({ appData: function () { return path.join(tmp, 'appdata'); } }), reads = [];
+    var sh = {
+      reads: reads,
+      pickDirectory: function () { return g.grant(dir).then(function () { return dir; }); },
+      joinPath: function (a, b) { return path.join(a, b); },
+      writeFile: function (p, b) { return g.writeFile(p, b); },
+      copyFile: function (s, d) { return g.copyFile(s, d); },
+      readText: function (p) { try { return Promise.resolve(fs.readFileSync(p, 'utf8')); } catch (e) { return Promise.resolve(null); } },
+      readFile: function (p, ro) {
+        var full = path.isAbsolute(p) ? p : (ro && ro.base ? path.resolve(ro.base, p) : null);
+        reads.push([p, ro && ro.base]);
+        try { var b = fs.readFileSync(full); return Promise.resolve(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)); } catch (e) { return Promise.resolve(null); }
+      }
+    };
+    if (!o.noMakeDirectory) sh.makeDirectory = function (p) { return g.makeDirectory(p); };
+    return sh;
+  }
+  host.document().audio.vox_take_1.src = path.join(src, 'vox take 1.wav');
+  var s1 = shellFor(proj);
+  return P.saveBundle({ host: host, shell: s1 }).then(function (r) {
+    var doc = P.parse(fs.readFileSync(path.join(proj, 'project.havantechno.json'), 'utf8'));
+    ok(r && r.flat === false && fs.statSync(path.join(proj, 'audio')).isDirectory() && fs.existsSync(path.join(proj, 'audio', 'vox take 1.wav')),
+       'saveBundle on disk: audio/ made by the shell\'s makeDirectory, the file copied into it');
+    ok(doc.audio.vox_take_1.src === 'audio/vox take 1.wav' && !path.isAbsolute(doc.audio.vox_take_1.src), 'the bundle\'s path is relative to the project file (' + doc.audio.vox_take_1.src + ')');
+    ok(fs.readdirSync(proj).sort().join(',') === 'audio,project.havantechno.json', 'the project folder holds the document and audio/ only');
+    var h3 = H.create({ AudioContext: Ctx }), s1b = shellFor(proj);
+    return P.openBundle({ host: h3, shell: s1b }).then(function () {
+      var a = h3.audio().filter(function (x) { return x.id === 'vox_take_1'; })[0];
+      ok(a && a.loaded === true && s1b.reads.some(function (x) { return x[0] === 'audio/vox take 1.wav' && x[1] === proj; }), 'openBundle (audio/ layout) reads audio/<file> relative to the folder');
+      // the earlier flat layout: the files beside the document
+      fs.writeFileSync(path.join(flatDir, 'vox take 1.wav'), Buffer.alloc(64, 5));
+      var fdoc = JSON.parse(JSON.stringify(doc)); fdoc.audio.vox_take_1.src = 'vox take 1.wav';
+      fs.writeFileSync(path.join(flatDir, 'project.havantechno.json'), P.serialize(fdoc));
+      var h4 = H.create({ AudioContext: Ctx }), s2 = shellFor(flatDir);
+      return P.openBundle({ host: h4, shell: s2 }).then(function () {
+        var b = h4.audio().filter(function (x) { return x.id === 'vox_take_1'; })[0];
+        ok(b && b.loaded === true && s2.reads.some(function (x) { return x[0] === 'vox take 1.wav' && x[1] === flatDir; }), 'openBundle (flat layout of the first bundles) reads the file beside the document');
+        // a shell without makeDirectory: flat, and the result says so
+        return P.saveBundle({ host: host, shell: shellFor(noMk, { noMakeDirectory: true }) });
+      });
+    });
+  }).then(function (r2) {
+    var d2 = P.parse(fs.readFileSync(path.join(noMk, 'project.havantechno.json'), 'utf8'));
+    ok(r2.flat === true && d2.audio.vox_take_1.src === 'vox take 1.wav' && fs.existsSync(path.join(noMk, 'vox take 1.wav')), 'without makeDirectory the bundle is flat (r.flat true) and still opens by relative path');
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }, function (e) { fs.rmSync(tmp, { recursive: true, force: true }); throw e; });
 }
 
 // ------------------------------------------------------------------ headless Chromium measurements

@@ -93,6 +93,22 @@ contextBridge.exposeInMainWorld('HavantechnoShell', {
   copyFile: function (src, dst) {
     return ipcRenderer.invoke('shell:copyFile', src, dst).catch(function (err) { throw fileError(err); });
   },
+  // makeDirectory(path) -> Promise<true>: one folder inside a folder chosen with pickDirectory this run or the app-data
+  // folder (the same rule as writeFile; an existing folder answers true). For a bundle's audio/ folder.
+  makeDirectory: function (p) {
+    return ipcRenderer.invoke('shell:makeDirectory', p).catch(function (err) { throw fileError(err); });
+  },
+  // readRoms() -> Promise<[{name, bytes: ArrayBuffer}]>: the TR-909 sample ROMs in <userData>/roms/tr909/ (for Drums.loadRom)
+  readRoms: function () {
+    return ipcRenderer.invoke('shell:readRoms').then(function (list) {
+      return (list || []).map(function (f) { var u = f.bytes; return { name: f.name, bytes: u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength) }; });
+    });
+  },
+  // importRoms(paths?) -> Promise<{copied: [names], refused: [{name, reason}]}>: copies the owner's ROM files into the
+  // app's data folder (known names, 32768 bytes each); without paths a file dialog asks.
+  importRoms: function (paths) {
+    return ipcRenderer.invoke('shell:importRoms', Array.isArray(paths) ? paths.map(String) : null).catch(function (err) { throw fileError(err); });
+  },
   joinPath: joinPath,
   appVersion: function () {
     if (appVersionCache === null) { try { appVersionCache = String(ipcRenderer.sendSync('shell:appVersion') || ''); } catch (e) { appVersionCache = ''; } }

@@ -787,8 +787,20 @@
     };
     var VOICE_NAMES = { bd: 'Bass drum', sd: 'Snare', cp: 'Clap', ch: 'Closed hat', oh: 'Open hat', cy: 'Cymbal', cb: 'Cowbell', lt: 'Low tom', mt: 'Mid tom', ht: 'High tom',
                         lc: 'Low conga', mc: 'Mid conga', hc: 'High conga', rs: 'Rim shot', cl: 'Claves', ma: 'Maracas', cr: 'Crash', rd: 'Ride' };
-    function voiceLabel(t) { var m = /^([a-z]{2})(808|909)$/.exec(t); return t + ' · ' + (m && VOICE_NAMES[m[1]] ? VOICE_NAMES[m[1]] + ' ' + m[2] : t); }
-    function drumTypes() { var D = root.Drums; return D && isFn(D.types) ? D.types() : []; }
+    function voiceLabel(t) { var m = /^([a-z]{2})(808|909)(s?)$/.exec(t); return t + ' · ' + (m && VOICE_NAMES[m[1]] ? VOICE_NAMES[m[1]] + ' ' + m[2] + (m[3] ? ' (sampled)' : '') : t); }
+    // the synthesized voices (Drums) and, when engine/sampled909.js is loaded, the sampled TR-909 voices (Sampled909, Pressing Crew K1)
+    function sampledTypes() { var S9 = root.Sampled909; return S9 && isFn(S9.types) ? S9.types() : []; }
+    function drumTypes() { var D = root.Drums; return (D && isFn(D.types) ? D.types() : []).concat(sampledTypes()); }
+    // the sampled kit plays recordings from app/assets/tr909-robroy/; the asset manifest says whether that folder is there
+    function sampledReason() {
+      var S9 = root.Sampled909;
+      if (!S9) return 'not on this page';
+      if (isFn(S9.available) && S9.available()) return '';
+      return S.robroy === false ? 'sample files not installed' : '';
+    }
+    if (root.Assets && isFn(root.Assets.manifest)) {
+      safe(function () { root.Assets.manifest().then(function (m) { S.robroy = m ? m['tr909-robroy'] === true : null; }, function () {}); });
+    }
     function addDrumTracks(types, label) {
       var ed = host.editor();
       if (!ed || !isFn(ed.addTrack)) { setStatus('This host cannot add tracks.'); return []; }
@@ -906,6 +918,8 @@
         { label: 'Sampler track from folder\u2026', run: function () { pickProgramSource({ directory: true }); } },
         { label: 'TR-808 kit', disabled: !drumTypes().length, run: function () { addKit('808'); } },
         { label: 'TR-909 kit', disabled: !drumTypes().length, run: function () { addKit('909'); } },
+        { label: 'TR-909 kit (sampled)' + (sampledReason() ? ' \u2014 ' + sampledReason() : ''), disabled: !sampledTypes().length || !!sampledReason(),
+          run: function () { addDrumTracks(KITS['909'].map(function (v) { return v + '909s'; }), 'TR-909 kit (sampled)'); } },
         { label: 'Drum voice\u2026', disabled: !drumTypes().length, keepOpen: true }
       ].concat(classicMenuItems()).concat([
         { label: 'Import SFZ\u2026', run: function () { pickProgramSource({ accept: '.sfz,audio/*,' + ['wav', 'mp3', 'ogg', 'flac', 'aif', 'aiff'].map(function (e) { return '.' + e; }).join(',') }); } },

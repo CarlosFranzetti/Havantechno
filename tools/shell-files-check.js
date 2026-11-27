@@ -214,6 +214,75 @@ async function main() {
   ok(/setPermissionRequestHandler/.test(mainSrc) && /setPermissionCheckHandler/.test(mainSrc) && /ownOrigin\(url\)/.test(mainSrc), 'both permission handlers test the origin');
   ok(/mediaTypes\.indexOf\('video'\)/.test(mainSrc) && /mediaType === 'video'/.test(mainSrc), 'video is refused in both handlers');
 
+  // ---------------------------------------------------------------- makeDirectory (G1)
+  var gm = F.createGuard({ appData: function () { return appData; } }); await gm.grant(granted);
+  ok((await gm.makeDirectory(path.join(granted, 'audio'))) === true && fs.statSync(path.join(granted, 'audio')).isDirectory(), 'makeDirectory inside a granted folder');
+  ok((await gm.makeDirectory(path.join(granted, 'audio'))) === true, 'makeDirectory on an existing folder answers true');
+  ok((await gm.writeFile(path.join(granted, 'audio', 'x.wav'), new Uint8Array([1]))) === true, 'the new folder takes files (it is inside the grant)');
+  ok((await gm.makeDirectory(path.join(appData, 'made'))) === true, 'makeDirectory inside the app-data folder');
+  await rejects(gm.makeDirectory(path.join(other, 'audio')), 'not-granted', 'makeDirectory in a folder never granted', /folder dialog/);
+  await rejects(gm.makeDirectory(path.join(granted, 'a', 'b')), 'parent-missing', 'makeDirectory is not recursive');
+  await rejects(gm.makeDirectory('audio'), 'bad-path', 'makeDirectory relative', /absolute/);
+  await rejects(gm.makeDirectory(granted + '/../other/x'), 'bad-path', 'makeDirectory with ".."', /\.\./);
+  await rejects(gm.makeDirectory(path.join(granted, 'in.wav')), 'not-file', 'makeDirectory over a file', /file of that name/);
+  await rejects(gm.makeDirectory('file:///tmp/x'), 'bad-path', 'makeDirectory with a URL', /URL/);
+  await rejects(gm.makeDirectory(path.join(granted, 'a\0b')), 'bad-path', 'makeDirectory with NUL');
+  if (process.platform !== 'win32') {
+    fs.symlinkSync(other, path.join(granted, 'outlink2'));
+    await rejects(gm.makeDirectory(path.join(granted, 'outlink2')), 'not-file', 'makeDirectory on a link to a folder outside', /link/);
+    await rejects(gm.makeDirectory(path.join(granted, 'outlink2', 'x')), 'not-granted', 'makeDirectory through a linked parent pointing out');
+    ok(!fs.existsSync(path.join(other, 'x')), 'nothing was made outside the grant');
+  }
+
+  // ---------------------------------------------------------------- the TR-909 ROM calls (G1)
+  var romDir = path.join(appData, 'roms', 'tr909'), picks = path.join(tmp, 'picked');
+  fs.mkdirSync(picks);
+  var fakeRom = function (b) { var u = Buffer.alloc(32768); u[0] = b; return u; };
+  fs.writeFileSync(path.join(picks, 'HN61256P__C43.IC69'), fakeRom(43));
+  fs.writeFileSync(path.join(picks, 'hn61256p__c42.ic62'), fakeRom(42));
+  fs.writeFileSync(path.join(picks, 'hn61256p__c44.ic54'), Buffer.alloc(1000));
+  fs.writeFileSync(path.join(picks, 'tr909_v4.ic609'), Buffer.alloc(32768));
+  eq((await F.readRoms(romDir)).length, 0, 'readRoms on a missing folder: none, no error');
+  var imp = await F.importRoms([path.join(picks, 'HN61256P__C43.IC69'), path.join(picks, 'hn61256p__c42.ic62'), path.join(picks, 'hn61256p__c44.ic54'),
+                                path.join(picks, 'tr909_v4.ic609'), 'relative.ic69', path.join(picks, 'missing.ic54')], romDir);
+  eq(imp.copied.sort(), ['hn61256p__c42.ic62', 'hn61256p__c43.ic69'], 'importRoms copies the two valid images under their canonical names');
+  eq(imp.refused.length, 4, 'importRoms refuses a wrong size, an unknown name, a relative path and a missing file');
+  ok(imp.refused.some(function (r) { return /size 1000/.test(r.reason); }) && imp.refused.some(function (r) { return /not a TR-909 sample ROM name/.test(r.reason); }) && imp.refused.some(function (r) { return /absolute/.test(r.reason); }), 'the reasons are readable');
+  eq(fs.readdirSync(romDir).sort(), ['hn61256p__c42.ic62', 'hn61256p__c43.ic69'], 'only the two images are in <userData>/roms/tr909/');
+  await rejects(F.importRoms([], romDir), 'bad-path', 'importRoms with no files');
+  await rejects(F.importRoms('x', romDir), 'bad-path', 'importRoms with a non-array');
+  fs.writeFileSync(path.join(romDir, 'hn61256p__c44.ic54'), Buffer.alloc(5));       // a wrong size planted in the folder
+  if (process.platform !== 'win32') fs.symlinkSync(path.join(other, 'secret.txt'), path.join(romDir, 'hn61256p__c44.ic54.lnk'));
+  var rr = await F.readRoms(romDir);
+  eq(rr.map(function (f) { return f.name; }), ['hn61256p__c42.ic62', 'hn61256p__c43.ic69'], 'readRoms returns the known names of the right size only');
+  ok(rr[0].bytes.length === 32768 && rr[0].bytes[0] === 42 && rr[1].bytes[0] === 43, 'readRoms returns the bytes');
+  if (process.platform !== 'win32') {
+    fs.unlinkSync(path.join(romDir, 'hn61256p__c44.ic54'));
+    fs.symlinkSync(path.join(picks, 'tr909_v4.ic609'), path.join(romDir, 'hn61256p__c44.ic54'));   // 32768 bytes, but a link
+    eq((await F.readRoms(romDir)).length, 2, 'readRoms does not follow a link in the ROM folder');
+  }
+  eq(F.ROM_FILES, ['hn61256p__c42.ic62', 'hn61256p__c43.ic69', 'hn61256p__c44.ic54'], 'the three MAME names');
+
+  // the preload: makeDirectory, readRoms, importRoms
+  var lp2 = loadPreload('linux');
+  ok(typeof lp2.shell.makeDirectory === 'function' && typeof lp2.shell.readRoms === 'function' && typeof lp2.shell.importRoms === 'function', 'the preload exposes makeDirectory, readRoms and importRoms');
+  try { await lp2.shell.makeDirectory('/x/audio'); ok(false, 'preload makeDirectory error'); } catch (e) { eq(e.message, 'Pick the folder first.', 'makeDirectory error text'); }
+  try { await lp2.shell.importRoms(['/a.ic69']); } catch (e) { eq(e.message, 'Pick the folder first.', 'importRoms error text'); }
+  eq(lp2.calls.filter(function (c) { return c[0] === 'shell:importRoms'; })[0][1], ['/a.ic69'], 'importRoms passes the paths as strings');
+  var lp3 = loadPreload('linux');
+  lp3.shell.importRoms({ evil: 1 }).catch(function () {});
+  eq(lp3.calls.filter(function (c) { return c[0] === 'shell:importRoms'; })[0][1], null, 'importRoms without an array asks main for a dialog (null)');
+  ['shell:makeDirectory', 'shell:readRoms', 'shell:importRoms'].forEach(function (ch) { ok(mainSrc.indexOf("'" + ch + "'") >= 0, 'main.js handles ' + ch); });
+  ok(/shell:makeDirectory'[\s\S]{0,200}fromMain\(e\)/.test(mainSrc) && /shell:readRoms'[\s\S]{0,120}fromMain\(e\)/.test(mainSrc) && /shell:importRoms'[\s\S]{0,120}fromMain\(e\)/.test(mainSrc), 'the three new handlers check the caller is the main window');
+  ok(/getPath\('userData'\), 'roms', 'tr909'/.test(mainSrc), 'the ROM folder is <userData>/roms/tr909/');
+
+  // electron-builder's file list: app/ only, assets included, nothing named local/
+  var cfg = require('../app/electron-builder.config.js');
+  ok(cfg.files.indexOf('assets/**/*') >= 0, 'the packaged app includes app/assets/ (the manifest and the Rob Roy set)');
+  ok(cfg.files.indexOf('!**/local/**') >= 0 && cfg.files.indexOf('!assets/tr909-rom/**') >= 0, 'the file list excludes any local/ folder and the ROM folder');
+  ok(cfg.files.every(function (f) { return !/\.\./.test(f) && !/(^|\/)local(\/|$)/.test(f.replace(/^!\*\*\//, '!')) || /^!/.test(f); }) &&
+     (cfg.extraResources || []).every(function (r) { return !/local/.test(r.from); }), 'no file or extra resource reaches outside app/ to local/');
+
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(bad ? 'FAILED: ' + bad + ' of ' + n + ' checks' : 'OK: ' + n + ' checks passed');
   process.exit(bad ? 1 : 0);

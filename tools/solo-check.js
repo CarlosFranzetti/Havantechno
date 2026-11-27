@@ -38,7 +38,7 @@ N.prototype.fire = function (t, ev) { ev = ev || {}; ev.preventDefault = functio
 N.prototype.walk = function (fn) { fn(this); this.children.forEach(function (c) { c.walk(fn); }); };
 N.prototype.find = function (p) { var o = []; this.walk(function (n) { if (p(n)) o.push(n); }); return o; };
 
-function boot(file, width, premade) {
+function boot(file, width, premade, pre) {
   reg = {};
   var html = fs.readFileSync(path.join(SOLO, file), 'utf8'), refs = [];
   html.replace(/<(?:script|link)[^>]+(?:src|href)="([^"]+)"/g, function (m, u) { refs.push(u); return m; });
@@ -54,6 +54,7 @@ function boot(file, width, premade) {
   var sb = { console: console, Math: Math, JSON: JSON, Date: Date, Float32Array: Float32Array, Uint8Array: Uint8Array, Promise: Promise, setTimeout: setTimeout, clearTimeout: clearTimeout,
     requestAnimationFrame: function () { return 0; }, cancelAnimationFrame: function () {}, innerWidth: width || 1280, innerHeight: 800, scrollY: 0, addEventListener: function () {} };
   sb.window = sb; sb.document = fdoc; sb.globalThis = sb;
+  if (pre) pre(sb);
   vm.createContext(sb);
   refs.filter(function (u) { return /\.js$/.test(u); }).forEach(function (u) { vm.runInContext(fs.readFileSync(path.join(SOLO, u), 'utf8'), sb, { filename: u }); });
   return { html: html, refs: refs, sb: sb, body: body, reg: reg };
@@ -310,5 +311,41 @@ ok(pJ.el.find(function (n) { return n.attrs['data-midi'] != null; }).length === 
   pp.dispose();
 });
 
-console.log('OK: ' + passed + ' checks passed');
-process.exit(0);
+// ---- the HVT-909's voice source at start (Pressing Crew G2): the manifest decides; Solo.boot's sections option
+(function () {
+  var asked = [];
+  function withManifest(m) {
+    return function (sb) {
+      sb.fetch = function (u) {
+        asked.push(String(u));
+        if (/manifest\.json$/.test(u)) return Promise.resolve({ ok: true, json: function () { return Promise.resolve(m); } });
+        return Promise.resolve({ ok: false, status: 404, arrayBuffer: function () { return Promise.resolve(null); } });
+      };
+    };
+  }
+  var N0 = N.prototype.getAttribute;
+  N.prototype.getAttribute = function (k) { return k === 'data-machine' && this.tagName === 'BODY' ? '909' : N0.call(this, k); };
+  var g = boot('909.html', 1280, null, withManifest({ 'tr909-rom': false, 'tr909-robroy': true }));
+  N.prototype.getAttribute = N0;
+  var A = g.sb.HVT909, host = A.host();
+  ok(g.refs.indexOf('../engine/sampled909.js') > g.refs.indexOf('../engine/drums.js') && g.refs.indexOf('../engine/assets.js') > g.refs.indexOf('../engine/sampled909.js'), 'HVT-909 page: sampled909.js and assets.js after drums.js');
+  ok(host.document().sections.map(function (x) { return x.name; }).join() === 'A,B' && host.editor()._undo.length === 0, 'HVT-909 page: the bank song comes from Solo.boot\'s sections option (two sections, no undo entry)');
+  return A.sourceReady.then(function () {
+    var d = host.document();
+    ok(d.tracks.every(function (t) { return t.type === t.name + 's' && t.inst === t.type; }) && host.editor()._undo.length === 0, 'HVT-909 page: with the Rob Roy set in the manifest it opens on SAMPLE (' + d.tracks[0].type + '), no undo entry');
+    ok(d.sections.length === 2 && d.tracks.every(function (t) { return Object.keys(t.variants).join('') === 'ABCDEFGHIJKL'; }), 'HVT-909 page: the bank is unchanged by the source');
+    ok(asked.length === 1 && /manifest\.json$/.test(asked[0]), 'HVT-909 page: only the manifest is requested before a tap (' + asked.join(' ') + ')');
+    var src = A.panel() && A.panel().kit.source;
+    ok(src && src.value() === 'SAMPLE' && src.reason('SAMPLE') === '' && src.reason('ROM') === 'no ROM images loaded', 'HVT-909 page: the panel reads SAMPLE; ROM unavailable with its reason');
+    asked.length = 0;
+    N.prototype.getAttribute = function (k) { return k === 'data-machine' && this.tagName === 'BODY' ? '909' : N0.call(this, k); };
+    var g2 = boot('909.html', 390, null, withManifest({ 'tr909-rom': false, 'tr909-robroy': false }));
+    N.prototype.getAttribute = N0;
+    return g2.sb.HVT909.sourceReady.then(function () {
+      var d2 = g2.sb.HVT909.host().document();
+      ok(d2.tracks.every(function (t) { return t.type === t.name; }), 'HVT-909 page: without the set it stays on SYNTH');
+      var s2 = g2.sb.HVT909.panel().kit.source;
+      ok(s2.reason('SAMPLE') === 'the sample files are not installed' || s2.reason('SAMPLE') === 'the sample files are not loaded', 'HVT-909 page: SAMPLE unavailable with its reason (' + s2.reason('SAMPLE') + ')');
+    });
+  });
+})().then(function () { console.log('OK: ' + passed + ' checks passed'); process.exit(0); }, function (e) { console.log('FAIL: ' + (e && e.stack || e)); process.exit(1); });

@@ -401,7 +401,43 @@
     }
     // parameter locks: set the voice parameters for this trigger only, then restore (voices read inst.params at trigger
     // time). `level` and processor parameters act on shared nodes and are not lockable here.
-    function trigger(tr, t, ev) {
+    // A time that falls on a sample frame up to rounding noise is moved to the largest double whose t * sampleRate is
+    // not above that frame (G1, the mid-song render mismatch). Chromium places an AudioParam event at
+    // ceil(t * sampleRate) (measured: setValueAtTime at r/sr lands on frame r + 1 whenever (r/sr) * sr > r in doubles),
+    // and at 126 BPM and 44.1 kHz every step is exactly 5250 frames, so an onset's frame depended on the float noise of
+    // the accumulated step time, which differs between a render from bar 0 and one from bar 16: envelopes started one
+    // frame apart (-24 dB rms residual on the bass). Snapped, a step's frame depends on its song position only.
+    // Off-grid times (nudges, swing that is not a whole frame) are left alone.
+    function snapT(t) {
+      var sr = live && ctx && ctx.sampleRate;
+      if (!sr || typeof t !== 'number' || !(t > 0)) return t;
+      var f = t * sr, r = Math.round(f);
+      if (Math.abs(f - r) > 1e-6) return t;
+      var x = r / sr;
+      for (var i = 0; i < 4 && x * sr > r; i++) x -= x * 2.220446049250313e-16;
+      return x;
+    }
+    seq.snapTime = snapT;
+    // Random draws inside a voice (noise start offsets, the noise click, drum spread) come from a generator seeded by
+    // (track, absolute step, n-th trigger of that track on that step, seq.seed) for the length of the trigger (G1), so
+    // a hit draws the same numbers whether the render started at bar 0 or mid-song (before: one Math.random stream
+    // for the whole render, so a render from bar 16 had every noise voice at another offset). The shared noise buffer
+    // (core.js K.noise, made on a context's first use) is made first, outside the per-hit generator.
+    function hitRng(tr, absStep) {
+      if (tr._rStep === absStep) tr._rN++; else { tr._rStep = absStep; tr._rN = 0; }
+      return rng(hash32(tr.name + ':' + absStep + ':' + tr._rN + ':' + seq.seed));
+    }
+    function trigger(tr, t, ev, absStep) {
+      t = snapT(t);
+      if (absStep == null && ev && typeof ev.step === 'number') absStep = ev.step;
+      var M = Math, rand0 = M.random, rnd = null;
+      if (typeof absStep === 'number') {
+        if (live && K && typeof K.noise === 'function') K.noise(ctx);
+        rnd = hitRng(tr, absStep); M.random = rnd;
+      }
+      try { return trigger1(tr, t, ev); } finally { if (rnd && M.random === rnd) M.random = rand0; }
+    }
+    function trigger1(tr, t, ev) {
       var saved = null, k;
       if (ev && ev.locks && tr.inst.params && tr.inst.spec) {
         saved = {};
@@ -432,7 +468,7 @@
         var fx = sec.fx[i];
         if ((fx.bar | 0) === bar - sec.start && ((fx.step | 0) === st)) {
           tr = seq.tracks[fx.track];
-          if (tr) trigger(tr, ts, { vel: fx.vel == null ? 1 : fx.vel, dur: (fx.bars || 1) * seq.barSec(), notes: tr.kind === 'chord' ? K.chordNotes(chordFor(sec, bar), tr.octave, tr.voicing) : undefined });
+          if (tr) trigger(tr, ts, { vel: fx.vel == null ? 1 : fx.vel, dur: (fx.bars || 1) * seq.barSec(), notes: tr.kind === 'chord' ? K.chordNotes(chordFor(sec, bar), tr.octave, tr.voicing) : undefined }, absStep);
         }
       }
       for (n = 0; n < seq.order.length; n++) {
@@ -612,6 +648,11 @@
         var octx = new OAC(2, Math.ceil(sr * seconds), sr);
         // worklet modules (worklets.js) must have resolved on this context before instruments are built on it
         var WL = root.Worklets, go = function () { try { build(); } catch (e) { reject(e); } };
+        // then the recorded voices the tracks use (assets.js: sampled 909, 909 ROMs; or Sampled909 alone), so a render
+        // is complete from its first hit; skipped when neither module is loaded or the tracks use none (G1, after K1)
+        var AS = root.Assets, S9 = root.Sampled909, g0 = go;
+        if (AS && typeof AS.ready === 'function') go = function () { Promise.resolve(AS.ready(octx, dry)).then(g0, g0); };
+        else if (S9 && typeof S9.load === 'function' && S9.typesIn(dry).length) go = function () { S9.load(octx, { types: S9.typesIn(dry) }).then(g0, g0); };
         if (WL && typeof WL.load === 'function') WL.load(octx).then(go, go); else go();
       } catch (e) { reject(e); }
       function build() {

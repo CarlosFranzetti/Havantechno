@@ -2,6 +2,18 @@
 
 The next Havantechno: a desktop DAW (Electron shell) built on the Web Audio engine from the archived studio. The same `app/index.html` runs in a browser and in Electron. The plan is `docs/plans/2026-10-23-desktop-build-plan.md`; the decisions behind it are in `prd.md` section 6b; the module contract is `app/CONTRACT.md`.
 
+## Where it stands (27 November 2026)
+
+Version 0.2 is being finished. Built and checked since the October status below (each in its builder's log and the coordinators' logs under `docs/research/`):
+
+- **Instruments:** 27 synthesized TR-808 and TR-909 voices (`engine/drums.js`), the HVT-303, HVT-D and HVT-106 as AudioWorklet synths (`engine/classics.js`, `engine/worklets/`), the sampled 909 (`engine/sampled909.js`) and the 909's ROM voices (`Drums.loadRom`), the sampler with programs and SFZ, `fm`. Hardware-style panels for the five instruments (`ui/panels.js`), drawn first in a device window.
+- **Instrument pages:** `solo/` holds one page per instrument (303, d, 106, 808, 909) on a shared framework (`solo/solo.js`); `tools/solo-bundle.js` turns each into a publishable bundle and tests it in headless Chromium.
+- **Import and analysis:** import a track with its stems, an analysis report per element (`analysis/`, `engine/importer.js`, `ui/import-view.js`), a reference lane and A/B with level match; stem separation from the desktop shell (`shell/separation.js`, `tools/separate.py`).
+- **Version 0.2 (Pressing Crew):** audio export of the mix, stems or chosen tracks (`host.exportAudio`, `Project.exportAudio`, `ui/export-dialog.js`); audio tracks with clips (`engine/audiotrack.js`); projects saved with their audio (`Project.saveBundle`, `openBundle`); the Mixer and Sections views (`ui/mixer-view.js`, `ui/clip-view.js`); Settings (`ui/settings.js`); packaged builds (`electron-builder.config.js`, `build/`, `docs/BUILD.md`); the asset manifest and loader (`assets/manifest.json`, `engine/assets.js`).
+- **Showroom Crew:** presets and patterns for every instrument (`engine/presets.js`, the Preset menu in `ui/windows.js`, `Presets.menu` on the pages).
+
+What nobody has done: listened to any instrument against a real unit; run the macOS or Windows builds; run the build workflow. See "What is unverified" at the end.
+
 ## Status at head 55f205d (2026-10-24)
 
 Written from the owner logs (`docs/research/2026-10-23-build-crew/transcripts/log-A1.md` to `log-A11.md`, `log-coordinator.md`) and from my own runs of every check at 00:08 on head 55f205d. Every wave-2 code item is committed (log-coordinator, 2026-10-24 00:07). A9's wave-2 re-score is still in progress: `log-A9.md` has no wave-2 entry yet, so the scoring numbers below are the wave-1 numbers.
@@ -21,11 +33,17 @@ app/
   engine/              audio engine, song document, host and project file (plain globals, no bundler)
   ui/                  views, widgets, faces, device windows, app frame (plain globals)
   analysis/            element classifier (Lab Crew, batch 3, in progress; plain globals)
-  shell/               Electron main process (main.js) and preload (preload.js)
-  node_modules/        electron 45.0.0 and its dependencies (from npm install; git-ignored)
+  shell/               Electron main process (main.js), preload (preload.js), files.js, separation.js
+  solo/                the instrument pages: 303.html, d.html, 106.html, 808.html, 909.html on solo.js (Showroom Crew)
+  assets/              optional sound sets: tr909-robroy/ (the Rob Roy 909 set, its own terms, never modified) and
+                       manifest.json (which sets this copy carries; read by engine/assets.js)
+  build/               the icon (drawn by make-icon.js) and the macOS entitlements for electron-builder
+  electron-builder.config.js   packaging (docs/BUILD.md)
+  node_modules/        electron and electron-builder (from npm install; git-ignored)
 tools/
   serve.js             static server for the repo root, COOP/COEP headers, port 8000
-  browser-check.js     headless Chromium smoke test of the web app (26 checks)
+  browser-check.js     headless Chromium smoke test of the web app (30 checks)
+  solo-bundle.js       builds and tests a publishable bundle of an instrument page (--asset-dir, --write-file for sound sets)
   *-check.js           one Node check per UI and engine owner (see Checks)
   drums-score.js       scores the drum voices against the manuals' tables (see Drum machines)
   render.js            offline render of song sections through the page (Playwright)
@@ -44,7 +62,8 @@ node tools/serve.js            # port 8000; PORT=9000 or node tools/serve.js 900
 
 Open `http://localhost:8000/app/index.html`. Click "Start audio": browsers start audio only after a click. Keys, from `app/ui/app.js`:
 
-- Space plays and pauses. Tab switches between the System Editor and the Step View; Alt+1 / Alt+2 and Ctrl/Cmd+1 / Ctrl/Cmd+2 switch directly.
+- Space plays and pauses. Four views: System Editor, Step View, Mixer, Sections. Tab switches within a pair (System Editor and Step View, or Mixer and Sections); Alt+1..4 and Ctrl/Cmd+1..4 pick one. Ctrl/Cmd+comma opens Settings, Ctrl/Cmd+Shift+E opens Export.
+- The instrument pages are at `http://localhost:8000/app/solo/303.html` (and `d.html`, `106.html`, `808.html`, `909.html`).
 - V hides or shows the device windows. Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redoes.
 - Ctrl/Cmd+S saves a `<name>.havantechno.json` file (a download on the web). Ctrl/Cmd+O opens one (a file picker on the web). The browser autosaves to localStorage.
 
@@ -63,6 +82,19 @@ Electron 45.0.0 has been run on Linux under Xvfb by A6 (log-A6.md, wave 2 parts 
 ## Checks
 
 Run each command directly and read the exit code. Do not pipe them through `tail` or `grep`, which hides the exit code (log-coordinator.md, wave 1 rule).
+
+Run on 27 November 2026 by G2 (Pressing Crew) on the working tree with the second wave's edits, each command run directly and its exit code read:
+
+| Command | Result | Exit |
+|---|---|---|
+| `node app/engine/selfcheck.js` | OK 469 | 0 |
+| `node tools/browser-check.js` | PASS (30 checks: the globals now include Presets, Settings, Sampled909 and Assets) | 0 |
+| `node tools/panels-check.js` | OK 202 (19 rows for the 909's voice source) | 0 |
+| `node tools/solo-check.js` | OK 151 (8 rows for the 909 page's source and Solo.boot's `sections`) | 0 |
+| `node tools/system-editor-check.js` | OK 105 (8 rows for the sampled kit) | 0 |
+| every other `tools/*-check.js` | see the coordinator's log for the counts | 0 |
+
+All of them in one go: `for c in app/engine/selfcheck.js tools/*-check.js; do node "$c" || echo "FAILED: $c"; done`. `tools/rom909-check.js` measures the owner's 909 chip images and runs only where they are in the git-ignored `local/` folder.
 
 The table below holds results from runs made by A15 on 2026-11-11, read directly. The working tree was head `9ade5c2` with uncommitted edits to `app/engine/drums.js`, `app/index.html` and `app/ui/windows.js`, and untracked Patch Crew files (`app/engine/worklets/`, `app/ui/panels.js`, `app/ui/panels.css`). The results therefore describe that tree, not a commit. Other agents were editing `drums.js` during these runs. The drums check gave 342 where the coordinator expected 341 (see the note under the table). No check failed, so none was re-run.
 
@@ -148,6 +180,15 @@ The TR-808 and TR-909 recreations are in `app/engine/drums.js` (global `Drums`).
 
 - **"TR-808 kit"** from the "+ track" menu adds nine tracks: bd, sd, cp, ch, oh, cb, lt, mt, ht. **"TR-909 kit"** adds eleven: bd, sd, cp, ch, oh, lt, mt, ht, rs, cr, rd. Each kit is one undo step, and its tracks sit under DRUMS with empty patterns (log-A4.md, batch 2).
 - **"Drum voice…"** is a submenu that lists every voice with a name (for example `bd808 · Bass drum 808`) and adds one track of that type (log-A4.md, batch 2).
+- **"TR-909 kit (sampled)"** (27 November, G2) adds the eleven sampled voices (`bd909s` and so on, `engine/sampled909.js`); "Drum voice…" lists them too, labelled "(sampled)", and Remove track works on them. The entry is disabled with a reason when `sampled909.js` is not on the page or the asset manifest says the set is not installed.
+
+### The 909's voice sources (Pressing Crew, 27 November)
+
+- **Sampled** (K1, `engine/sampled909.js`, global `Sampled909`): eleven voices that play the Rob Roy set from `assets/tr909-robroy/`. Same parameter names, ranges and defaults as the synthesized voices; each knob picks the nearest recorded setting (no interpolation). Voice files are fetched once per page and decoded per context; a hit whose recording is not decoded yet is silent. `Host.start` and `Sequencer.render` await `Assets.ready` for the sampled types a document uses.
+- **ROM** (E1, `engine/drums.js`): `Drums.loadRom(bytes)` takes the three 32 KB chip images, identified by CRC32 and SHA-1; the `rom` row (default 1) on `ch909`, `oh909`, `cr909`, `rd909` plays the chip when it is loaded. Nothing is fetched unless asked (`Drums.loadRomsFrom(base)`, or `Assets.ready` when the manifest lists `tr909-rom`).
+- **The switch** (G2, `ui/panels.js`, `panel.kit.source`): SYNTH / SAMPLE / ROM at the top of the HVT-909 panel, both layouts. SAMPLE changes each 909 track's `type` and `inst` to `Sampled909.sampledOf(type)` (names, patterns and params kept); SYNTH changes them back and turns the rom rows off where a chip would play; ROM sets the four ROM voices back to their synthesized type with the rom row on, for the chips that are loaded. Each switch that changes the document is one undo entry (one snapshot, then `commit()`, which rebuilds). A source that cannot be chosen is drawn unavailable with its reason; ROM with no chip loaded opens a file picker (LOAD ROM… does too), passes each file's bytes to `Drums.loadRom` and shows per file "verified by checksum" or "refused" with the reason. The panel draws a sampled track in its synthesized twin's column (`voiceType()`), so the bank, mutes and knobs work on either kit.
+- **The 909 page** (`solo/909.html`, `solo/drums-solo.js`) reads the manifest before the first tap, loads the ROM images when listed, and opens on the most real source present per voice: ROM for the hats and cymbals whose chip loaded, else the recordings when the set is listed, else the synthesized voice. It is the page's opening document, so no undo entry. At start it decodes every sampled voice so a later switch has no gap.
+- **Bundling the 909 page:** a bundle carries only what the page's tags name, so the set and a manifest go in with `node tools/solo-bundle.js app/solo/909.html --test --asset-dir assets/tr909-robroy=app/assets/tr909-robroy --write-file 'assets/manifest.json={"tr909-rom":false,"tr909-robroy":true}'` (and `--asset-dir assets/tr909-rom=<folder>` with `"tr909-rom":true` for the chip images, which must never come from a tracked path while the repository is public). Without them the bundled page asks for a manifest that is not there.
 
 ### The voices
 
@@ -223,7 +264,13 @@ One line per module, from `app/CONTRACT.md`:
 | `engine/core.js` | `Kit` helpers (`setV`, `lin`, `expo`, `target`, `defineParams`, `mtof`, noise and shaper utilities). Byte-identical to the archive. |
 | `engine/synths.js` | Instruments from `Synths.create(ctx, type, opts)`: `trigger`, `set`/`get`, `panic`, `dispose`. Includes the sampler (not listed in `Synths.types()`), the program path, and `fm`. `Synths.create` falls back to `Drums` for drum types. |
 | `engine/programs.js` | `Programs`: sampler programs as plain data. SFZ parse and write, the name parser, auto-map, slicing, YIN pitch detection and WAV metadata. Pure: no AudioContext, runs in Node (header of the file; log-A7.md). |
-| `engine/drums.js` | `Drums`: 27 TR-808 and TR-909 voice recreations with the `Synths` instrument API. The 808 metal bank is one PeriodicWave per context. The 909 hats, ride and crash are rendered once into buffers (header of the file; log-A12.md). |
+| `engine/drums.js` | `Drums`: 27 TR-808 and TR-909 voice recreations with the `Synths` instrument API. The 808 metal bank is one PeriodicWave per context. The 909 hats, ride and crash are rendered once into buffers (header of the file; log-A12.md), or played from the owner's chip images (`loadRom`, `romStatus`, `unloadRom`, `loadRomsFrom`; E1). |
+| `engine/sampled909.js` | `Sampled909`: the sampled 909 (eleven voices on the Rob Roy set), `sampledOf` / `synthOf`, `load`, `available`, `loadFiles` (K1). |
+| `engine/assets.js` | `Assets`: reads `assets/manifest.json` and loads only the sets it lists (`ready(ctx, doc)`, `manifest()`); awaited by `Host.start` and `Sequencer.render` (G1). |
+| `engine/worklets.js`, `engine/classics.js`, `engine/worklets/` | `Worklets` and `Classics`: the HVT-303, HVT-D and HVT-106 as AudioWorklet instruments with a plain-node fallback (Patch Crew P5; E1). |
+| `engine/audiotrack.js` | `AudioTrack`: audio tracks with clips, on the grid, not time-stretched (V1). |
+| `engine/importer.js` | `Importer`: import a track, its stems and the analysis; loudness (Dubplate Crew). |
+| `engine/presets.js` | `Presets`: factory and user patches, kits and patterns; validation, storage, text import and export, `Presets.menu` (W1). |
 | `analysis/dsp.js`, `analysis/features.js`, `analysis/decide.js` | `Analysis` (Lab Crew, batch 3, in progress): signal helpers, measurements on one element, and one decision function per classification, loaded in that order. The decision thresholds are starting values to be calibrated (file headers; `docs/plans/2026-11-09-roadmap.md`, status). |
 | `engine/songdoc.js` | `SongDoc`: the song as one JSON document, sparse step cells, variant parsing, save and load (`v: 1`), the audio map, programs, and an editor with undo per gesture. |
 | `engine/sequencer.js` | `Sequencer`: lookahead scheduler, tracks, sends, parameter paths, holds, the arrangement chase, chunked offline `render`, `wav`. Events carry `step` and `hit` for round robin. |
@@ -235,7 +282,11 @@ One line per module, from `app/CONTRACT.md`:
 | `ui/faces.js`, `ui/facedefs.js` | `Faces`: the face registry, the device definitions (the sampler, `fm`, the 27 drum voices and the processors), `Faces.lint`, the fallback. |
 | `ui/system-editor.js` | `SystemEditor`: the System Editor view (ruler, rows, device row, drops, the "+ track" menu, the drum kits). |
 | `ui/step-view.js` | `StepView`: the Step View (step grids, variant strip, step editor lanes, follow). |
-| `ui/windows.js` | `Windows`: device windows (in-page panels on the web, child windows in Electron), link modes, tile, cascade. |
+| `ui/windows.js` | `Windows`: device windows (in-page panels on the web, child windows in Electron), link modes, tile, cascade; the Preset menu; opens on the panel or the controls as `Settings.get('view.deviceOpen')` says. |
+| `ui/panels.js`, `ui/panels.css` | `Panels`: the hardware-style panels (HVT-808, HVT-909 with its voice source, HVT-303, HVT-D, HVT-106) and the drum machines' pattern bank. |
+| `ui/mixer-view.js`, `ui/clip-view.js`, `ui/export-dialog.js`, `ui/settings.js`, `ui/views.css` | `MixerView`, `ClipView` (shown as Sections), `ExportDialog`, `Settings` (V2). |
+| `ui/import-view.js` | `ImportView`: the import dialog, the analysis report, the reference lane (Dubplate Crew). |
+| `solo/solo.js`, `solo/*.js`, `solo/*.html` | `Solo.boot(opts)`: the instrument pages' framework (W2; `sections` option for the machine pages); the pages (W2, W3). |
 | `ui/app.js` | Frame, control bar, view switch, keys, the start gate, open, save, export, relink. |
 | `index.html` | Page skeleton and the script load order. |
 | `shell/main.js`, `shell/preload.js` | Electron main process and the `HavantechnoShell` bridge (dialogs, `readFile`, `readText`, `openFiles`, `pathForFile`, device windows). |
@@ -273,11 +324,16 @@ Every row is "shipped" (the module is in the repo, its check passes on 55f205d, 
 
 ## In progress
 
-A Patch Crew is adding `tb303` and `modeld` synths and hardware-style panels. Its brief is `docs/research/2026-11-11-patch-crew/BRIEF.md`. This README does not document them further.
+The second wave of the Pressing and Showroom Crews (27 November): engine and shell integration (G1), interface and pages (G2). Next, as one change: the rename to **Recut**. After that, `docs/plans/2026-11-21-strategy.md`.
 
 ## What is unverified
 
 Nobody has run these. Each is listed so that nobody reads the green checks as more than they are.
+
+- **The 909's sources by ear.** The sampled and ROM voices have been measured (K1, E1), not listened to. The switch was driven in headless Chromium (G2: sound continues across SYNTH and SAMPLE while playing; the ROM path ran only with synthetic chip images whose checksums the test itself declared valid).
+- **The Kits & patterns menu on a sampled kit.** `Presets.machineOf` knows the synthesized types only (`bd909`), so kits and machine patterns on `bd909s` tracks were not checked (G2's log asks W1's owner).
+- **The app on a phone.** The app's toolbar is wider than a phone (726 px at 390); the instrument pages are the phone version.
+- **macOS and Windows builds and the build workflow** (docs/BUILD.md).
 
 - **Drum sounds against real machines.** No TR-808 or TR-909 hit has been compared by ear or with a recording. The first score (PASS 61, FAIL 44) compares numbers from the manuals (log-A9.md, run 3). A second fitting pass is in progress and is not reflected in that score (log-coordinator.md, 04:48 on 2026-11-09; the coordinator's message on 2026-11-11).
 - **The sampler's sound and real libraries.** No real sample library has been loaded. Nobody has heard a sampler program (REPORT.md, section 5; log-A7.md).

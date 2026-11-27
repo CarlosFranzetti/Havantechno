@@ -4,7 +4,7 @@
  *
  *   Sampled909.load(ctx, {types: ['bd909s'], base: url}).then(function (r) {});   // r = {loaded: [...], missing: [...]}
  *   var inst = Sampled909.create(ctx, 'bd909s', {decay: 0.2});   // also Synths.create(ctx, 'bd909s')
- *   inst.out.connect(ctx.destination); inst.trigger(ctx.currentTime, {step: 2});
+ *   inst.out.connect(ctx.destination); inst.trigger(ctx.currentTime, {accent: true});
  *   Sampled909.loadFiles(ctx, fileList)   // user-picked files named as in the set (File, Blob with a name, {name, data})
  *   Sampled909.available()                // true once any recording of the set has been decoded (false when the folder is absent)
  *   Sampled909.ready(ctx, types)          // every recording of those voices is decoded on ctx (synchronous)
@@ -23,9 +23,11 @@
  * whose Tune is a pitch (sd, toms, crash, ride; on the 909 the cymbal Tune is the ROM clock, so a rate change is what
  * the machine does there). The bass drum's Tune is the pitch-envelope depth, so it has no `between`.
  *
- * Level and accent follow drums.js's 909 voices: ev.step 0 / 1 / 2 = -18 / -9 / 0 dB; without ev.step, an accent is
- * 6 dB over an unaccented hit at half scale; ev.vel scales both. The rim shot and hand clap also choose between the set's
- * two velocity recordings (RIM63 / RIM127, HANDCLP1 / HANDCLP2): step 2 or ev.accent plays the high one. The set was
+ * Level and accent follow drums.js's 909 voices (ampOf9): ev.accent 0 dB; else velocity under 0.5 the weak level -18 dB;
+ * else the normal level -9 dB, trimmed by vel / 0.85 below the sequencer's default 0.85. ev.level909 0 / 1 / 2
+ * (-18 / -9 / 0 dB, times ev.vel) overrides that for direct callers. ev.step is NOT read: the sequencer puts the song's
+ * absolute step number there. The rim shot and hand clap also choose between the set's two velocity recordings
+ * (RIM63 / RIM127, HANDCLP1 / HANDCLP2): level909 2, or (without level909) ev.accent, plays the high one. The set was
  * normalised per file, so GAIN (below, 'prior') puts the voices back into a balance taken from the synthesized kit's
  * measured peaks. Hats: one channel as in drums.js (any new ch909s or oh909s hit chokes the live ones, 5 ms fade); the
  * group is this module's own ('hat909s'), so the sampled and the synthesized hats do not choke each other.
@@ -52,6 +54,7 @@
   var root = (typeof window !== 'undefined') ? window : (typeof globalThis !== 'undefined' ? globalThis : this);
   var K = root.Kit;
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function isLvl(x) { return typeof x === 'number' && x === x; }
   function dbToGain(db) { return Math.pow(10, db / 20); }
   function setV(p, v, t) { if (K) K.setV(p, v, t); else { try { p.setValueAtTime(v, t); } catch (e) {} } }
   function lin(p, v, t) { if (K) K.lin(p, v, t); else { try { p.linearRampToValueAtTime(v, t); } catch (e) {} } }
@@ -209,7 +212,7 @@
     params = params || {};
     var list = COMBOS[type], best = null, bd = Infinity, bs = -1, i, k;
     if (V.vel) {
-      var hi = !!(ev && ((typeof ev.step === 'number' && Math.round(ev.step) >= 2) || (typeof ev.step !== 'number' && ev.accent)));
+      var hi = !!(ev && (isLvl(ev.level909) ? Math.round(ev.level909) >= 2 : ev.accent));   // ev.step is the song's absolute step: never read
       for (i = 0; i < list.length; i++) if (list[i].vel === (hi ? 'high' : 'low')) return { file: list[i].file, knobs: {}, dist: 0, residual: 0, vel: list[i].vel };
       return null;
     }
@@ -380,11 +383,15 @@
   var GROUPS = (typeof WeakMap === 'function') ? new WeakMap() : null;   // ctx -> live hat voices ('hat909s')
   function hatGroup(ctx) { if (!GROUPS) return []; var g = GROUPS.get(ctx); if (!g) { g = []; GROUPS.set(ctx, g); } return g; }
   function velOf(ev) { return clamp(ev && typeof ev.vel === 'number' ? ev.vel : 0.8, 0, 1.5); }
-  var STEP_DB = [-18, -9, 0];
-  // as drums.js ampOf9
+  var STEP_DB = [-18, -9, 0], WEAK909 = 0.5, VREF909 = 0.85;
+  // as drums.js ampOf9: ev.level909 0/1/2 for direct callers; else accent 0 dB, velocity under 0.5 -18 dB, else -9 dB
+  // trimmed by vel / 0.85 below the sequencer's default velocity. ev.step (the absolute step) is not read.
   function ampOf(ev) {
-    if (ev && typeof ev.step === 'number' && ev.step === ev.step) return velOf(ev) * dbToGain(STEP_DB[clamp(Math.round(ev.step), 0, 2)]);
-    return velOf(ev) * (ev && ev.accent ? 1 : 0.5);
+    if (ev && isLvl(ev.level909)) return velOf(ev) * dbToGain(STEP_DB[clamp(Math.round(ev.level909), 0, 2)]);
+    if (ev && ev.accent) return dbToGain(STEP_DB[2]);
+    var v = velOf(ev);
+    if (v < WEAK909) return dbToGain(STEP_DB[0]);
+    return dbToGain(STEP_DB[1]) * Math.min(1, v / VREF909);
   }
 
   function defineParams(inst, spec, onSet) {

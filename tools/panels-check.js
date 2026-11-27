@@ -78,7 +78,7 @@ var sb = { console: console, Math: Math, JSON: JSON, Date: Date, Float32Array: F
 sb.window = sb; sb.document = fakeDoc; sb.globalThis = sb; sb.URLSearchParams = URLSearchParams;
 vm.createContext(sb);
 function load(rel) { vm.runInContext(fs.readFileSync(path.join(APP, rel), 'utf8'), sb, { filename: rel }); }
-['engine/core.js', 'engine/programs.js', 'engine/synths.js', 'engine/drums.js', 'engine/classics.js', 'engine/processors.js', 'engine/songdoc.js', 'engine/sequencer.js', 'engine/song.js', 'engine/host.js',
+['engine/core.js', 'engine/programs.js', 'engine/synths.js', 'engine/drums.js', 'engine/sampled909.js', 'engine/classics.js', 'engine/processors.js', 'engine/songdoc.js', 'engine/sequencer.js', 'engine/song.js', 'engine/host.js',
  'ui/widgets.js', 'ui/faces.js', 'ui/facedefs.js', 'ui/panels.js', 'ui/windows.js'].forEach(load);
 
 var passed = 0;
@@ -660,5 +660,62 @@ if (dJ) {
   rs.dispose();
 })();
 
-timers.forEach(clearTimeout);
-console.log('OK: ' + passed + ' checks passed');
+// ---- HVT-909 voice source (Pressing Crew G2): SYNTH / SAMPLE / ROM, sampled tracks in their synthesized column
+(function () {
+  var S9 = sb.Sampled909, D = sb.Drums;
+  ok(S9 && typeof S9.sampledOf === 'function' && D && typeof D.loadRom === 'function', 'G2 source: Sampled909 and Drums.loadRom loaded');
+  var K9 = ['bd909', 'sd909', 'lt909', 'mt909', 'ht909', 'rs909', 'cp909', 'ch909', 'oh909', 'cr909', 'rd909'], pa = {}, pb = {};
+  K9.forEach(function (t) { pa[t] = 'A'; pb[t] = 'B'; });
+  var doc = { v: 1, name: 'src', bpm: 120, swing: 0, key: 'C', progression: [], sends: {},
+    tracks: K9.map(function (t) { return { name: t, type: t, inst: t, kind: 'drum', family: 'drums', gain: 0.8, params: t === 'bd909' ? { decay: 0.2 } : undefined, variants: { A: 'x...x...x...x...', B: '................' } }; }),
+    sections: [{ name: 'A', bars: 1, play: pa }, { name: 'B', bars: 1, play: pb }] };
+  var h = sb.Host.create({ doc: doc });
+  var r = P.render(h.device('track:bd909'), h, { layout: 'landscape' }), S = r.kit.source;
+  ok(S && typeof S.set === 'function' && r.el.find(function (n) { return /(^| )pn-src( |$)/.test(n.attrs['class'] || ''); }).length === 3, 'G2 source: three source buttons and panel.kit.source');
+  ok(S.value() === 'SYNTH' && S.groups().drums === 'SYNTH' && S.groups().hats === 'SYNTH', 'G2 source: a synthesized kit reads SYNTH for both groups');
+  ok(S.reason('ROM') === 'no ROM images loaded' && S.reason('SAMPLE') === 'the sample files are not loaded', 'G2 source: reasons when nothing is loaded (' + S.reason('SAMPLE') + '; ' + S.reason('ROM') + ')');
+  var romB = r.el.find(function (n) { return n.attrs['data-source'] === 'ROM'; })[0], samB = r.el.find(function (n) { return n.attrs['data-source'] === 'SAMPLE'; })[0];
+  r.update();
+  ok(romB.attrs['aria-disabled'] === 'true' && romB.attrs['data-reason'] === 'no ROM images loaded' && samB.attrs['aria-disabled'] === 'true', 'G2 source: ROM and SAMPLE drawn unavailable with their reasons');
+  var u0 = h.editor()._undo.length;
+  ok(S.set('SAMPLE') === false && h.editor()._undo.length === u0 && /not available/.test(S.msg), 'G2 source: SAMPLE refused while the files are not loaded, no undo entry');
+  var avail = S9.available; S9.available = function () { return true; };      // as after a load
+  r.update();
+  ok(samB.attrs['aria-disabled'] === 'false', 'G2 source: SAMPLE enabled once the recordings are available');
+  samB.fire('click', {});
+  var d = h.document();
+  ok(d.tracks.every(function (t) { return t.type === t.name + 's' && t.inst === t.type; }) && h.editor()._undo.length === u0 + 1, 'G2 source: SAMPLE switches every 909 track to its sampled twin, one undo entry');
+  ok(d.tracks[0].params.decay === 0.2 && d.tracks[0].variants.A.cells.filter(Boolean).length === 4, 'G2 source: params and patterns carry over');
+  ok(S.value() === 'SAMPLE' && P.for(h.device('track:bd909'), h) === 'hvt909' && r.kit.machine.kit().length === 11 && r.kit.machine.present('bd909'), 'G2 source: the panel still matches and draws the sampled kit in its columns');
+  r.update();
+  r.el.find(function (n) { return n.attrs['data-source'] === 'SYNTH'; })[0].fire('click', {});
+  ok(h.document().tracks.every(function (t) { return t.type === t.name; }) && h.editor()._undo.length === u0 + 2, 'G2 source: SYNTH switches back, one undo entry');
+  ok(h.editor().undo() && (h.commit(), true) && h.document().tracks[0].type === 'bd909s', 'G2 source: undo restores the sampled kit');
+  h.editor().redo(); h.commit();
+  // ROM: a refused image, then (test only) the checksum table naming a synthetic image so the verified path runs
+  var bad = new Uint8Array(32768); for (var i = 0; i < bad.length; i++) bad[i] = (i * 7919) & 0xff;
+  var done = false, res = null;
+  S.loadFiles([{ name: 'bad.bin', arrayBuffer: function () { return Promise.resolve(bad.buffer.slice(0)); } }, { name: 'short.bin', arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(10)); } }]).then(function (x) { res = x; done = true; });
+  setImmediate(function () {
+    ok(done && /bad\.bin: refused: its checksum matches none/.test(res[0].text) && /short\.bin: refused: 10 bytes/.test(res[1].text), 'G2 source: unverified and short images refused with readable messages (' + (res && res.map(function (x) { return x.text; }).join(' | ')) + ')');
+    ok(S.reason('ROM') === 'no ROM images loaded' && h.document().tracks.every(function (t) { return t.type === t.name; }), 'G2 source: nothing changes after a refusal');
+    var hash = D.romHash(bad), keep = { crc32: D.ROMCHIPS.hat.crc32, sha1: D.ROMCHIPS.hat.sha1 };
+    D.ROMCHIPS.hat.crc32 = hash.crc32; D.ROMCHIPS.hat.sha1 = hash.sha1;
+    var u1 = h.editor()._undo.length;
+    S.loadFiles([{ name: 'hat.ic69', arrayBuffer: function () { return Promise.resolve(bad.buffer.slice(0)); } }]).then(function (x) {
+      ok(/hat\.ic69: hat chip verified by checksum/.test(x[0].text) && S.chips().hat === 'verified' && S.reason('ROM') === '', 'G2 source: a verified image loads (' + x[0].text + ')');
+      ok(S.groups().hats === 'MIXED' && h.editor()._undo.length === u1 + 0, 'G2 source: with the rom rows at their default the hats play ROM at once, the cymbals stay SYNTH (no undo entry)');
+      S.set('SYNTH');
+      var ch = sb.Panels.util.findTrack(h.document(), 'ch909');
+      ok(ch.params.rom === 0 && S.groups().hats === 'SYNTH' && h.editor()._undo.length === u1 + 1, 'G2 source: SYNTH turns the loaded chip\'s rom rows off, one undo entry');
+      S.set('ROM');
+      ok(sb.Panels.util.findTrack(h.document(), 'ch909').params.rom === 1 && S.value() === 'ROM' && h.editor()._undo.length === u1 + 2, 'G2 source: ROM turns them on again, one undo entry');
+      D.unloadRom(); D.ROMCHIPS.hat.crc32 = keep.crc32; D.ROMCHIPS.hat.sha1 = keep.sha1; S9.available = avail;
+      var rp = P.render(h.device('track:bd909'), h, { layout: 'portrait' });
+      ok(rp.kit.source && rp.el.find(function (n) { return /(^| )pn-src( |$)/.test(n.attrs['class'] || ''); }).length === 3, 'G2 source: the portrait layout has the source buttons too');
+      rp.dispose(); r.dispose();
+      timers.forEach(clearTimeout);
+      console.log('OK: ' + passed + ' checks passed');
+    });
+  });
+})();

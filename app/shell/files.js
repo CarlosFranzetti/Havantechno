@@ -131,7 +131,81 @@ function createGuard(o) {
     return true;
   }
 
-  return { grant: grant, granted: granted, checkTarget: checkTarget, writeFile: writeFile, copyFile: copyFile };
+  // makeDirectory(path) -> true (G1): one new folder whose parent lies inside a granted folder or the app-data folder,
+  // the same rule as writeFile's target. An existing folder answers true (not a link: a link is refused); an existing
+  // file is refused. Not recursive: the parent must exist.
+  async function makeDirectory(p) {
+    var full = checkPathString(p, 'folder');
+    var name = path.basename(full), parent = path.dirname(full);
+    if (!name || full === parent) throw fail('bad-path', 'The folder path has no name: ' + p.slice(0, 120));
+    var pst;
+    try { pst = await fsp.stat(parent); } catch (e) { throw fail('parent-missing', 'The folder does not exist: ' + parent + '. Create it first or choose another folder.'); }
+    if (!pst.isDirectory()) throw fail('parent-missing', 'The parent is not a folder: ' + parent);
+    var realParent = await fsp.realpath(parent), list = await allowedRoots(), ok = false;
+    for (var i = 0; i < list.length; i++) if (inside(realParent, list[i])) { ok = true; break; }
+    if (!ok) {
+      throw fail('not-granted', 'Havantechno may only make folders inside a folder you chose in a folder dialog during this session, or inside its own data folder. ' +
+        parent + ' is neither. Choose the folder again.');
+    }
+    var target = path.join(realParent, name), lst = null;
+    try { lst = await fsp.lstat(target); } catch (e) { /* new folder */ }
+    if (lst) {
+      if (lst.isSymbolicLink()) throw fail('not-file', 'Refusing to use a link as a folder: ' + target);
+      if (lst.isDirectory()) return true;
+      throw fail('not-file', 'A file of that name exists: ' + target);
+    }
+    try { await fsp.mkdir(target); }
+    catch (e) { if (!(e && e.code === 'EEXIST')) throw fail('failed', 'Could not make the folder ' + name + ': ' + (e && e.code ? e.code + ' ' : '') + (e && e.message ? e.message : e)); }
+    return true;
+  }
+
+  return { grant: grant, granted: granted, checkTarget: checkTarget, writeFile: writeFile, copyFile: copyFile, makeDirectory: makeDirectory };
 }
 
-module.exports = { createGuard: createGuard, checkPathString: checkPathString, toBuffer: toBuffer, SOURCE_EXT: SOURCE_EXT };
+// ---------------------------------------------------------------- the owner's TR-909 ROM images (G1)
+// Kept in <userData>/roms/tr909/ under their MAME names; drums.js (Drums.loadRom) checks the hashes, the shell checks
+// only the name and the size (every HN61256P sample ROM is 32768 bytes). Nothing else is read or copied.
+var ROM_FILES = ['hn61256p__c42.ic62', 'hn61256p__c43.ic69', 'hn61256p__c44.ic54'];
+var ROM_SIZE = 32768;
+function romName(p) {
+  var b = path.basename(String(p || '')).toLowerCase();
+  return ROM_FILES.indexOf(b) >= 0 ? b : null;
+}
+// readRoms(dir) -> [{name, bytes: Buffer}] for the known files present there (regular files, not links, 32768 bytes)
+async function readRoms(dir, fsp) {
+  fsp = fsp || fs.promises;
+  var out = [];
+  for (var i = 0; i < ROM_FILES.length; i++) {
+    var f = path.join(dir, ROM_FILES[i]), st;
+    try { st = await fsp.lstat(f); } catch (e) { continue; }
+    if (!st.isFile() || st.size !== ROM_SIZE) continue;
+    try { out.push({ name: ROM_FILES[i], bytes: await fsp.readFile(f) }); } catch (e) { /* unreadable: skipped */ }
+  }
+  return out;
+}
+// importRoms(paths, dir) -> {copied: [names], refused: [{name, reason}]}: copies the user's files into dir (made when
+// missing) under the canonical lower-case name. Each source: an absolute path, a known name, a regular file of 32768 bytes.
+async function importRoms(paths, dir, fsp) {
+  fsp = fsp || fs.promises;
+  if (!Array.isArray(paths) || !paths.length || paths.length > 8) throw fail('bad-path', 'Give one to three ROM files.');
+  var res = { copied: [], refused: [] };
+  await fsp.mkdir(dir, { recursive: true });
+  for (var i = 0; i < paths.length; i++) {
+    var shown = path.basename(String(paths[i] || '')).slice(0, 80), s, n, st;
+    try { s = checkPathString(paths[i], 'ROM file'); } catch (e) { res.refused.push({ name: shown, reason: e.message.replace(/^\[[a-z-]+\] /, '') }); continue; }
+    n = romName(s);
+    if (!n) { res.refused.push({ name: shown, reason: 'not a TR-909 sample ROM name (' + ROM_FILES.join(', ') + ')' }); continue; }
+    try { st = await fsp.stat(s); } catch (e) { res.refused.push({ name: shown, reason: 'cannot be read' }); continue; }
+    if (!st.isFile()) { res.refused.push({ name: shown, reason: 'not a regular file' }); continue; }
+    if (st.size !== ROM_SIZE) { res.refused.push({ name: shown, reason: 'size ' + st.size + ' bytes; a TR-909 sample ROM is ' + ROM_SIZE }); continue; }
+    var dst = path.join(dir, n), lst = null;
+    try { lst = await fsp.lstat(dst); } catch (e) { /* new */ }
+    if (lst && !lst.isFile()) { res.refused.push({ name: shown, reason: 'the target in the data folder is not a file' }); continue; }
+    try { await fsp.copyFile(await fsp.realpath(s), dst); res.copied.push(n); }
+    catch (e) { res.refused.push({ name: shown, reason: 'copy failed: ' + (e && e.code || e) }); }
+  }
+  return res;
+}
+
+module.exports = { createGuard: createGuard, checkPathString: checkPathString, toBuffer: toBuffer, SOURCE_EXT: SOURCE_EXT,
+                   ROM_FILES: ROM_FILES, ROM_SIZE: ROM_SIZE, readRoms: readRoms, importRoms: importRoms };

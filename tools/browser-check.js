@@ -53,6 +53,10 @@ const GLOBALS = [
   ['SystemEditor', 'app/ui/system-editor.js', 'A4'],
   ['StepView', 'app/ui/step-view.js', 'A5'],
   ['Windows', 'app/ui/windows.js', 'A6'],
+  ['Presets', 'app/engine/presets.js', 'W1 (Showroom Crew)'],
+  ['Settings', 'app/ui/settings.js', 'V2 (Pressing Crew)'],
+  ['Sampled909', 'app/engine/sampled909.js', 'K1 (Pressing Crew)'],
+  ['Assets', 'app/engine/assets.js', 'G1 (Pressing Crew)'],
 ];
 
 // Owner of each app file (CONTRACT.md file table), used to annotate HTTP 404s.

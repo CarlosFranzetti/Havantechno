@@ -1319,7 +1319,40 @@ function section11() {
   });
 }
 
-section5.then(section6).then(section7).then(section8).then(section9).then(section10).then(section11).then(function () {
+// ------------------------------------------------------------------ 12. Pressing Crew (G1): a render from mid-song.
+// Step times on a sample frame are snapped below the frame (Chromium puts AudioParam events at ceil(t * rate)), and a
+// voice's random draws are seeded per (track, absolute step). Measured in headless Chromium: G1's log.
+function section12() {
+  console.log('12. mid-song render state: frame snapping and per-hit random draws');
+  var sb = sandbox(); load(sb);
+  var S = sb.Sequencer, SM = vm.runInContext('Math', sb), rand0 = SM.random;
+  function run(fromBar, sr) {
+    var seq = S.create(new FakeContext(sr || 44100), { bpm: 126, swing: 0.4 }), got = [];
+    var inst = { type: 'probe', spec: {}, params: {}, out: seq.ctx.createGain(), set: function () { return false; }, get: function () {}, panic: function () {}, dispose: function () {},
+                 trigger: function (t, e) { got.push({ t: t, step: e.step, r: [SM.random(), SM.random()] }); } };
+    seq.addTrack('p', { inst: inst, kind: 'drum', variants: { A: { bars: 1, cells: [{ vel: 1 }, null, null, { vel: 1 }, null, null, null, null, null, null, { vel: 1 }, null, null, null, { vel: 1 }, null] } } });
+    seq.setArrangement([{ name: 's', bars: 24, play: { p: 'A' } }]);
+    var sd = seq.stepSec(), t = 0.05, n = 0;
+    for (var st = fromBar * 16; st < 24 * 16; st++) { seq.scheduleStep(st, t); t += sd; n++; }   // the render's accumulation
+    return got;
+  }
+  var whole = run(0), part = run(16), sr = 44100, frames = true, rand = true, k = 0;
+  var w16 = whole.filter(function (g) { return g.step >= 256; });
+  for (var i = 0; i < part.length; i++) {
+    if (Math.ceil(w16[i].t * sr) - 16 * 84000 !== Math.ceil(part[i].t * sr)) frames = false;
+    if (w16[i].r[0] !== part[i].r[0] || w16[i].r[1] !== part[i].r[1]) rand = false;
+    k++;
+  }
+  ok(k === 32 && frames, 'a render from bar 16 puts every step on the same frame as a render from bar 0 (ceil(t * rate), as Chromium places AudioParam events)');
+  ok(rand, 'a voice draws the same random numbers on a step whichever bar the render started at');
+  var seq2 = S.create(new FakeContext(44100), {}), bad = 0;
+  for (var r = 1; r < 200000; r += 7) { var x = seq2.snapTime(r / 44100 + 1e-13); if (x * 44100 > r || Math.abs(x * 44100 - r) > 1e-6) bad++; }
+  ok(bad === 0 && seq2.snapTime(0.0123456) === 0.0123456, 'snapTime: on-frame times land at or just below the frame; an off-grid time is unchanged');
+  ok(SM.random === rand0 && whole.length === 24 * 4, 'Math.random is restored after each trigger');
+  return Promise.resolve();
+}
+
+section5.then(section6).then(section7).then(section8).then(section9).then(section10).then(section11).then(section12).then(function () {
   console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
   process.exit(fails ? 1 : 0);
 }, function (e) {

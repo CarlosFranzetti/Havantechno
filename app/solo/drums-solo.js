@@ -50,33 +50,67 @@
   ];
   var KIT = M808 ? KIT808 : KIT909, GROOVES = M808 ? G808 : G909, SUF = M808 ? '808' : '909', MODEL = 'HVT-' + SUF;
 
-  // ---- the document: the kit, the bank, sections A and B
-  function song() {
-    var tracks = KIT.map(function (t) {
-      var vs = {}, k = t.slice(0, 2);
+  // ---- the document: the kit, the bank, sections A and B. typeOf(voice) -> the track type (the 909's voice source)
+  function kitTracks(typeOf) {
+    return KIT.map(function (t) {
+      var vs = {}, k = t.slice(0, 2), ty = typeOf ? typeOf(t) : t;
       GROOVES.forEach(function (g, i) { vs[LET.charAt(i * 2)] = g[1][k] || EMPTY; vs[LET.charAt(i * 2 + 1)] = g[2][k] || EMPTY; });
-      return { name: t, type: t, inst: t, kind: 'drum', family: 'drums', gain: 0.8, variants: vs };
+      return { name: t, type: ty, inst: ty, kind: 'drum', family: 'drums', gain: 0.8, variants: vs };
     });
-    var pa = {}, pb = {};
-    KIT.forEach(function (t) { pa[t] = 'A'; pb[t] = 'B'; });
-    return { v: 1, name: MODEL, bpm: M808 ? 118 : 128, swing: 0, key: 'C', progression: [], sends: {}, tracks: tracks,
-      sections: [{ name: 'A', bars: 1, play: pa }, { name: 'B', bars: 1, play: pb }] };
+  }
+  var pa = {}, pb = {};
+  KIT.forEach(function (t) { pa[t] = 'A'; pb[t] = 'B'; });
+  var SECTIONS = [{ name: 'A', bars: 1, play: pa }, { name: 'B', bars: 1, play: pb }];
+  function song(typeOf) {
+    return { v: 1, name: MODEL, bpm: M808 ? 118 : 128, swing: 0, key: 'C', progression: [], sends: {}, tracks: kitTracks(typeOf), sections: SECTIONS };
   }
 
   var help = 'Choose a voice (' + (M808 ? 'INSTRUMENT SELECT or a name tile' : 'INST under the keys') + '; on a phone the voice buttons), then tap the sixteen keys: a lit key is a hit. ' +
     'Shift-click (or select AC) for accents. PTN 1 to 8 pick a pattern, A, B and A▸B pick the variation that plays (A▸B: A then B). ' +
     'CLR VOICE and CLR PTN clear what the keys show, COPY A▸B copies the pattern\'s A onto its B, MUTE silences a voice' + (M808 ? '' : ', SHUFFLE delays the off-beats') +
-    '. Patterns 1 to 6: ' + GROOVES.map(function (g, i) { return (i + 1) + ' ' + g[0]; }).join(', ') + '; 7 and 8 start empty. Ctrl+Z undoes an edit.';
+    '. Patterns 1 to 6: ' + GROOVES.map(function (g, i) { return (i + 1) + ' ' + g[0]; }).join(', ') + '; 7 and 8 start empty. Ctrl+Z undoes an edit.' +
+    (M808 ? '' : ' VOICE SOURCE (top of the panel): SYNTH plays the synthesized voices; SAMPLE plays recordings of a real 909 drum machine (the free Rob Roy set of 1995); ' +
+      'ROM plays the closed and open hat, crash and ride from images of the 909\u2019s own sample chips, which you load with LOAD ROM\u2026 (they are checked by checksum and stay on your computer). ' +
+      'The page starts on the most real source it has for each voice; the panel says which source the drums and the hats and cymbals are using.');
 
   var api = Solo.boot({
     title: MODEL, label: 'rhythm machine', device: KIT[0], key: 'C', bpm: M808 ? 118 : 128, swing: 0, section: 'A', global: 'HVT' + SUF,
-    tracks: KIT.map(function (t) { return { name: t, type: t, inst: t, kind: 'drum', family: 'drums', gain: 0.8 }; }),
+    tracks: kitTracks(), sections: SECTIONS,           // the bank song: two one-bar sections A and B (Solo.boot's sections option)
     patterns: [], presets: false, help: help,
-    onStart: function () { var m = machine(); if (m) m.setMode(m.mode()); }       // the framework loops 'A' at start: back to the panel's mode
+    onStart: function () { var m = machine(); if (m) m.setMode(m.mode()); preload(); }   // the framework loops 'A' at start: back to the panel's mode
   });
   var host = api.host && api.host();
   if (!host) return;
-  host.loadDocument(song());                         // two sections A and B (the framework builds one); before audio, so nothing plays yet
+
+  // ---- the HVT-909's voice source at start (Pressing Crew G2). The asset manifest (engine/assets.js, assets/manifest.json)
+  // says which sets this copy of the page carries. Each voice starts on the most real source present: the ROM chip for the
+  // closed and open hat, crash and ride when that chip's image is loaded (the synthesized voice with its rom row on, the
+  // default), else the Rob Roy recording when the set is present, else the synthesized voice. The ROM images are loaded
+  // here, before any tap (they need no audio context); the recordings are decoded on the context at start (Host.start
+  // awaits Assets.ready for the document; preload() then decodes the other voices so SAMPLE switches without a gap).
+  // This is the document the page opens with, so it takes no undo entry. SYNTH stays one tap away on the panel.
+  var A = root.Assets, S9 = root.Sampled909, DR = root.Drums, CHIP = { ch909: 'hat', oh909: 'hat', cr909: 'crash', rd909: 'ride' };
+  function defaultTypeOf(m) {
+    var rob = !!(S9 && typeof S9.sampledOf === 'function' && m && m['tr909-robroy'] === true), chips = {};
+    var st = DR && typeof DR.romStatus === 'function' ? DR.romStatus() : null;
+    if (st && st.chips) Object.keys(st.chips).forEach(function (c) { if (st.chips[c].loaded) chips[c] = true; });
+    return function (t) { return (CHIP[t] && chips[CHIP[t]]) ? t : (rob ? (S9.sampledOf(t) || t) : t); };
+  }
+  api.sourceReady = Promise.resolve(null);
+  if (!M808 && A && typeof A.ready === 'function') {
+    api.sourceReady = A.ready(null).then(function (r) {
+      var m = r && r.manifest; if (!m) return r;
+      var typeOf = defaultTypeOf(m);
+      if (!KIT.some(function (t) { return typeOf(t) !== t; })) return r;
+      // before audio only: once the owner has tapped start, the kit is theirs to switch on the panel
+      if (!(typeof host.started === 'function' && host.started()) && !api.started()) host.loadDocument(song(typeOf));
+      return r;
+    }, function () { return null; });
+  }
+  function preload() {
+    if (M808 || !A || typeof A.ready !== 'function' || typeof host.context !== 'function') return;
+    var c = host.context(); if (c) A.ready(c);
+  }
   function machine() { var p = api.panel && api.panel(); return p && p.kit ? p.kit.machine : null; }
   api.machine = machine;
   api.grooves = GROOVES;

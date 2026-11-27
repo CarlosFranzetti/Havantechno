@@ -21,7 +21,12 @@ module.exports = {
   asar: true,
   publish: null,
   directories: { buildResources: 'build', output: 'dist' },
-  files: ['package.json', 'index.html', 'engine/**/*', 'ui/**/*', 'analysis/**/*', 'solo/**/*', 'shell/**/*', '!engine/selfcheck.js'],
+  // The app folder (app/) is the root of this list, so the repository's local/ (the owner's ROM images and unlicensed
+  // samples, git-ignored) is outside it and cannot be packed; the two exclusions below also keep out any local/ folder
+  // copied under app/ and the ROM folder until the owner makes the repository private (G1). The owner's ROMs reach a
+  // packaged app through <userData>/roms/tr909/ (HavantechnoShell.importRoms / readRoms).
+  files: ['package.json', 'index.html', 'engine/**/*', 'ui/**/*', 'analysis/**/*', 'solo/**/*', 'shell/**/*', 'assets/**/*',
+          '!engine/selfcheck.js', '!**/local/**', '!assets/tr909-rom/**'],
   extraResources: [
     { from: '../tools/separate.py', to: 'tools/separate.py' },
     { from: '../LICENSE', to: 'LICENSE.txt' },
