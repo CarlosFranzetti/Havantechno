@@ -1,8 +1,41 @@
 # Memory
 
-Each dump below has a date and time stamp in UTC. Append new dumps under the marker at the bottom. Older dumps stay as they are.
+This file is the project's working memory. The first part, **Now**, is rewritten as the project moves and is the place to look first; the dumps below it are the older record and stay as they were written. The periodic context dumps are in `context history.md`.
 
-Note on what a dump is: this file is a written summary of the working state, made from the session and the repo. It is not a verbatim copy of the context window, which I cannot reproduce in full.
+## Now (updated 2026-11-26 19:12 EST (00:12 UTC))
+
+**What this is.** Havantechno: a remixing DAW that takes a record apart and rebuilds it with its own instruments. Web app plus an Electron desktop shell, plain JavaScript with no build step, AGPL-3.0-or-later, for the owner and a few friends, not for sale. Repository `CarlosFranzetti/Havantechno`, all work on `main` (GitHub's default branch is still an old `claude/` branch: clone with `-b main`).
+
+**What exists and is checked.**
+- The app (`app/`): arrangement (System Editor), Step View, floating device windows, project save and open, WAV export, a sampler with programs, import of a track with analysis report, reference lane and A/B with level match, stem separation from the desktop shell.
+- Instruments: 27 TR-808 and TR-909 voices (`app/engine/drums.js`), and three AudioWorklet synths (`app/engine/classics.js`): `tb303`, `modeld`, `juno`. Hardware-style panels (`app/ui/panels.js`): HVT-808, HVT-909, HVT-303, HVT-D, HVT-106.
+- Analysis (`app/analysis/`): synth or sample, mono or poly, FM or subtractive, 808 or 909, reverb, a suggested recreation; `tools/analyze.js`, `tools/separate.py` (HT-Demucs default).
+- A single-instrument page for the 303 (`app/solo/303.html`), published for the owner.
+- Checks: `node app/engine/selfcheck.js` (448) and `tools/*-check.js`; `tools/tb303-bench.js` measures the 303; `tools/drums-score.js` scores the drums against the manuals (86 pass, 19 fail).
+
+**Published pages (private to the owner).** Playable HVT-303: https://claude.ai/artifact/CK2Y94feFhT1N68CmY33Fh . Render Room (renders to listen to): https://claude.ai/artifact/D9a1XyaKNManzV714jEUzj .
+
+**In progress (26 November).** Showroom Crew: a page per instrument with a step sequencer, presets and pattern save and load, also in the app. Pressing Crew: the next version (0.2): audio export of the arrangement and of single tracks, audio tracks, a mixer and a clip view, settings, packaged builds for macOS, Windows and Linux; research for 0.3 (hosting VST and AU plug-ins). Briefs: `docs/research/2026-11-26-showroom-crew/BRIEF.md`, `docs/research/2026-11-26-pressing-crew/BRIEF.md`.
+
+**The plan after that.** `docs/plans/2026-11-21-strategy.md`: fix the separator's output, a reverse-engineering loop on the 303 (schematic values, a simulated reference, a ported diode ladder), and the detection engine's second version (fitting the app's own instruments to each element).
+
+**Nobody has listened.** Every statement about sound in this repository is a measurement. No instrument has been compared with a real unit. The Model D's knob laws follow a modern recreation, not an original.
+
+**Standing rules.**
+- Commit messages name no model; trailers are `Co-Authored-By: Claude <noreply@anthropic.com>` and the session link. No force-push or history rewrite without permission. Commit and push after every verified piece; agents' unfinished files go in commits labelled WIP.
+- The coordinator verifies before committing: runs the checks itself and reads exit codes, looks at screenshots, and re-measures at least pitch and level for an instrument. Rulings given to agents in messages are written into the coordinator's log at the time.
+- Agents: one owner per file; no commits; never git stash, checkout, reset or clean in the shared tree; logs with Eastern Time and UTC.
+- Nothing under someone else's copyright in the repository (reference audio, manuals, schematics, ROM images, model weights). No maker's marks on panels. Original patterns and presets only.
+- Research: every claim tagged as read, search summary or memory; no invented sources.
+- Times shown to the owner are Eastern Time.
+
+**Lost and needed again.** The cloud machine has been replaced more than once and its scratch folder wiped: the Guidance recording and the three Roland manuals must be uploaded again when work needs them.
+
+**Waiting on the owner.** The list is the last page of the transcript PDF of 26 November and `docs/plans/2026-11-21-strategy.md` section 6: files to upload, which computer, whether builds may be published, optional model downloads, the 909's ROM, the name, HVT-D note priority, the Juno's chorus noise, GitHub's default branch, and listening.
+
+## Earlier dumps
+
+Each dump below has a date and time stamp in UTC.
 
 ## Dump 1 at 2026-10-21 18:10:36 UTC
 

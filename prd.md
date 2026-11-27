@@ -107,3 +107,22 @@ Earlier:
 
 - **D15. Classic synths.** The DAW carries its own recreations of a TB-303 (`tb303`), a Minimoog Model D class mono (`modeld`) and a Juno-106 class poly (`juno`), built from circuit analyses, manuals and open-source emulations with every value tagged by its basis. They are both instruments to play and the targets the element classifier loads (D9, D10).
 - **D16. Hardware-style windows.** A device's floating window shows a panel modelled after the hardware, the way Arturia's and Roland Cloud's plugins do: the TR-808 and TR-909 as whole machines with their step keys, the 303, the Model D, the Juno. Layout, colour and control shapes follow the originals; no maker's logo or model badge appears; each carries Havantechno's own mark and a plain model name (HVT-808, HVT-909, HVT-303, HVT-D, HVT-106).
+
+## 4e. Versions 0.2 and 0.3 (direction set 2026-11-26 ET)
+
+The owner, 26 November: "I want the next version to have save and load and import/export audio (entire arrangement track and individual tracks and the compiled Mac pc and Linux versions available for download the version after will allow for loading vst/au for instruments as well as for processing fx. We should also have multiple views like ableton does and some settings like [Native Instruments]/ableton/logic for the audio settings and view settings." And for the instruments: "a separate web artifact for each instrument ... each one should have a step sequencer ... add a save load for the sequencer and a presets engine as well".
+
+**Version 0.2**
+- **D17. Audio out.** Export the whole arrangement, a section or a bar range, and individual tracks as stems, at 16, 24 or 32-bit float and a chosen sample rate. Stems and mix line up to the sample; the rule for the master chain and the sends is stated in the dialog.
+- **D18. Audio in.** Audio files become audio tracks with clips on the arrangement, played in sync, mixed and exported like any track. No time-stretching in this version.
+- **D19. Projects that travel.** A project can be saved with its audio collected beside it and opened on another machine. Plain save, open and autosave stay.
+- **D20. Views.** A view switcher: the arrangement, a mixer, and a clip view of tracks against sections. One song, several views; the last view is remembered.
+- **D21. Settings.** Audio (output device, sample rate, latency, what the engine reports, a test tone) and view (default view, density and zoom, meters), remembered between runs.
+- **D22. Downloads.** Packaged desktop apps for macOS (Apple silicon and Intel), Windows and Linux, built by a workflow and offered on a release page; unsigned unless signing identities are supplied, with the first-launch steps documented.
+- **D23. Instruments on their own.** Each instrument has a single page that plays in a browser: the HVT-303, HVT-D and HVT-106 with step sequencers, the HVT-808 and HVT-909 working like the machines.
+- **D24. Presets and patterns.** A presets engine for every instrument (factory and user patches, import and export as text) and save and load of sequencer patterns, in the single pages and in the app's device windows. Factory content is original.
+
+**Version 0.3**
+- **D25. Plug-ins.** Load VST and AU plug-ins as instruments and as effects. The architecture comes from the Pressing Crew's research (R1) before anything is built.
+
+**Acceptance for 0.2.** Each item has a check that can fail: an export compared with the engine's own render to the sample; stems summed against the mix; a clip landing on the grid; a bundle reopened from a different folder; every view driven in a browser with screenshots looked at; a packaged Linux build started and playing here, and the macOS and Windows builds stated as untested until someone runs them.
