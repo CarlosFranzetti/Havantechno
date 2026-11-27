@@ -2,7 +2,7 @@
 
 Dumps of the working context, each with a UTC date and time stamp. A new dump is written every 7 to 8 user updates, then the context window is compacted. New dumps are appended under the marker at the bottom; older dumps stay as they are.
 
-Cadence tracker: last dump at 2026-10-24 04:26 EDT (2026-10-24 08:26:51 UTC). Updates since: 0. Next dump due at update 7.
+Cadence tracker: last dump at 2026-11-09 04:26 EST (2026-11-09 09:26:56 UTC). Updates since: 0. Next dump due at update 7.
 
 Earlier dumps from before this file existed: `context.md` (2026-10-21) and `memory.md` (2026-10-21 and 2026-10-23).
 
@@ -140,5 +140,61 @@ Five analysts (E1 low end Opus; E2 mids, E3 drums top, E4 arrangement and sample
 ### Open with the owner
 
 Listen to V3 against the record and say what is wrong by ear (the scorer knows the intro's width and the outro's top band are short). Decide whether to keep tuning or move to milestone 6, whether V3 becomes the default song, and whether stems of the original can be provided. GitHub default branch to main. The earlier items (AGPL confirmation, stray cloud session, old attribution commit) stand.
+
+## Dump 5 at 2026-11-09 04:26 EST (2026-11-09 09:26:56 UTC)
+
+Owner updates since Dump 4: "get out of AassMaster" (folder removal needs a person; session repo scope fixed; AassMaster untouched), "what is the name you came up with for the agents" and "name them all together" (the Soundsystem; Roundtable the process; crews; research README Names section and transcript index), the big instruction of 8 Nov ET (deconstruction and recreation: element identification, auto-load of recreations, 808/909, a Kontakt-class sampler, projects with immediate save and A/B, minimal targets, batches, research crews, PRD and roadmap), "Continue".
+
+### Repo
+
+`CarlosFranzetti/Havantechno`, branch main (the owner merged the old branch via PRs #1 and #2 with no file change; rebased on top). Session environment: a personal "Havantechno" environment (created with the owner's approval) allowing the research hosts, GitHub, Hugging Face, the Demucs weights, Roland support, Zenodo, DAFx, the 909 manual mirror, LinuxSampler, ManualsLib. Lesson: agents' WebFetch bypasses the proxy (ENOTFOUND); curl in Bash goes through it. reverb.com, Equipboard, Roland, ManualsLib and network-909.de are bot-walled or unresolvable even so.
+
+### Documents
+
+prd.md 4c (D9 to D14) and 6c; docs/plans/2026-11-09-roadmap.md (batches 1 to 6, the well-rounded-app list, a status section); research groups 2026-11-09-crate-crew (C1, C2, REPORT.md), 2026-11-09-box-crew (B1 sampler spec 578 lines + §14 SFZ corrections; B2 808 with the papers read; B3 909 with source constants; builders' logs A1, A3, A4, A6, A7, A12; the coordinator's log for all three crews), 2026-11-09-lab-crew (L1-methods.md, 360 lines).
+
+### Built today
+
+Batch 1 sampler complete across engine (programs.js, synths.js program path), document and Host (A1: doc.programs, region ops, meta, usedBy, Project.missing, contract), UI (A4 drops and menu; A3 sampler face), shell (A6 readText, load order). Batch 2: drums.js with 27 voices (A12), Synths fallback (A7), kit menu (A4); faces in progress (A3). Sequencer events carry step and hit. Checks on one tree: selfcheck 375, synths 161, drums 322, system-editor 97, faces 1235, step-view 72, processors 92, widgets 157, browser 26. HT-Demucs stems of the reference and V3 exist in the scratchpad. Pending: L1's app/analysis module and separate.py; A3's drum faces; A1 follow-ups (detectPitch, pickFiles, importProgram #include); A7's fm instrument and inst._lastHit; A9's render labels; batch 4.
+
+### Rules added
+
+Never git stash/checkout/reset/clean in the shared tree (A1 incident, nothing lost). Fetch pages with curl through the proxy. Ship only redistributable samples; synthesis needs none. Times in ET with UTC.
+
+### Open with the owner
+
+Supply files for the Crate Crew's picks 1 to 5; the TR-808 and TR-909 service-manual PDFs if available; reference 808/909 hits for fitting; listen to V3; GitHub default branch to main; the earlier items stand.
+
+## Dump 6 at 2026-11-11 14:55 EST (2026-11-11 19:55:28 UTC)
+
+Owner updates since Dump 5: "continue" (twice), the three manuals uploaded (TR-808 service notes and owner's manual, TR-909 service notes), "pause", "let's continue and start with adding a 303 and a moog and afterwards a poly synth; I want the plugins to have a floating window with designs modeled after the synths and drum boxes like Arturia and Roland cloud", "run a few sub agents in parallel and orchestrate it", "try again" (after a usage-limit stop). The stop hook asks for a commit whenever agents leave files in the tree; those are committed as WIP snapshots labelled syntax-checked only.
+
+### Repo
+
+`CarlosFranzetti/Havantechno`, branch main, last verified commit at this dump: the Dubplate Crew brief (1566334). AassMaster is not touched. Commit trailers carry no model name.
+
+### Built since Dump 5
+
+- **Drums fitted to the manuals** (A12, two passes) and scored by `tools/drums-score.js`: 86 pass, 19 fail on two consecutive runs. The coordinator made each hit start the noise buffer at a different offset (identical replays read as samples to the analysis) and loosened three accent rows that sat exactly on their bound.
+- **Patch Crew (batch 2b), done.** P1/P2/P3 specs; P5's AudioWorklet engine (`app/engine/worklets.js`, `worklets/classics-processor.js`, `classics.js`: `tb303`, `modeld`, `juno`, a plain-node fallback, `Host.audition`); P4's panel system (`app/ui/panels.js`) with HVT-808, HVT-909, HVT-303, HVT-D, HVT-106, shown first in a device window, edits working in Electron child windows. "+ track" lists the classic synths; Remove track covers drum and synth tracks; the menu sits above windows (coordinator's edits in system-editor.js). Default levels fixed after the coordinator measured peaks of 1.30 and 1.42. `DISCUSSION.md` (25 threads), `REPORT.md`.
+- **Lab Crew (batch 3), done to its first plan.** L2 replaced L1: `app/analysis/` (dsp, features, decide, drumlib, report), `tools/analyze.js`, `tools/analysis-truth.js`, HT-Demucs the default in `tools/separate.py`. `REPORT.md`.
+- **Docs.** THIRD_PARTY.md has real rows; Box Crew report addendum; README section with the five panel screenshots; roadmap status for 11 November; CLAUDE.md current.
+- **Render Room** (https://claude.ai/artifact/D9a1XyaKNManzV714jEUzj) version 8: V3, V2, refitted drum voices, HVT-303 line, HVT-D bass, HVT-106 chords.
+
+### Checks at this dump (coordinator's runs, exit 0 unless noted)
+
+selfcheck 395, classics 110, panels 116, synths 169, drums 342, faces 2495, system-editor 97, processors 92, step-view 72, widgets 157, analysis 47, browser 26, archived studio 161; drums-score exit 1 (86/19).
+
+### In flight
+
+Dubplate Crew (batch 4; `docs/research/2026-11-11-dubplate-crew/BRIEF.md`, frozen interface): D1 engine (doc.reference, host.ab, matchLevel, `app/engine/importer.js`, `Project.importTrack`), D2 interface (`app/ui/import-view.js`, A/B in the transport, reference lane, index.html tags), D3 shell separation and `render.js` labels. Agent ids are in the scratchpad roster.
+
+### Rules added
+
+Rulings given to agents in messages are written into the coordinator's log at the time (the scribe found five that were not). The coordinator re-measures at least pitch, level and engine selection itself before accepting an instrument.
+
+### Open with the owner
+
+Listen to the Render Room (nobody has listened to anything). HVT-D note priority: last-note as built or low-note as on the hardware. Dry recordings or panel photos of a 303, Model D or Juno if available. Files for the Crate Crew's picks. GitHub default branch to main. Earlier items stand.
 
 <!-- next dump goes here -->

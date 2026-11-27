@@ -74,3 +74,10 @@ Wave 2 closed these from the earlier backlog: undo per knob gesture, the contrac
 - Per-track sidechain sources, so more than the kick can duck a track.
 - A reference-analysis script that prints band energies and onset times for any WAV, so the comparison in item 1 is repeatable.
 - Export stems (one WAV per track), not just the mixed song.
+
+## After 26 November 2026: versions and what follows
+
+- **0.2, in progress** (Pressing Crew and Showroom Crew): audio export of the arrangement and of single tracks, audio tracks, projects with their audio collected, a mixer and a clip view, settings, packaged builds for three platforms, a page per instrument with sequencers, presets and pattern save and load. `prd.md` section 4e.
+- **0.3, researched first:** hosting VST and AU plug-ins as instruments and effects.
+- **The strategy of 21 November** (`docs/plans/2026-11-21-strategy.md`), still to do: the separator's float output and residual; a reverse-engineering loop on the 303 (read the schematic's values, a simulated reference, a ported diode ladder behind an accuracy setting); the Juno's oversampling and bucket-brigade chorus; the Model D from CA-72's light model; the detection engine's second version (grid, notes, drum pieces, fitting the app's own instruments, a person confirming); a drum-piece separator trained on the app's own renders; the 909's hats from a ROM file the owner supplies.
+- **Known gaps carried forward:** pattern length under sixteen steps (the song format cannot store it); clips are not time-stretched; the clip view shows the arrangement's sections and does not record free clip launching; the 303 is much louder with resonance at zero; nobody has listened to anything, and nothing has been compared with a real unit; installers are unsigned.

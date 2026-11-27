@@ -11,6 +11,15 @@ Standing rules, repeated in every brief: cite only URLs actually seen, mark ever
 | Gear Crew | 2026-10-23 | What plugins, instruments, effects and analysis tools could recreate a source track inside Havantechno, and what runs in a browser? | `2026-10-23-plugin-gear/` | Complete: 12 reports, 2 critiques with measurements, 10 answers, 2 syntheses. See REPORT.md; the corrected measurement table is in transcripts/round4-O1.md. |
 | Build Crew | 2026-10-23 | Build the web and desktop app from the reports: Host, widgets, faces, System Editor, Step View, windows, Electron shell, audio fixes, scoring loop. | `2026-10-23-build-crew/` | Complete (2026-10-24). Wave 1 built `app/`; wave 2 reviewed, fixed and added the sampler. `DISCUSSION.md` (compiled from the logs) and `REPORT.md`. |
 | Ear Crew | 2026-10-24 | Make the recreation sound like the original, with every sound accounted for: five analysts measure the owner's file against the app, a cross-read settles disputes, a spec is built and scored in a render loop. | `2026-10-24-ear-crew/` | Round 3 paused after four scored passes (within 0.5 LU per section, 13 to 18 of 29 bands within 2 dB) for the owner to listen. `V3-SPEC.md`, `DISCUSSION.md` (35 threads), `REPORT.md`. |
+| Crate Crew | 2026-11-09 | Very minimal tracks (one synth, one drum machine; early electro) to target after Guidance, with documented gear. | `2026-11-09-crate-crew/` | Done: 38 candidates, ten picks; `REPORT.md`. The owner supplies the files. |
+| Box Crew | 2026-11-09 | Batch 1 the Kontakt-class sampler, batch 2 the TR-808 and TR-909: what the instruments do, the circuits, the licences, then the build. | `2026-11-09-box-crew/` | Built: sampler and 27 drum voices fitted to the owner's service manuals in two passes and scored against the manuals' tables (86 pass, 19 fail); `REPORT.md` with an addendum of 11 November. The coordinator's log for all three 2026-11-09 crews is here. |
+| Lab Crew | 2026-11-09 | Element classification: synth or sample, mono or poly, FM or analog, reverb, 808 or 909, nearest recreation; separation that runs in the sandbox. | `2026-11-09-lab-crew/` | Done to its first plan: `app/analysis/` with six decisions, confidences and a suggested recreation, `tools/analyze.js`, HT-Demucs as the default separator; scored on the engine's own renders only. `REPORT.md`. |
+| Patch Crew | 2026-11-11 | Classic synths and hardware-style windows: a TB-303, a Minimoog Model D and a Juno-style poly as AudioWorklet instruments, and floating panels drawn after the hardware for those and the drum machines. | `2026-11-11-patch-crew/` | Done: the engine (`tb303`, `modeld`, `juno`; classics-check 110) and five panels (panels-check 116). `DISCUSSION.md` (25 threads), `REPORT.md`. Nobody has listened yet. |
+| Dubplate Crew | 2026-11-11 | Batch 4: import a track, separate and analyse it, build a project from the suggested recreations, save it at once, and A/B it against the original with level match. | `2026-11-11-dubplate-crew/` | Brief written with a frozen interface; D1 (engine), D2 (interface) and D3 (shell separation, render labels) dispatched. |
+| Stem Crew | 2026-11-21 | Research: how commercial tools (iZotope RX and others) analyse and separate audio, every open separation engine and how stems are handled, and a second version of the app's detection engine. | `2026-11-21-stem-crew/` | Done: three transcripts and `REPORT.md`; the plan is `docs/plans/2026-11-21-strategy.md`. |
+| Circuit Crew | 2026-11-21 | Research: the chips and schematics of the five instruments, open emulations and reverse-engineering projects, and the modelling methods the best emulations use. | `2026-11-21-circuit-crew/` | Done: three transcripts and `REPORT.md`; the plan is `docs/plans/2026-11-21-strategy.md`. |
+| Showroom Crew | 2026-11-26 | A page for each instrument that plays in a browser, with step sequencers, a presets engine and pattern save and load, also in the app. | `2026-11-26-showroom-crew/` | Four builders running. |
+| Pressing Crew | 2026-11-26 | Version 0.2: audio export and import, a mixer and a clip view, settings, packaged builds for three platforms; research for 0.3 (VST and AU hosting). | `2026-11-26-pressing-crew/` | Three builders and two researchers running. |
 | Faceplate | 2026-10-23 | How should the Havantechno DAW be laid out, and how does each device get its own look? Ableton Live and Logic Pro as references. | `2026-10-23-faceplate-layout/` | Complete: 12 reports, 12 discussion files, 12 ballots; Strip Bench won and is now the System Editor view. A round-5 follow-up (desktop, floating windows, Step View) is in transcripts/round5-*. See REPORT.md, DISCUSSION.md, VOTE.md and the canvas linked in the report. |
 
 Each group folder holds `BRIEF.md`, `transcripts/` (one file per agent per round), and `REPORT.md` by the coordinator. Faceplate also has `DISCUSSION.md` and `VOTE.md`, the separate transcript of the group's debate and ballot.
@@ -19,7 +28,7 @@ Each group folder holds `BRIEF.md`, `transcripts/` (one file per agent per round
 
 - **Roundtable** is the process: agent teams on several models research in parallel, write every finding to a transcript, read each other, argue in writing, vote or settle disputes by measurement, and the coordinator writes the report.
 - **The Soundsystem** is the whole company of agents across every group, named 2026-10-24 at the owner's request. In dub a sound system is the crew as a whole, from the selectors and the engineer to the box builders, and that is what these agents are to this studio. The coordinator (the Fable session) is its operator.
-- Each group is a **crew** with its own name and roster: Gear Crew, Faceplate, Build Crew, Ear Crew. Inside a crew, agents carry a role id (H1, S3, O2; F-S4; A7; E1) and a model, not a personal name, so a reader can tell which model said what.
+- Each group is a **crew** with its own name and roster: Gear Crew, Faceplate, Build Crew, Ear Crew, Crate Crew, Box Crew, Lab Crew, Patch Crew, Dubplate Crew, Stem Crew, Circuit Crew, Showroom Crew, Pressing Crew. Inside a crew, agents carry a role id (H1, S3, O2; F-S4; A7; E1) and a model, not a personal name, so a reader can tell which model said what.
 - Compilers of the discussion transcripts are "the scribe"; the coordinator appears in every log as "the coordinator".
 
 ## Transcript index
@@ -138,16 +147,44 @@ Every file an agent wrote, as a record. Line counts at the time of this index.
 - `2026-10-24-ear-crew/transcripts/log-A7.md` (299 lines)
 - `2026-10-24-ear-crew/transcripts/log-A8.md` (141 lines)
 - `2026-10-24-ear-crew/transcripts/log-A9.md` (1073 lines)
-- `2026-10-24-ear-crew/transcripts/log-coordinator.md` (158 lines)
+- `2026-10-24-ear-crew/transcripts/log-coordinator.md` (162 lines)
 
-## Rosters
+**`2026-11-09-box-crew/`**
 
-Both groups: five Haiku agents on narrow topics, five Sonnet agents on broader or technical topics, two Opus agents (one on the reasoning, one on the platform or build), coordinated by the Fable session. Ids: H1 to H5, S1 to S5, O1, O2 (Gear Crew) and F-H1 to F-H5, F-S1 to F-S5, F-O1, F-O2 (Faceplate). Each brief lists who covers what.
+- `2026-11-09-box-crew/BRIEF.md` (17 lines)
+- `2026-11-09-box-crew/REPORT.md` (58 lines)
+- `2026-11-09-box-crew/transcripts/B1-sampler.md` (627 lines)
+- `2026-11-09-box-crew/transcripts/B2-808.md` (306 lines)
+- `2026-11-09-box-crew/transcripts/B3-909.md` (365 lines)
+- `2026-11-09-box-crew/transcripts/log-A1.md` (91 lines)
+- `2026-11-09-box-crew/transcripts/log-A12.md` (66 lines)
+- `2026-11-09-box-crew/transcripts/log-A15.md` (73 lines)
+- `2026-11-09-box-crew/transcripts/log-A3.md` (16 lines)
+- `2026-11-09-box-crew/transcripts/log-A4.md` (34 lines)
+- `2026-11-09-box-crew/transcripts/log-A6.md` (13 lines)
+- `2026-11-09-box-crew/transcripts/log-A7.md` (45 lines)
+- `2026-11-09-box-crew/transcripts/log-A9.md` (177 lines)
+- `2026-11-09-box-crew/transcripts/log-coordinator.md` (127 lines)
 
-## Known limits of the sandbox
+**`2026-11-09-crate-crew/`**
 
-Page fetches often fail from the research container (DNS errors, proxy denials), so most "verified" marks rest on search-result excerpts rather than on the page itself. The transcripts say which. Web search has a shared per-turn budget, so late searches in a round can fail; the transcripts list what was not covered.
+- `2026-11-09-crate-crew/BRIEF.md` (18 lines)
+- `2026-11-09-crate-crew/REPORT.md` (42 lines)
+- `2026-11-09-crate-crew/transcripts/C1-electro.md` (97 lines)
+- `2026-11-09-crate-crew/transcripts/C2-minimal.md` (94 lines)
 
-## Note on paths
+**`2026-11-09-lab-crew/`**
 
-On 2026-10-23 the `studio/` folder was moved to `olde Havantechno dub studio/`. Briefs and transcripts written before that refer to `studio/...`; read those paths against the new folder.
+- `2026-11-09-lab-crew/BRIEF.md` (15 lines)
+- `2026-11-09-lab-crew/transcripts/L1-methods.md` (360 lines)
+- `2026-11-09-lab-crew/transcripts/log-L2.md` (31 lines)
+
+**`2026-11-11-patch-crew/`**
+
+- `2026-11-11-patch-crew/BRIEF.md` (39 lines)
+- `2026-11-11-patch-crew/transcripts/P1-303.md` (207 lines)
+- `2026-11-11-patch-crew/transcripts/P2-modeld.md` (399 lines)
+- `2026-11-11-patch-crew/transcripts/P3-juno.md` (275 lines)
+- `2026-11-11-patch-crew/transcripts/log-P4.md` (35 lines)
+- `2026-11-11-patch-crew/transcripts/log-P5.md` (70 lines)
+- `2026-11-11-patch-crew/transcripts/log-coordinator.md` (43 lines)

@@ -4,6 +4,13 @@
  *   Set HAVANTECHNO_URL=http://localhost:8000/app/index.html to load the dev server instead.
  * - One main BrowserWindow. Device windows are real child windows (parent set), opened with
  *   window.open from the main window so that window.opener.HavantechnoBridge works (see app/ui/app.js).
+ * - separate(path, {model}) / cancelSeparate: runs tools/separate.py with the system Python (shell/separation.js), progress on
+ *   'shell:separateProgress'; stems go to <userData>/separation/<name>-<hash>/.
+ * - pickDirectory({title}) grants a folder for writeFile / copyFile (shell/files.js): the page may write only inside folders
+ *   chosen in a dialog during this run and inside <userData>. appVersion() answers app.getVersion().
+ * - Permissions: only the app's own origin (the havantechno://app scheme, or HAVANTECHNO_URL in development) is granted
+ *   'media' (audio only, never video: device labels for the output-device list), 'speaker-selection' (setSinkId) and
+ *   'midi' (no sysex). Everything else, and every other origin, is denied (installPermissions below).
  * - IPC: openFile, saveFile, appDataPath, readAppData, writeAppData, openDeviceWindow,
  *   closeDeviceWindow, setDeviceWindowsVisible. Bounds of the main window and of each device window
  *   are remembered in <userData>/window-state.json. */
@@ -11,9 +18,11 @@
 var electron = require('electron');
 var path = require('path');
 var fs = require('fs');
+var Separation = require('./separation');
+var Files = require('./files');
 
 var app = electron.app, BrowserWindow = electron.BrowserWindow, ipcMain = electron.ipcMain;
-var dialog = electron.dialog, protocol = electron.protocol, screen = electron.screen, Menu = electron.Menu;
+var session = electron.session, dialog = electron.dialog, protocol = electron.protocol, screen = electron.screen, Menu = electron.Menu;
 
 var SCHEME = 'havantechno';
 var APP_DIR = path.resolve(__dirname, '..');
@@ -109,6 +118,27 @@ function registerAppProtocol() {
     } catch (e) {
       return new Response('Not found', { status: 404 });
     }
+  });
+}
+
+// ------------------------------------------------------------------ permissions
+// Granted to the app's own origin and nothing else: 'media' (audio only: enumerateDevices shows device labels once an
+// audio permission exists), 'speaker-selection' (setSinkId, the output device) and 'midi' (not 'midiSysex'). A request
+// for video, or for any other permission or origin, is denied. The check handler answers synchronous queries.
+var ALLOWED_PERMISSIONS = ['media', 'speaker-selection', 'midi'];
+function ownOrigin(url) { return sameOrigin(url); }
+function installPermissions(ses) {
+  ses.setPermissionRequestHandler(function (wc, permission, callback, details) {
+    var url = (details && (details.requestingUrl || details.securityOrigin)) || (wc && wc.getURL && wc.getURL()) || '';
+    var ok = ALLOWED_PERMISSIONS.indexOf(permission) >= 0 && ownOrigin(url);
+    if (ok && permission === 'media' && details && Array.isArray(details.mediaTypes) && details.mediaTypes.indexOf('video') >= 0) ok = false;
+    callback(!!ok);
+  });
+  ses.setPermissionCheckHandler(function (wc, permission, requestingOrigin, details) {
+    var url = requestingOrigin || (details && details.requestingUrl) || '';
+    if (ALLOWED_PERMISSIONS.indexOf(permission) < 0 || !ownOrigin(url)) return false;
+    if (permission === 'media' && details && details.mediaType === 'video') return false;
+    return true;
   });
 }
 
@@ -211,6 +241,27 @@ function appDataFile(name) {
   return path.join(app.getPath('userData'), n);
 }
 
+var separator = null;
+function separateScript() {
+  // Unpackaged: tools/separate.py sits beside app/ in the repository. Packaged: electron-builder's extraResources puts it
+  // at <resources>/tools/separate.py (outside app.asar, so Python can read it).
+  var dev = path.resolve(APP_DIR, '..', 'tools', 'separate.py');
+  var packed = process.resourcesPath ? path.join(process.resourcesPath, 'tools', 'separate.py') : '';
+  if (app.isPackaged) return packed;
+  return fs.existsSync(dev) ? dev : packed;
+}
+function getSeparator() {
+  if (!separator) separator = Separation.createRunner({ userData: app.getPath('userData'), script: separateScript() });
+  return separator;
+}
+
+var fileGuard = null;
+function getGuard() {
+  if (!fileGuard) fileGuard = Files.createGuard({ appData: function () { return app.getPath('userData'); } });
+  return fileGuard;
+}
+function refuse(msg) { return Promise.reject(new Error('[bad-path] ' + msg)); }
+
 function registerIpc() {
   // openFile({filters, binary}) -> {name, path, text} | {name, path, bytes} | null
   ipcMain.handle('shell:openFile', async function (e, opts) {
@@ -251,6 +302,104 @@ function registerIpc() {
       return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
     } catch (err) { return null; }
   });
+  // readText(path, {base}) -> string | null. Same rules as readFile, for text files (.sfz, .txt, .json) up to 4 MiB:
+  // main window only, absolute path or relative to opts.base, null when missing or refused. For SFZ #include files.
+  ipcMain.handle('shell:readText', async function (e, p, opts) {
+    if (!fromMain(e)) return null;
+    try {
+      p = String(p || '');
+      if (!p || p.length > 4096 || p.indexOf('\0') >= 0) return null;
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(p)) return null;
+      var base = opts && typeof opts.base === 'string' && path.isAbsolute(opts.base) ? opts.base : null;
+      var full = path.isAbsolute(p) ? p : (base ? path.resolve(base, p) : null);
+      if (!full || !/\.(sfz|txt|json)$/i.test(full)) return null;
+      var st = await fs.promises.stat(full);
+      if (!st.isFile() || st.size > 4 * 1024 * 1024) return null;
+      return await fs.promises.readFile(full, 'utf8');
+    } catch (err) { return null; }
+  });
+  // openFiles({directory, multiple, filters, binary, title}) -> [{name, path, relativePath, bytes?}] | null
+  // A dialog with openDirectory (walks the chosen folder recursively) or openFile with multiSelections. Only audio
+  // and .sfz files (the extensions readFile accepts), at most 2000 files, depth 8, no dotfiles or symlinks.
+  // relativePath is relative to the chosen folder (the file name for plain file picks). bytes (Uint8Array) only when
+  // binary is true; each file up to 1 GiB, 2 GiB in total. Main window only.
+  var PICK_EXT = /\.(wav|wave|mp3|ogg|oga|opus|flac|m4a|aac|aif|aiff|webm|sfz)$/i;
+  async function walk(dir, root, out, depth) {
+    if (depth > 8 || out.length >= 2000) return;
+    var ents;
+    try { ents = await fs.promises.readdir(dir, { withFileTypes: true }); } catch (e) { return; }
+    ents.sort(function (a, b) { return a.name < b.name ? -1 : 1; });
+    for (var i = 0; i < ents.length && out.length < 2000; i++) {
+      var en = ents[i];
+      if (en.name.charAt(0) === '.') continue;
+      var full = path.join(dir, en.name);
+      if (en.isDirectory()) await walk(full, root, out, depth + 1);
+      else if (en.isFile() && PICK_EXT.test(en.name)) out.push({ name: en.name, path: full, relativePath: path.relative(root, full).split(path.sep).join('/') });
+    }
+  }
+  ipcMain.handle('shell:openFiles', async function (e, opts) {
+    if (!fromMain(e)) return null;
+    opts = opts || {};
+    var props = [opts.directory ? 'openDirectory' : 'openFile'];
+    if (opts.multiple) props.push('multiSelections');
+    var r = await dialog.showOpenDialog(parentFor(e), { properties: props, filters: opts.directory ? undefined : dialogFilters(opts.filters), title: opts.title });
+    if (r.canceled || !r.filePaths.length) return null;
+    var list = [];
+    for (var i = 0; i < r.filePaths.length; i++) {
+      var p = r.filePaths[i];
+      var st = null;
+      try { st = await fs.promises.stat(p); } catch (err) { continue; }
+      if (st.isDirectory()) await walk(p, p, list, 0);
+      else if (st.isFile() && list.length < 2000) list.push({ name: path.basename(p), path: p, relativePath: path.basename(p) });
+    }
+    if (opts.binary) {
+      var total = 0, out = [];
+      for (var j = 0; j < list.length; j++) {
+        try {
+          var s2 = await fs.promises.stat(list[j].path);
+          if (s2.size > 1024 * 1024 * 1024 || total + s2.size > 2 * 1024 * 1024 * 1024) continue;
+          var buf = await fs.promises.readFile(list[j].path);
+          total += buf.length;
+          list[j].bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+          out.push(list[j]);
+        } catch (err2) { /* unreadable: skipped */ }
+      }
+      list = out;
+    }
+    return list;
+  });
+  // separate(path, {model}) -> {stems:[{name, path}], model, log, folder, cached?}; rejects with "[code] message" (see
+  // separation.js). Main window only; one run at a time; progress events go to the caller as 'shell:separateProgress'.
+  ipcMain.handle('shell:separate', function (e, p, opts) {
+    if (!fromMain(e)) return Promise.reject(new Error('[bad-path] Separation can only be started from the main window.'));
+    var sender = e.sender;
+    var model = opts && typeof opts === 'object' ? opts.model : undefined;
+    return getSeparator().separate(p, { model: model }, function (ev) {
+      if (!sender.isDestroyed()) sender.send('shell:separateProgress', ev);
+    });
+  });
+  ipcMain.handle('shell:cancelSeparate', function (e) { return fromMain(e) ? getSeparator().cancel() : false; });
+  // pickDirectory({title}) -> path | null. A folder dialog; the chosen folder is granted for writeFile and copyFile until the app quits.
+  ipcMain.handle('shell:pickDirectory', async function (e, opts) {
+    if (!fromMain(e)) return refuse('Folders can only be chosen from the main window.');
+    opts = opts && typeof opts === 'object' ? opts : {};
+    var r = await dialog.showOpenDialog(parentFor(e), {
+      properties: ['openDirectory', 'createDirectory'], title: typeof opts.title === 'string' ? opts.title.slice(0, 200) : undefined
+    });
+    if (r.canceled || !r.filePaths.length) return null;
+    await getGuard().grant(r.filePaths[0]);
+    return r.filePaths[0];
+  });
+  // writeFile(path, bytes) -> true; copyFile(src, dst) -> true. Main window only; the rules are in shell/files.js.
+  ipcMain.handle('shell:writeFile', function (e, p, data) {
+    if (!fromMain(e)) return refuse('Files can only be written from the main window.');
+    return getGuard().writeFile(p, data);
+  });
+  ipcMain.handle('shell:copyFile', function (e, src, dst) {
+    if (!fromMain(e)) return refuse('Files can only be copied from the main window.');
+    return getGuard().copyFile(src, dst);
+  });
+  ipcMain.on('shell:appVersion', function (e) { e.returnValue = app.getVersion(); });
   ipcMain.handle('shell:appDataPath', function () { return app.getPath('userData'); });
   // Small named files in the app-data folder (autosave, preferences).
   ipcMain.handle('shell:readAppData', async function (e, name) {
@@ -344,10 +493,12 @@ if (!gotLock) {
   app.whenReady().then(function () {
     loadState();
     if (!DEV_URL) registerAppProtocol();
+    installPermissions(session.defaultSession);
     registerIpc();
     buildMenu();
     createMainWindow();
     app.on('activate', function () { if (!BrowserWindow.getAllWindows().length) createMainWindow(); });
   });
+  app.on('before-quit', function () { if (separator) separator.dispose(); });
   app.on('window-all-closed', function () { if (process.platform !== 'darwin') app.quit(); });
 }

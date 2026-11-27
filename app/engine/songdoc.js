@@ -6,7 +6,7 @@
  *   var ed = SongDoc.createEditor(doc); ed.setStepInSection('mainB', 'bass', 2, {vel: 0.6, locks: {cutoff: 900}}); ed.undo();
  *
  * A variant is {bars, cells}: cells has bars*16 entries, each null (rest) or a sparse step record
- *   {vel, acc, len, nudge, note, prob, cond, rep, locks}
+ *   {vel, acc, len, nudge, note, prob, cond, rep, locks, slide}
  * vel 0..1 (default 0.85), acc accent flag, len gate in steps (default: the track gate; melodies: the note length),
  * nudge in steps (-0.5..0.5), note midi (default: the track note / the chord), prob 0..1 (default 1),
  * cond 'a:b' or '!a:b' (play on bar a of every b bars of the section), rep retriggers in the step (default 1),
@@ -15,6 +15,11 @@
  * cell is plain, so song.js stays readable.
  * Samples (wave 2): doc.audio = {bufferId: {name, src, duration, sampleRate, channels}} holds references to audio
  * files, never their bytes; a track with type 'sampler' (inst 'sampler') plays params.buffer. ed.addTrack / removeTrack.
+ * Programs (batch 1): doc.programs = {id: {name, kind, source, global, regions}}, a sampler plays params.program;
+ * audio entries may carry meta (file header) and analysis (pitch). ed.addProgram / removeProgram / setProgram /
+ * setRegion / addRegions / removeRegion.
+ * Import (Dubplate Crew): doc.reference = {audio, gain, offset} (an audio id, linear gain, seconds of the reference at
+ * bar 1 beat 1) and doc.analysis (the import's report, plain JSON) ride along; removeTrack clears an element's track.
  */
 (function () {
   'use strict';
@@ -152,6 +157,23 @@
     else t.params.buffer = String(t.params.buffer);
     return t;
   }
+  // an audio track (Pressing Crew, V1): type 'audio' and inst 'audio' (either marks it), clips [{audio, bar, offset,
+  // length, gain}]: audio a doc.audio id, bar 0-based (fractions allowed), offset and length in seconds of the file
+  // (length 0 = to the end of the file), gain linear. A clip without an audio id is dropped. No variants are played.
+  function isAudioTrack(t) { return !!t && (t.type === 'audio' || t.inst === 'audio'); }
+  function fin(v, d) { v = Number(v); return v === v && isFinite(v) ? v : d; }
+  function normClip(c) {
+    if (!c || typeof c !== 'object' || isArr(c) || c.audio == null || c.audio === '') return null;
+    return { audio: String(c.audio), bar: Math.max(0, fin(c.bar, 0)), offset: Math.max(0, fin(c.offset, 0)), length: Math.max(0, fin(c.length, 0)), gain: Math.max(0, fin(c.gain, 1)) };
+  }
+  function normAudioTrack(t) {
+    if (!isAudioTrack(t)) return t;
+    t.type = 'audio'; t.inst = 'audio';
+    var list = isArr(t.clips) ? t.clips : [], out = [];
+    for (var i = 0; i < list.length; i++) { var c = normClip(list[i]); if (c) out.push(c); }
+    t.clips = out;
+    return t;
+  }
   // doc.audio: {bufferId: {name, src, duration, sampleRate, channels}}, references to audio files, never their bytes
   var AUDIO_KEYS = { name: 'string', src: 'string', duration: 'number', sampleRate: 'number', channels: 'number' };
   function normAudio(a) {
@@ -160,10 +182,51 @@
     for (id in a) if (has(a, id) && a[id] && typeof a[id] === 'object') {
       var e = a[id], o = {};
       for (k in AUDIO_KEYS) if (has(AUDIO_KEYS, k) && typeof e[k] === AUDIO_KEYS[k] && (AUDIO_KEYS[k] !== 'number' || isFinite(e[k]))) o[k] = e[k];
+      // file metadata read from the header before decoding, and the pitch analysis (plain JSON objects; batch 1)
+      if (e.meta && typeof e.meta === 'object' && !isArr(e.meta)) o.meta = clone(e.meta);
+      if (e.analysis && typeof e.analysis === 'object' && !isArr(e.analysis)) o.analysis = clone(e.analysis);
       if (o.name == null) o.name = String(id);
       out[id] = o;
     }
     return out;
+  }
+  // doc.programs: {id: program} (B1 §6). Structure only here: a program is an object with a regions array (at most
+  // 2048 region objects, each with a string `buffer`) and optional name, kind, source, global. Defaults are filled by
+  // Programs.normalize (programs.js) in the Host; SongDoc keeps everything else as plain JSON so nothing is lost.
+  var MAX_REGIONS = 2048;
+  function normRegion(r) {
+    if (!r || typeof r !== 'object' || isArr(r)) return null;
+    var o = clone(r);
+    o.buffer = o.buffer == null ? '' : String(o.buffer);
+    return o;
+  }
+  function normProgram(p, id) {
+    if (!p || typeof p !== 'object' || isArr(p)) return null;
+    var o = clone(p), regs = isArr(p.regions) ? p.regions : [], i;
+    o.name = o.name == null ? String(id) : String(o.name);
+    if (o.kind != null) o.kind = String(o.kind);
+    if (o.global == null || typeof o.global !== 'object' || isArr(o.global)) o.global = {};
+    o.regions = [];
+    for (i = 0; i < regs.length && o.regions.length < MAX_REGIONS; i++) { var r = normRegion(regs[i]); if (r) o.regions.push(r); }
+    return o;
+  }
+  function normPrograms(m) {
+    var out = {}, id;
+    if (!m || typeof m !== 'object' || isArr(m)) return out;
+    for (id in m) if (has(m, id)) { var p = normProgram(m[id], id); if (p) out[id] = p; }
+    return out;
+  }
+  // doc.reference = {audio, gain, offset} (Dubplate Crew): the original audio an import or the owner set, for A/B.
+  // doc.analysis = the import's report (plain JSON, version 1); kept as it is, dropped when it is not an object.
+  function normReference(r) {
+    if (!r || typeof r !== 'object' || isArr(r) || r.audio == null || r.audio === '') return null;
+    var g = Number(r.gain), o = Number(r.offset);
+    return { audio: String(r.audio), gain: g === g && isFinite(g) && g >= 0 ? g : 1, offset: o === o && isFinite(o) ? o : 0 };
+  }
+  function normExtras(d) {
+    if (has(d, 'reference')) { var r = normReference(d.reference); if (r) d.reference = r; else delete d.reference; }
+    if (has(d, 'analysis') && (!d.analysis || typeof d.analysis !== 'object' || isArr(d.analysis))) delete d.analysis;
+    return d;
   }
   function kindOf(t) {
     if (t.kind) return t.kind;
@@ -178,6 +241,7 @@
                 progression: (def.progression || []).slice(), sends: clone(def.sends || {}), tracks: [], sections: clone(def.sections || []) };
     for (var i = 0; i < (def.tracks || []).length; i++) doc.tracks.push(trackFromLegacy(def.tracks[i]));
     if (def.audio) doc.audio = normAudio(def.audio);
+    if (def.programs) doc.programs = normPrograms(def.programs);
     return doc;
   }
   // one legacy track (patterns / melody strings, or variants) -> a document track
@@ -193,7 +257,7 @@
       if (isArr(t.melody) || typeof t.melody === 'string') tr.variants.A = parseMelody(t.melody);
       else for (k in t.melody) if (has(t.melody, k)) tr.variants[k] = parseMelody(t.melody[k]);
     }
-    return normSampler(tr);
+    return normAudioTrack(normSampler(tr));
   }
   // document -> Song.GUIDANCE-style data with readable strings where the variants are plain.
   function toLegacy(doc) {
@@ -206,16 +270,19 @@
       def.tracks.push(t);
     }
     if (doc.audio) def.audio = normAudio(doc.audio);
+    if (doc.programs) def.programs = normPrograms(doc.programs);
     return def;
   }
   function save(doc) {
     var d = clone(doc);
     d.v = 1;
     for (var i = 0; i < d.tracks.length; i++) {
-      normSampler(d.tracks[i]);
+      normSampler(d.tracks[i]); normAudioTrack(d.tracks[i]);
       for (var k in d.tracks[i].variants) if (has(d.tracks[i].variants, k)) d.tracks[i].variants[k] = compact(d.tracks[i].variants[k]);
     }
     if (d.audio != null) d.audio = normAudio(d.audio);
+    if (d.programs != null) d.programs = normPrograms(d.programs);
+    normExtras(d);
     return JSON.stringify(d);
   }
   function load(json) {
@@ -228,10 +295,12 @@
       var vs = tr.variants || {};
       tr.variants = {};
       for (k in vs) if (has(vs, k)) tr.variants[k] = parseVariant(vs[k], tr.kind);
-      normSampler(tr);
+      normSampler(tr); normAudioTrack(tr);
     }
     d.progression = d.progression || []; d.sends = d.sends || {};
     if (d.audio != null) d.audio = normAudio(d.audio);
+    if (d.programs != null) d.programs = normPrograms(d.programs);
+    normExtras(d);
     return d;
   }
 
@@ -328,6 +397,70 @@
       return t;
     };
     // remove a track and every reference to it: section play and fx, duck lists, section set and ramp paths
+    // ---- programs (B1 §7.1): each operation is one undo step; refused operations take none
+    function prog(id) { return ed.doc.programs && has(ed.doc.programs, id) ? ed.doc.programs[id] : null; }
+    function patchInto(obj, patch) { for (var k in patch) if (has(patch, k)) { if (patch[k] == null) delete obj[k]; else obj[k] = clone(patch[k]); } }
+    ed.program = function (id) { return prog(id); };
+    ed.programUsage = function (id) {
+      var out = [];
+      for (var i = 0; i < ed.doc.tracks.length; i++) { var t = ed.doc.tracks[i]; if (isSampler(t) && t.params && t.params.program === id) out.push(t.name); }
+      return out;
+    };
+    ed.addProgram = function (id, program) {
+      id = String(id || '');
+      if (!id || prog(id)) return null;
+      var p = normProgram(program, id); if (!p) return null;
+      snap();
+      ed.doc.programs = ed.doc.programs || {};
+      ed.doc.programs[id] = p;
+      return id;
+    };
+    // refused while a track plays it
+    ed.removeProgram = function (id) {
+      if (!prog(id) || ed.programUsage(id).length) return false;
+      snap();
+      delete ed.doc.programs[id];
+      return true;
+    };
+    // name, kind, source: replaced; global: merged (a null value removes a key)
+    ed.setProgram = function (id, patch) {
+      var p = prog(id); if (!p || !patch || typeof patch !== 'object') return false;
+      snap();
+      for (var k in patch) if (has(patch, k)) {
+        if (k === 'regions') continue;
+        if (k === 'global' && patch.global && typeof patch.global === 'object') patchInto(p.global, patch.global);
+        else if (patch[k] == null) delete p[k];
+        else p[k] = k === 'name' ? String(patch[k]) : clone(patch[k]);
+      }
+      if (!p.name) p.name = String(id);
+      return true;
+    };
+    // merge a patch into one region (a null value removes the field; buffer cannot be removed)
+    ed.setRegion = function (id, index, patch) {
+      var p = prog(id); if (!p || !(index >= 0 && index < p.regions.length) || !patch || typeof patch !== 'object') return null;
+      snap();
+      var r = p.regions[index];
+      patchInto(r, patch);
+      r.buffer = r.buffer == null ? '' : String(r.buffer);
+      return r;
+    };
+    // append regions; returns the index of the first, or -1
+    ed.addRegions = function (id, regions) {
+      var p = prog(id), list = isArr(regions) ? regions : [regions], add = [], i;
+      if (!p) return -1;
+      for (i = 0; i < list.length; i++) { var r = normRegion(list[i]); if (r) add.push(r); }
+      if (!add.length || p.regions.length + add.length > MAX_REGIONS) return -1;
+      snap();
+      var first = p.regions.length;
+      for (i = 0; i < add.length; i++) p.regions.push(add[i]);
+      return first;
+    };
+    ed.removeRegion = function (id, index) {
+      var p = prog(id); if (!p || !(index >= 0 && index < p.regions.length)) return false;
+      snap();
+      p.regions.splice(index, 1);
+      return true;
+    };
     ed.removeTrack = function (name) {
       var i, j, idx = -1;
       for (i = 0; i < ed.doc.tracks.length; i++) if (ed.doc.tracks[i].name === name) idx = i;
@@ -346,7 +479,44 @@
         if (s.set) for (k in s.set) if (has(s.set, k) && k.indexOf(pre) === 0) delete s.set[k];
         if (s.ramp) { var keep = []; for (j = 0; j < s.ramp.length; j++) if (String(s.ramp[j].param).indexOf(pre) !== 0) keep.push(s.ramp[j]); s.ramp = keep; }
       }
+      var an = ed.doc.analysis;                     // an imported element whose track goes keeps its report, no track
+      if (an && isArr(an.elements)) for (i = 0; i < an.elements.length; i++) if (an.elements[i] && an.elements[i].track === name) an.elements[i].track = null;
       return true;
+    };
+    // ---- audio track clips (Pressing Crew, V1): each operation is one undo step; refused ones take none
+    function audioTrack(name) { var t = ed.track(name); return isAudioTrack(t) ? t : null; }
+    function clipAt(name, index) { var t = audioTrack(name); return t && t.clips && index >= 0 && index < t.clips.length ? t.clips[index] : null; }
+    // add a clip {audio, bar, offset, length, gain}; returns its index or -1
+    ed.addClip = function (track, clip) {
+      var t = audioTrack(track), c = normClip(clip); if (!t || !c) return -1;
+      snap();
+      t.clips = t.clips || [];
+      t.clips.push(c);
+      return t.clips.length - 1;
+    };
+    // move a clip to another bar (0-based, fractions allowed)
+    ed.moveClip = function (track, index, bar) {
+      var c = clipAt(track, index), b = Number(bar); if (!c || !(b >= 0) || !isFinite(b)) return false;
+      snap(); c.bar = b; return true;
+    };
+    // trim: {offset, length} (seconds of the file) and, for a trim at the left edge, the new {bar}, in one step
+    ed.trimClip = function (track, index, patch) {
+      var c = clipAt(track, index); if (!c || !patch || typeof patch !== 'object') return false;
+      var n = { bar: c.bar, offset: c.offset, length: c.length }, k;
+      for (k in n) if (has(patch, k) && patch[k] != null) { var v = Number(patch[k]); if (!(v >= 0) || !isFinite(v)) return false; n[k] = v; }
+      snap(); c.bar = n.bar; c.offset = n.offset; c.length = n.length; return true;
+    };
+    // any clip field (audio, bar, offset, length, gain), validated as on load
+    ed.setClip = function (track, index, patch) {
+      var c = clipAt(track, index); if (!c || !patch || typeof patch !== 'object') return false;
+      var m = {}, k; for (k in c) if (has(c, k)) m[k] = c[k];
+      for (k in patch) if (has(patch, k) && has(m, k)) m[k] = patch[k];
+      var n = normClip(m); if (!n) return false;
+      snap(); for (k in n) if (has(n, k)) c[k] = n[k]; return true;
+    };
+    ed.removeClip = function (track, index) {
+      var t = audioTrack(track); if (!clipAt(track, index)) return false;
+      snap(); t.clips.splice(index, 1); return true;
     };
     ed.canUndo = function () { return ed._undo.length > 0; };
     ed.canRedo = function () { return ed._redo.length > 0; };
@@ -357,5 +527,5 @@
 
   root.SongDoc = { STEPS: STEPS, parsePattern: parsePattern, parseMelody: parseMelody, parseVariant: parseVariant, formatVariant: formatVariant,
                    emptyVariant: emptyVariant, fromLegacy: fromLegacy,
-                   isSampler: isSampler, normAudio: normAudio, toLegacy: toLegacy, save: save, load: load, createEditor: createEditor };
+                   isSampler: isSampler, isAudioTrack: isAudioTrack, normClip: normClip, normAudio: normAudio, normPrograms: normPrograms, MAX_REGIONS: MAX_REGIONS, toLegacy: toLegacy, save: save, load: load, createEditor: createEditor };
 })();

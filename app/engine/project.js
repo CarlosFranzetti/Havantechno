@@ -11,6 +11,8 @@
  * the shell hooks are called only when present: saveFile, openFile, appDataPath, writeAppData, readAppData.
  * Audio files (sampler) are referenced in doc.audio, never embedded: Project.open({shell, host}) loads the song into the
  * Host and waits while it reloads them (HavantechnoShell.readFile for paths, fetch for URLs); unreadable ones are missing.
+ * Sampler programs (doc.programs) reload with their region samples; Project.missing(host) lists what is still missing.
+ * Project.importTrack({file, stems, shell, host, onProgress}) makes a project from an audio file (Dubplate Crew).
  */
 (function () {
   'use strict';
@@ -136,6 +138,7 @@
       var doc = parse(text);
       var host = o.host;
       if (!host || typeof host.loadDocument !== 'function') return doc;
+      if (filePath) lastBase = dirName(filePath);
       host.loadDocument(doc, { shell: sh, base: dirName(filePath) });
       var ready = typeof host.audioReady === 'function' ? host.audioReady() : Promise.resolve(null);
       return ready.then(function () { return host.document(); }, function () { return host.document(); });
@@ -154,6 +157,315 @@
       });
     }
     try { return webPick('audio/*,' + AUDIO_EXT.map(function (e) { return '.' + e; }).join(','), true); } catch (e) { return Promise.reject(e); }
+  }
+
+  // pick several files or a whole folder (A4: "Sampler track from folder...", "Import SFZ..."). o: {shell, directory,
+  // multiple, accept}. The web resolves [File] (folder picks carry webkitRelativePath); Electron resolves the shell's
+  // [{name, path, bytes, relativePath}] through HavantechnoShell.openFiles({directory, multiple, filters, binary}) when
+  // A6 provides it, else openFile({multiple, directory, ...}) if that returns an array, else one file. null on cancel.
+  function pickFiles(o) {
+    o = o || {};
+    var sh = shellOf(o), acc = o.accept || null;
+    var exts = acc ? acc.split(',').map(function (x) { return x.trim().replace(/^\./, ''); }).filter(function (x) { return x && x.indexOf('/') < 0; }) : null;
+    var filters = exts && exts.length ? [{ name: 'Files', extensions: exts }] : undefined;
+    function norm(r) {
+      if (r == null || r === false || (r && r.canceled)) return null;
+      if (Object.prototype.toString.call(r) === '[object Array]') return r.length ? r : null;
+      if (r.files && r.files.length) return r.files;
+      return [r];
+    }
+    if (fn(sh, 'openFiles')) return asPromise(sh.openFiles({ directory: !!o.directory, multiple: o.multiple !== false, filters: filters, binary: true })).then(norm);
+    if (fn(sh, 'openFile')) return asPromise(sh.openFile({ directory: !!o.directory, multiple: o.multiple !== false, filters: filters, binary: true })).then(norm);
+    return new Promise(function (resolve, reject) {
+      var d = root.document;
+      if (!d || !d.createElement) { reject(new Error('Project: no way to pick files here')); return; }
+      var input = d.createElement('input'), done = false;
+      input.type = 'file'; input.style.display = 'none';
+      if (o.multiple !== false) input.multiple = true;
+      if (o.directory) { input.webkitdirectory = true; try { input.setAttribute && input.setAttribute('webkitdirectory', ''); } catch (e) {} }
+      if (acc) input.accept = acc;
+      function finish(v) { if (done) return; done = true; try { if (input.parentNode) input.parentNode.removeChild(input); } catch (e) {} resolve(v); }
+      input.addEventListener('change', function () {
+        var fl = input.files, out = [];
+        for (var i = 0; fl && i < fl.length; i++) out.push(fl[i]);
+        finish(out.length ? out : null);
+      });
+      input.addEventListener('cancel', function () { finish(null); });
+      (d.body || d.documentElement).appendChild(input);
+      input.click();
+    });
+  }
+  // pick an .sfz (or a folder holding one) and import it into the host with its samples and #include files
+  function importProgram(o) {
+    o = o || {};
+    var host = o.host;
+    if (!host || typeof host.importProgram !== 'function') return Promise.reject(new Error('Project.importProgram: a host is required'));
+    var sh = shellOf(o);
+    var pick = o.files ? Promise.resolve(o.files) : (fn(sh, 'openFile') && !o.directory
+      ? asPromise(sh.openFile({ filters: [{ name: 'SFZ', extensions: ['sfz'] }] })).then(function (r) { return (r == null || r === false || r.canceled) ? null : [r]; })
+      : pickFiles({ shell: sh, directory: o.directory !== false, multiple: true }));
+    return pick.then(function (list) {
+      if (!list || !list.length) return null;
+      // the root .sfz: the least deep one (included files usually sit in subfolders), then by name
+      var sfz = null, best = null;
+      for (var i = 0; i < list.length; i++) {
+        var rp = String(list[i].webkitRelativePath || list[i].relativePath || list[i].path || list[i].name);
+        if (!/\.sfz$/i.test(rp)) continue;
+        var depth = rp.split(/[\\/]/).length;
+        if (!sfz || depth < best.d || (depth === best.d && rp < best.p)) { sfz = list[i]; best = { d: depth, p: rp }; }
+      }
+      if (!sfz) throw new Error('Project.importProgram: no .sfz file in the selection');
+      var io = { shell: sh, id: o.id, base: o.base };
+      if (list.length > 1) io.files = list;
+      return host.importProgram(sfz, io);
+    });
+  }
+
+  // what a loaded project could not find (batch 1): audio entries without a buffer, with who uses them, and the programs
+  // with silent regions. Programs reload with the project through their region samples, which are doc.audio entries.
+  function missing(host) {
+    var out = { audio: [], programs: [] };
+    if (!host) return out;
+    try {
+      (host.audio ? host.audio() : []).forEach(function (a) { if (a.missing) out.audio.push({ id: a.id, name: a.name, src: a.src, usedBy: a.usedBy }); });
+      (host.programs ? host.programs() : []).forEach(function (p) { if (p.missing) out.programs.push({ id: p.id, name: p.name, missing: p.missing, regions: p.regions }); });
+    } catch (e) {}
+    return out;
+  }
+
+  // ------------------------------------------------------------ import a track (Dubplate Crew, D1)
+  // o: {file, stems, shell, host, onProgress, signal, name, model, matchLevel, maxSeconds (the classifier's excerpt,
+  // default 30)}. signal (an AbortSignal) is checked between stages and right before the save; when aborted the call
+  // rejects with an error named 'AbortError', saves nothing, calls HavantechnoShell.cancelSeparate() during a
+  // separation, and the host gets back the document it had (as on any other failure). file: as host.loadAudio takes (a File, the
+  // shell's {name, path, bytes}, bytes, a URL). stems: [{name, source}] or [File] (names read from the file names:
+  // drums, bass, other, vocals). Without stems, Electron's HavantechnoShell.separate(path) splits the file when the
+  // shell has it; else the analysis reads the mix in bands. Then: a new document, the file as its reference (offset =
+  // the first downbeat), host.analyze, a level match over at most 32 bars (o.matchLevel !== false and the context can
+  // render), and Project.save at once. Resolves {doc, saved: {name, path?} | null (cancelled), analysis, level}.
+  var STEM_RE = /(drums|bass|other|vocals)/i;
+  function stemName(src, i) {
+    var n = String((src && (src.name || src.path)) || '').split(/[\\/]/).pop().toLowerCase(), m = n.match(STEM_RE);
+    return m ? m[1].toLowerCase() : (n.replace(/\.[a-z0-9]{1,5}$/, '').replace(/[^a-z0-9_-]+/g, '_') || 'stem' + (i + 1));
+  }
+  function importTrack(o) {
+    o = o || {};
+    var host = o.host, sh = shellOf(o), file = o.file;
+    if (!host || typeof host.analyze !== 'function' || typeof host.loadAudio !== 'function') return Promise.reject(new Error('Project.importTrack: a host is required'));
+    if (!file) return Promise.reject(new Error('Project.importTrack: no file'));
+    var progWarned = false, sig = o.signal || null;
+    function prog(stage, done, total, note) {
+      if (typeof o.onProgress !== 'function') return;
+      try { o.onProgress({ stage: stage, done: done, total: total, note: note }); }
+      catch (e) { if (!progWarned) { progWarned = true; warn('importTrack: onProgress threw (' + (e && e.message) + '); further throws are not logged'); } }
+    }
+    function aborted() { return !!(sig && sig.aborted); }
+    function abortError() { var e = new Error('Project.importTrack: cancelled'); e.name = 'AbortError'; return e; }
+    function gate(v) { if (aborted()) throw abortError(); return v; }
+    if (aborted()) return Promise.reject(abortError());
+    var fname = String(file.name || (typeof file === 'string' ? file : '') || file.path || 'import').split(/[\\/]/).pop();
+    var name = o.name || fname.replace(/\.[A-Za-z0-9]{1,5}$/, '') || 'import';
+    var doc = { v: 1, name: name, bpm: 120, swing: 0, key: null, progression: [], sends: {}, tracks: [], sections: [{ name: 'import', bars: 1, play: {} }] };
+    var refId = null, separator = null, unverified = [], analysis = null, level = null;
+    // the document the host had: put back when the import is cancelled or fails, so nothing of a half import remains
+    var before = null;
+    try { before = SD().save(host.document()); } catch (e) { before = null; }
+    function restoreHost() { if (before == null) return; try { host.loadDocument(before); } catch (e) { warn('importTrack: could not restore the previous document: ' + (e && e.message)); } }
+    try { host.loadDocument(doc); } catch (e) { return Promise.reject(e); }
+    prog('decode', 0, 1, fname);
+    return host.loadAudio(file, { analyze: false }).then(function (id) {
+      gate();
+      refId = id;
+      prog('decode', 1, 1, fname);
+      if (o.stems && o.stems.length) {
+        return o.stems.map(function (s, i) {
+          if (s && s.source != null) return { name: String(s.name || stemName(s.source, i)).toLowerCase(), source: s.source };
+          return { name: stemName(s, i), source: s };
+        });
+      }
+      var path = file && typeof file === 'object' ? (file.path || (sh && typeof sh.pathForFile === 'function' ? (function () { try { return sh.pathForFile(file); } catch (e) { return null; } })() : null)) : null;
+      if (!fn(sh, 'separate') || !path) {
+        if (fn(sh, 'separate') && !path) unverified.push('separation needs the file\'s path: the analysis read the mix');
+        return null;
+      }
+      prog('separate', 0, 1, 'separating ' + fname);
+      var off = null, onAbort = null;
+      if (sig && typeof sig.addEventListener === 'function' && fn(sh, 'cancelSeparate')) { onAbort = function () { try { sh.cancelSeparate(); } catch (e) {} }; sig.addEventListener('abort', onAbort); }
+      var unhook = function () { if (onAbort) { try { sig.removeEventListener('abort', onAbort); } catch (e) {} onAbort = null; } };
+      if (fn(sh, 'onSeparateProgress')) { try { off = sh.onSeparateProgress(function (p) { p = p || {}; prog('separate', p.done == null ? 0 : p.done, p.total == null ? 1 : p.total, p.note || p.message || ''); }); } catch (e) { off = null; } }
+      return asPromise(sh.separate(path, { model: o.model })).then(function (r) {
+        if (typeof off === 'function') { try { off(); } catch (e) {} }
+        unhook(); gate();
+        var list = (r && r.stems) || [];
+        separator = { model: (r && r.model) || o.model || null, stems: list.map(function (s) { return s.name; }), log: String((r && r.log) || '').slice(-4000) };
+        prog('separate', 1, 1, list.length + ' stems');
+        return Promise.all(list.map(function (s, i) {
+          if (!fn(sh, 'readFile')) return null;
+          return asPromise(sh.readFile(s.path, {})).then(function (bytes) {
+            return bytes ? { name: String(s.name || stemName(s, i)).toLowerCase(), source: { name: String(s.path).split(/[\\/]/).pop(), path: s.path, bytes: bytes } } : null;
+          }, function () { return null; });
+        })).then(function (st) { return st.filter(Boolean); });
+      }, function (e) {
+        if (typeof off === 'function') { try { off(); } catch (x) {} }
+        unhook(); gate();
+        separator = { error: String((e && e.message) || e) };
+        unverified.push('separation failed (' + separator.error + '): the analysis read the mix');
+        return null;
+      });
+    }).then(function (stems) {
+      gate();
+      var list = stems && stems.length ? stems : [{ name: 'mix', id: refId }];
+      var b = host.buffer(refId);
+      return host.analyze(list, { onProgress: o.onProgress, separator: separator, unverified: unverified, maxSeconds: o.maxSeconds,
+                                 source: { name: fname, duration: b ? b.duration : null, sampleRate: b ? b.sampleRate : null }, signal: sig });
+    }).then(function (an) {
+      gate();
+      analysis = an;
+      return host.setReference(refId, { gain: 1, offset: an.bpm.offset });
+    }).then(function () {
+      gate();
+      if (o.matchLevel === false || typeof host.matchLevel !== 'function') return null;
+      prog('build', 0, 1, 'level match');
+      return host.matchLevel({ maxBars: 32 }).then(function (r) { level = r; prog('build', 1, 1, r ? 'level match ' + r.gainDb + ' dB' : 'level match not available'); }, function (e) { warn('importTrack: level match failed: ' + (e && e.message)); });
+    }).then(function () {
+      gate();                                             // the last check: nothing is written after a cancel
+      prog('save', 0, 1, name);
+      return save(host.document(), { shell: sh, name: name });
+    }).then(function (saved) {
+      prog('save', 1, 1, saved ? saved.name : 'not saved');
+      return { doc: host.document(), saved: saved, analysis: analysis, level: level };
+    }, function (e) {
+      restoreHost();
+      throw e;
+    });
+  }
+
+  // ------------------------------------------------------------ audio export and project bundles (Pressing Crew, V1)
+  var BUNDLE_FILE = 'project' + EXT, lastBase = null;
+  function join(sh, dir, name) {
+    if (fn(sh, 'joinPath')) { try { return sh.joinPath(dir, name); } catch (e) {} }
+    var sep = String(dir).indexOf('\\') >= 0 && String(dir).indexOf('/') < 0 ? '\\' : '/';
+    return String(dir).replace(/[\\/]+$/, '') + sep + name;
+  }
+  function isAbsPath(p) { return /^(\/|[A-Za-z]:[\\/]|\\\\)/.test(String(p || '')); }
+  function download(name, bytes, type) {
+    var d = root.document;
+    if (!d || !d.createElement || typeof root.Blob !== 'function' || !root.URL || !root.URL.createObjectURL) throw new Error('Project: no way to save here');
+    var url = root.URL.createObjectURL(new root.Blob([bytes], { type: type || 'audio/wav' }));
+    var a = d.createElement('a');
+    a.href = url; a.download = name; a.style.display = 'none';
+    (d.body || d.documentElement).appendChild(a);
+    a.click();
+    setTimeout(function () { try { a.parentNode.removeChild(a); root.URL.revokeObjectURL(url); } catch (e) {} }, 4000);
+  }
+  function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  // o: {host, shell, ...host.exportAudio options}. Electron (pickDirectory + writeFile): the folder is chosen first,
+  // then each file is written as soon as it is encoded and its bytes dropped. Web: one download per file, 400 ms apart.
+  // Chromium asks once, at the second file, whether the page may download several files; if the user blocks it the
+  // other files are not saved (each still resolves in the list, path-less). Resolves [{name, path?}], null on cancel.
+  function exportAudio(o) {
+    o = o || {};
+    var host = o.host, sh = shellOf(o);
+    if (!host || typeof host.exportAudio !== 'function') return Promise.reject(new Error('Project.exportAudio: a host with exportAudio is required'));
+    var electron = fn(sh, 'pickDirectory') && fn(sh, 'writeFile');
+    var dirP = electron ? asPromise(sh.pickDirectory({ title: 'Export audio to a folder' })) : Promise.resolve(null);
+    return dirP.then(function (dir) {
+      if (electron && !dir) return null;
+      var written = [], opts = {}, k, user = o.onFile, n = 0;
+      for (k in o) if (Object.prototype.hasOwnProperty.call(o, k) && k !== 'host' && k !== 'shell') opts[k] = o[k];
+      opts.onFile = function (f) {
+        var p;
+        if (electron) {
+          var path = join(sh, dir, f.name);
+          p = asPromise(sh.writeFile(path, f.bytes)).then(function () { written.push({ name: f.name, path: path }); });
+        } else {
+          p = (n++ ? pause(400) : Promise.resolve()).then(function () { download(f.name, f.bytes); written.push({ name: f.name }); });
+        }
+        return p.then(function () { return typeof user === 'function' ? user(f) : null; }).then(function () { f.bytes = null; });
+      };
+      return host.exportAudio(opts).then(function () { return written; });
+    });
+  }
+  function uniqueName(name, used) {
+    var m = /^(.*?)(\.[A-Za-z0-9]{1,5})?$/.exec(String(name || 'audio').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_') || 'audio'), b = m[1] || 'audio', x = m[2] || '', n = b + x, i = 2;
+    while (used[n.toLowerCase()]) n = b + '_' + (i++) + x;
+    used[n.toLowerCase()] = true;
+    return n;
+  }
+  // Electron: a project folder (chosen with pickDirectory) holding project.havantechno.json and audio/ with every file
+  // of doc.audio copied in (copyFile from its path, absolute or relative to o.base / the folder the project was opened
+  // from; a file with no readable path is written as a 32-bit float WAV of its decoded audio), the bundle's document
+  // pointing at audio/<file>, so the folder opens on another machine. audio/ needs HavantechnoShell.makeDirectory; without
+  // it the files go beside the document. The live document is not changed. Web: the document alone through save(); the
+  // audio is relinked by file name when the files are added again (the existing flow). Resolves {path, dir, files,
+  // missing, flat} (web: {path: null, name, missing}), null on cancel.
+  function saveBundle(o) {
+    o = o || {};
+    var host = o.host, sh = shellOf(o);
+    if (!host || typeof host.document !== 'function') return Promise.reject(new Error('Project.saveBundle: a host is required'));
+    var doc = JSON.parse(JSON.stringify(host.document())), audio = doc.audio || {}, ids = Object.keys(audio);
+    if (!(fn(sh, 'pickDirectory') && fn(sh, 'writeFile'))) {
+      return save(doc, { shell: sh, name: o.name }).then(function (r) { return r ? { path: (r && r.path) || null, name: r.name, missing: ids, web: true } : null; });
+    }
+    var base = o.base || lastBase;
+    return asPromise(sh.pickDirectory({ title: 'Choose the project folder' })).then(function (dir) {
+      if (!dir) return null;
+      var sub = join(sh, dir, 'audio'), flat = !fn(sh, 'makeDirectory');
+      var mk = flat ? Promise.resolve(false) : asPromise(sh.makeDirectory(sub)).then(function () { return true; }, function () { return false; });
+      return mk.then(function (made) {
+        flat = !made;
+        var used = {}, files = [], missing = [], chain = Promise.resolve();
+        used[BUNDLE_FILE.toLowerCase()] = true;
+        ids.forEach(function (id) {
+          chain = chain.then(function () {
+            var e = audio[id], src = String(e.src || ''), from = isAbsPath(src) ? src : (base && src && !/^[a-z][a-z0-9+.-]*:/i.test(src) ? join(sh, base, src) : null);
+            var fname = uniqueName(e.name || String(src).split(/[\\/]/).pop() || id, used), dst = join(sh, flat ? dir : sub, fname), rel = flat ? fname : 'audio/' + fname;
+            var buf = typeof host.buffer === 'function' ? host.buffer(id) : null;
+            function asWav() {
+              if (!buf || typeof host.wav !== 'function') { missing.push(id); return null; }
+              var wname = /\.wav$/i.test(fname) ? fname : fname.replace(/\.[A-Za-z0-9]{1,5}$/, '') + '.wav';
+              if (wname !== fname) { delete used[fname.toLowerCase()]; wname = uniqueName(wname, used); }
+              var wdst = join(sh, flat ? dir : sub, wname);
+              return asPromise(sh.writeFile(wdst, host.wav(buf, { bitDepth: 32 }))).then(function () {
+                e.src = flat ? wname : 'audio/' + wname; files.push({ id: id, path: wdst, how: 'decoded' });
+              }, function () { missing.push(id); });
+            }
+            if (from && fn(sh, 'copyFile')) {
+              return asPromise(sh.copyFile(from, dst)).then(function () { e.src = rel; files.push({ id: id, path: dst, how: 'copied' }); }, asWav);
+            }
+            return asWav();
+          });
+        });
+        return chain.then(function () {
+          var path = join(sh, dir, BUNDLE_FILE);
+          return asPromise(sh.writeFile(path, serialize(doc))).then(function () {
+            lastBase = dir;
+            return { path: path, dir: dir, files: files, missing: missing, flat: flat };
+          });
+        });
+      });
+    });
+  }
+  // Electron: a folder chosen with pickDirectory, its project.havantechno.json read with readText and loaded into
+  // o.host with the folder as the base for audio/ paths; when the folder has no such file (or the shell cannot read
+  // it) the open dialog is shown instead (open()). Web: open() (the document; missing audio relinks by name).
+  // Resolves the document (after the host's audio reload when o.host is given), null on cancel.
+  function openBundle(o) {
+    o = o || {};
+    var sh = shellOf(o);
+    if (!(fn(sh, 'pickDirectory') && fn(sh, 'readText'))) return open(o);
+    return asPromise(sh.pickDirectory({ title: 'Open a project folder' })).then(function (dir) {
+      if (!dir) return null;
+      return asPromise(sh.readText(join(sh, dir, BUNDLE_FILE), {})).then(null, function () { return null; }).then(function (text) {
+        if (text == null) return open(o);
+        var doc = parse(text), host = o.host;
+        lastBase = dir;
+        if (!host || typeof host.loadDocument !== 'function') return doc;
+        host.loadDocument(doc, { shell: sh, base: dir });
+        var ready = typeof host.audioReady === 'function' ? host.audioReady() : Promise.resolve(null);
+        return ready.then(function () { return host.document(); }, function () { return host.document(); });
+      });
+    });
   }
 
   // ------------------------------------------------------------ autosave
@@ -194,7 +506,7 @@
     try { return asPromise(sh.appDataPath()).then(function (p) { return p || null; }, function () { return null; }); } catch (e) { return Promise.resolve(null); }
   }
 
-  root.Project = { serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, autosave: autosave, restore: restore,
+  root.Project = { exportAudio: exportAudio, saveBundle: saveBundle, openBundle: openBundle, BUNDLE_FILE: BUNDLE_FILE, serialize: serialize, parse: parse, savedAt: savedAt, save: save, open: open, pickAudio: pickAudio, pickFiles: pickFiles, importProgram: importProgram, importTrack: importTrack, missing: missing, autosave: autosave, restore: restore,
                    restoreAsync: restoreAsync, clearAutosave: clearAutosave, appDataPath: appDataPath, fileName: fileName,
                    EXT: EXT, AUTOSAVE_KEY: AUTOSAVE_KEY, FORMAT: FORMAT };
 })();

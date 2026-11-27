@@ -128,7 +128,8 @@
     '.se-status{color:var(--dim,#8a8f99);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}',
     '.se-thr{padding:0 8px;color:var(--dim,#8a8f99);font-size:10px;opacity:.7}',
     '.se-body.se-drop{outline:2px dashed var(--fam-ink,var(--on,#e6e8ec));outline-offset:-2px;background:var(--panel-raised,#1d2027)}',
-    '.se-menu{position:fixed;z-index:20;min-width:200px;display:flex;flex-direction:column;padding:4px;background:var(--panel-raised,#1d2027);border:1px solid var(--line,#262a32);border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.4)}',
+    '.se-menu{position:fixed;z-index:100000;min-width:200px;display:flex;flex-direction:column;padding:4px;background:var(--panel-raised,#1d2027);border:1px solid var(--line,#262a32);border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.4)}',
+    '.se-menu{max-height:70vh;overflow-y:auto}',
     '.se-menuitem{height:28px;padding:0 10px;border:0;background:transparent;color:var(--fg,#e6e8ec);font:inherit;text-align:left;cursor:pointer;border-radius:3px}',
     '.se-menuitem:hover,.se-menuitem:focus{background:var(--line,#262a32)}',
     '.se-menuitem[disabled]{opacity:.4;cursor:default}',
@@ -488,7 +489,7 @@
 
       on(row, 'click', function () { select(name); });
       on(row, 'contextmenu', function (e) {      // a sampler row: "Remove track"
-        if (!isSampler(name)) return;
+        if (!isRemovable(name)) return;
         if (e && e.preventDefault) e.preventDefault();
         select(name);
         openMenu([{ label: 'Remove track \u201c' + name + '\u201d', run: function () { removeSampler(name); } }], (e && e.clientX) || 0, (e && e.clientY) || 0, null);
@@ -680,6 +681,160 @@
       })(list[i]);
       return Promise.all(out);
     }
+    // ---- programs: several audio files or a folder -> one sampler track with an auto-mapped program; an .sfz -> imported program
+    function enqueue(fn) { S.addChain = S.addChain.then(fn); return S.addChain; }
+    function afterAdd(label, p) {
+      return Promise.resolve().then(p).then(function (track) {
+        setStatus('Added sampler track ' + track + ' (' + label + ').');
+        if (!disposed && track) select(track);
+        return track;
+      }, function (err) {
+        setStatus('Could not add ' + label + ': ' + ((err && err.message) || err));
+        return null;
+      });
+    }
+    function trackOpts(extra) {
+      var o = { family: 'drums', pattern: EMPTY_PATTERN }, k;
+      if (extra) for (k in extra) if (has(extra, k)) o[k] = extra[k];
+      return o;
+    }
+    // audio items [{file, rel}]: a folder map {relativePath: File} when any path has a folder, else a plain file list
+    function addMappedKit(audio, rootName) {
+      if (!isFn(host.addSampler)) { setStatus('This host cannot add sampler tracks.'); return Promise.resolve(null); }
+      var nested = audio.some(function (a) { return String(a.rel).indexOf('/') >= 0; }), src, k;
+      if (nested) { src = {}; audio.forEach(function (a) { src[a.rel] = a.file; }); } else src = audio.map(function (a) { return a.file; });
+      var label = (rootName || audio.length + ' files');
+      setStatus('Mapping ' + label + '...');
+      return afterAdd(label, function () { return host.addSampler(src, trackOpts(rootName ? { name: rootName } : null)); });
+    }
+    function importSfz(sfz, items) {
+      if (!isFn(host.importProgram) || !isFn(host.addSampler)) { setStatus('This host cannot import SFZ programs.'); return Promise.resolve(null); }
+      var files = {}, nm = nameOfSource(sfz.file);
+      items.forEach(function (it) { if (it !== sfz) files[it.rel] = it.file; });
+      setStatus('Importing ' + nm + '...');
+      var warn = '';
+      return afterAdd(nm, function () {
+        return host.importProgram(sfz.file, { files: files, path: sfz.rel }).then(function (r) {
+          var w = (r && r.warnings && r.warnings.length) || 0, m = (r && r.missing && r.missing.length) || 0;
+          warn = (m ? m + ' sample(s) missing' : '') + (m && w ? ', ' : '') + (w ? w + ' warning(s)' : '');
+          return host.addSampler(null, trackOpts({ program: r.id, name: stripExt(nm) }));
+        });
+      }).then(function (track) { if (track && warn) setStatus('Added sampler track ' + track + ' from ' + nm + ' (' + warn + ').'); return track; });
+    }
+    // items: [{file, rel}] from a drop or a picker; rootName: the dropped or picked folder's name, or null
+    function handleItems(items, rootName) {
+      var sfz = items.filter(function (it) { return /\.sfz$/i.test(it.rel); })[0];
+      if (sfz) { enqueue(function () { return importSfz(sfz, items); }); return; }
+      var audio = items.filter(function (it) { return isAudioFile(it.file); });
+      if (!audio.length) { setStatus('No audio files in that drop.'); return; }
+      if (audio.length < items.length) setStatus('Skipped ' + (items.length - audio.length) + ' file(s) that are not audio.');
+      if (audio.length === 1 && !rootName) { addFiles([audio[0].file]); return; }       // one file: a plain sampler, as before
+      enqueue(function () { return addMappedKit(audio, rootName); });
+    }
+    function readAllEntries(reader) {
+      return new Promise(function (resolve) {
+        var all = [];
+        (function more() { reader.readEntries(function (b) { if (!b || !b.length) resolve(all); else { all = all.concat(Array.prototype.slice.call(b)); more(); } }, function () { resolve(all); }); })();
+      });
+    }
+    function walkEntry(entry, out) {
+      var rel = String(entry.fullPath || entry.name || '').replace(/^\/+/, '');
+      if (entry.isFile) return new Promise(function (resolve) { entry.file(function (f) { out.push({ file: f, rel: rel || f.name }); resolve(); }, function () { resolve(); }); });
+      if (entry.isDirectory) return readAllEntries(entry.createReader()).then(function (list) { return Promise.all(list.map(function (c) { return walkEntry(c, out); })); });
+      return Promise.resolve();
+    }
+    // a drop: folders are walked through webkitGetAsEntry (taken now: the items die after the event); else the plain file list
+    function collectDropped(dt) {
+      var entries = [], items = dt.items, i, e, hasDir = false, tops = [];
+      if (items && items.length) for (i = 0; i < items.length; i++) {
+        e = (items[i] && isFn(items[i].webkitGetAsEntry)) ? items[i].webkitGetAsEntry() : null;
+        if (e) { entries.push(e); if (e.isDirectory) { hasDir = true; tops.push(e); } }
+      }
+      if (!hasDir) return Promise.resolve({ items: Array.prototype.slice.call(dt.files || []).map(function (f) { return { file: f, rel: f.name }; }), root: null });
+      var out = [];
+      return Promise.all(entries.map(function (en) { return walkEntry(en, out); })).then(function () {
+        return { items: out, root: tops.length === 1 && entries.length === 1 ? tops[0].name : null };
+      });
+    }
+    // a picker for several files or a folder: Project.pickFiles({directory, multiple, accept}) when A1 adds it, else an <input>
+    function pickFiles(o) {
+      var P = root.Project;
+      if (P && isFn(P.pickFiles)) return Promise.resolve(P.pickFiles({ shell: root.HavantechnoShell || null, directory: !!o.directory, multiple: true, accept: o.accept }));
+      return new Promise(function (resolve, reject) {
+        if (!doc || !doc.createElement) { reject(new Error('no way to open files here')); return; }
+        var input = doc.createElement('input'), done = false;
+        input.type = 'file'; input.multiple = true; if (o.accept) input.accept = o.accept; if (o.directory) { input.webkitdirectory = true; attr(input, 'webkitdirectory', ''); }
+        input.style.display = 'none';
+        var fin = function (v) { if (done) return; done = true; try { if (input.parentNode) input.parentNode.removeChild(input); } catch (e) { /* ignore */ } resolve(v); };
+        input.addEventListener('change', function () { fin(input.files && input.files.length ? Array.prototype.slice.call(input.files) : null); });
+        input.addEventListener('cancel', function () { fin(null); });
+        (doc.body || doc.documentElement).appendChild(input);
+        input.click();
+      });
+    }
+    function pickProgramSource(o) {
+      return pickFiles(o).then(function (list) {
+        if (!list || !list.length) return;
+        var rootName = null, items = list.map(function (f) { return { file: f, rel: String(f.webkitRelativePath || f.name) }; });
+        if (o.directory) rootName = (items[0].rel.split('/')[0]) || null;
+        handleItems(items, rootName);
+      }, function (err) { setStatus('Could not pick files: ' + ((err && err.message) || err)); });
+    }
+    // ---- drum machines (Drums, engine/drums.js): a kit = one track per core voice, one undo step; or a single voice
+    var KITS = {
+      '808': ['bd', 'sd', 'cp', 'ch', 'oh', 'cb', 'lt', 'mt', 'ht'],
+      '909': ['bd', 'sd', 'cp', 'ch', 'oh', 'lt', 'mt', 'ht', 'rs', 'cr', 'rd']
+    };
+    var VOICE_NAMES = { bd: 'Bass drum', sd: 'Snare', cp: 'Clap', ch: 'Closed hat', oh: 'Open hat', cy: 'Cymbal', cb: 'Cowbell', lt: 'Low tom', mt: 'Mid tom', ht: 'High tom',
+                        lc: 'Low conga', mc: 'Mid conga', hc: 'High conga', rs: 'Rim shot', cl: 'Claves', ma: 'Maracas', cr: 'Crash', rd: 'Ride' };
+    function voiceLabel(t) { var m = /^([a-z]{2})(808|909)$/.exec(t); return t + ' · ' + (m && VOICE_NAMES[m[1]] ? VOICE_NAMES[m[1]] + ' ' + m[2] : t); }
+    function drumTypes() { var D = root.Drums; return D && isFn(D.types) ? D.types() : []; }
+    function addDrumTracks(types, label) {
+      var ed = host.editor();
+      if (!ed || !isFn(ed.addTrack)) { setStatus('This host cannot add tracks.'); return []; }
+      var have = drumTypes(), added = [];
+      types = types.filter(function (t) { return have.indexOf(t) >= 0; });
+      if (!types.length) { setStatus('No drum voices available.'); return []; }
+      var run = function (e) {
+        types.forEach(function (t) {
+          var name = t, n = 2;
+          while (e.track(name) || name === 'send' || name === 'master') name = t + '_' + (n++);
+          if (e.addTrack({ name: name, type: t, inst: t, family: 'drums', gain: 0.8, variants: { A: EMPTY_PATTERN } })) added.push(name);
+        });
+      };
+      if (isFn(ed.group)) ed.group(run); else run(ed);
+      if (!added.length) return added;
+      host.commit();
+      setStatus('Added ' + label + ' (' + added.length + ' track' + (added.length === 1 ? '' : 's') + ').');
+      if (!disposed) select(added[0]);
+      return added;
+    }
+    // ---- classic synths (Classics, engine/classics.js): one mono track with an empty pattern; the panel edits its steps
+    var CLASSIC_LABELS = { tb303: 'Bass line synth (HVT-303)', modeld: 'Mono synth (HVT-D)', juno: 'Poly synth (HVT-106)' };
+    function classicTypes() { var C = root.Classics; return C && isFn(C.types) ? C.types() : []; }
+    function addClassicTrack(type) {
+      var ed = host.editor();
+      if (!ed || !isFn(ed.addTrack)) { setStatus('This host cannot add tracks.'); return null; }
+      if (classicTypes().indexOf(type) < 0) { setStatus('That synth is not available.'); return null; }
+      var name = type, n = 2, ok = false;
+      var run = function (e) {
+        while (e.track(name) || name === 'send' || name === 'master') name = type + '_' + (n++);
+        ok = !!e.addTrack({ name: name, type: type, inst: type, family: type === 'juno' ? 'keys' : 'bass', gain: 0.8, variants: { A: EMPTY_PATTERN } });
+      };
+      if (isFn(ed.group)) ed.group(run); else run(ed);
+      if (!ok) return null;
+      host.commit();
+      setStatus('Added ' + (CLASSIC_LABELS[type] || type) + ' as track ' + name + '. Open its window to edit the steps.');
+      if (!disposed) select(name);
+      return name;
+    }
+    function classicMenuItems() {
+      return classicTypes().map(function (t) { return { label: CLASSIC_LABELS[t] || t, run: function () { addClassicTrack(t); } }; });
+    }
+    function addKit(which) { return addDrumTracks(KITS[which].map(function (v) { return v + which; }), 'TR-' + which + ' kit'); }
+    function voiceMenuItems() {
+      return drumTypes().map(function (t) { return { label: voiceLabel(t), run: function () { addDrumTracks([t], t); } }; });
+    }
     function pickSampler() {
       var P = root.Project;
       if (!P || !isFn(P.pickAudio)) { setStatus('No file picker available.'); return Promise.resolve(); }
@@ -688,8 +843,14 @@
       }, function (err) { setStatus('Could not pick a file: ' + ((err && err.message) || err)); });
     }
     function isSampler(name) { return !!S.doc && isSamplerTrack(findTrack(S.doc, name)); }
+    // tracks the "+ track" menu can add (sampler, drum-machine voices, classic synths) can also be removed from it
+    function isRemovable(name) {
+      if (isSampler(name)) return true;
+      var t = S.doc ? findTrack(S.doc, name) : null, ty = t && (t.type || t.inst);
+      return !!ty && (drumTypes().indexOf(ty) >= 0 || classicTypes().indexOf(ty) >= 0);
+    }
     function removeSampler(name) {
-      if (!isSampler(name)) return false;
+      if (!isRemovable(name)) return false;
       var ed = host.editor();
       if (!ed || !isFn(ed.removeTrack)) return false;
       var run = function (e) { return e.removeTrack(name); };
@@ -713,7 +874,12 @@
       items.forEach(function (it) {
         var b = make('button', 'se-menuitem', it.label); attr(b, 'role', 'menuitem'); attr(b, 'type', 'button');
         if (it.disabled) { attr(b, 'disabled', ''); b.disabled = true; }
-        on(b, 'click', function (e) { if (e && e.stopPropagation) e.stopPropagation(); if (it.disabled) return; closeMenu(); it.run(); });
+        on(b, 'click', function (e) {
+          if (e && e.stopPropagation) e.stopPropagation();
+          if (it.disabled) return;
+          if (it.keepOpen) { var bt = S.menuBtn; openMenu(voiceMenuItems(), x, y, bt); return; }    // the "Drum voice..." submenu
+          closeMenu(); it.run();
+        });
         m.appendChild(b);
       });
       rootEl.appendChild(m);
@@ -731,12 +897,23 @@
     function trackMenuItems() {
       var sel = S.sel;
       return [
+        // D2 (Dubplate Crew): import a whole track for analysis; App.importTrack wraps ImportView.importTrack with its toast
+        { label: 'Import track\u2026', disabled: !(root.ImportView || (root.App && isFn(root.App.importTrack))), run: function () {
+          if (root.App && isFn(root.App.importTrack)) root.App.importTrack();
+          else if (root.ImportView && isFn(root.ImportView.importTrack)) root.ImportView.importTrack(host, { toast: setStatus });
+        } },
         { label: 'Sampler track from file\u2026', run: pickSampler },
-        { label: sel && isSampler(sel) ? 'Remove track \u201c' + sel + '\u201d' : 'Remove track (select a sampler row)', disabled: !(sel && isSampler(sel)), run: function () { removeSampler(sel); } }
-      ];
+        { label: 'Sampler track from folder\u2026', run: function () { pickProgramSource({ directory: true }); } },
+        { label: 'TR-808 kit', disabled: !drumTypes().length, run: function () { addKit('808'); } },
+        { label: 'TR-909 kit', disabled: !drumTypes().length, run: function () { addKit('909'); } },
+        { label: 'Drum voice\u2026', disabled: !drumTypes().length, keepOpen: true }
+      ].concat(classicMenuItems()).concat([
+        { label: 'Import SFZ\u2026', run: function () { pickProgramSource({ accept: '.sfz,audio/*,' + ['wav', 'mp3', 'ogg', 'flac', 'aif', 'aiff'].map(function (e) { return '.' + e; }).join(',') }); } },
+        { label: sel && isRemovable(sel) ? 'Remove track \u201c' + sel + '\u201d' : 'Remove track (select a sampler, drum or synth row)', disabled: !(sel && isRemovable(sel)), run: function () { removeSampler(sel); } }
+      ]);
     }
     function buildTrackHeader() {
-      var band = make('div', 'se-thead'), l = make('div', 'se-thl'), r = make('div', 'se-thr', 'Drop audio files on the track list to add sampler tracks');
+      var band = make('div', 'se-thead'), l = make('div', 'se-thl'), r = make('div', 'se-thr', 'Drop audio files, a folder or an .sfz on the track list to add sampler tracks');
       l.appendChild(make('span', 'lbl', 'TRACKS'));
       var add = make('button', 'se-btn', '+ track'); attr(add, 'type', 'button'); attr(add, 'aria-haspopup', 'menu'); attr(add, 'aria-expanded', false);
       attr(add, 'aria-label', 'Add or remove a track');
@@ -775,10 +952,7 @@
         if (!hasFiles(e)) return;
         if (e.preventDefault) e.preventDefault();
         S.dragDepth = 0; toggleClass(body, 'se-drop', false);
-        var all = Array.prototype.slice.call(e.dataTransfer.files || []), audio = all.filter(isAudioFile);
-        if (!audio.length) { setStatus('No audio files in that drop.'); return; }
-        if (audio.length < all.length) setStatus('Skipped ' + (all.length - audio.length) + ' file(s) that are not audio.');
-        addFiles(audio);
+        collectDropped(e.dataTransfer).then(function (r) { if (!disposed) handleItems(r.items, r.root); });
       });
     }
 
@@ -797,6 +971,10 @@
       inner.appendChild(buildOverview(d));
       inner.appendChild(buildRuler(d));
       inner.appendChild(buildTrackHeader());
+      // D2 (Dubplate Crew): the reference lane (ImportView.lane) at the top of the track list; hidden while there is no reference
+      if (S.refLane) safe(function () { S.refLane.dispose(); });
+      S.refLane = (root.ImportView && isFn(root.ImportView.lane)) ? safe(function () { return root.ImportView.lane(host); }, null) : null;
+      if (S.refLane && S.refLane.el) inner.appendChild(S.refLane.el);
       var bodyEl = buildBody(d); wireDrop(bodyEl); inner.appendChild(bodyEl);
       S.devRowEl = make('div', 'se-devrow'); attr(S.devRowEl, 'aria-label', 'Device row');
       inner.appendChild(S.devRowEl);
@@ -832,6 +1010,7 @@
       var absBar = (typeof p.bar === 'number' ? p.bar : 0) + (p.step || 0) / STEPS;
       var f = Math.max(0, Math.min(1, absBar / S.total)), fs = pct(f);
 
+      if (S.refLane) S.refLane.update(fs);        // D2: reference lane playhead and waveform (redraws only on change)
       if (fs !== S.lastPh) {
         S.lastPh = fs;
         if (S.ovPh) S.ovPh.style.left = fs;
@@ -930,6 +1109,7 @@
         if (disposed) return;
         disposed = true;
         closeMenu();
+        if (S.refLane) safe(function () { S.refLane.dispose(); });     // D2
         if (isFn(host.off)) safe(function () { host.off('document', onDocument); });
         for (var n in S.rows) if (has(S.rows, n) && S.rows[n].chip && isFn(S.rows[n].chip.dispose)) safe(function () { S.rows[n].chip.dispose(); });
         disposeDev();

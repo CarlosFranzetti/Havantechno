@@ -336,7 +336,9 @@
     line(c, X(lo), Y(lo), X(0), Y(0), p.dim, 1, true);
     line(c, X(T), sq.y0 + sq.h, X(T), sq.y0, p.line, 1);
     if (kind === 'lim') line(c, sq.x0, Y(mk), sq.x0 + sq.w, Y(mk), p.dim, 1, true);
-    var pts = sample(80, function (u) { var x = lo + u * -lo; return [X(x), Y(compOut(x, T, R, K) + mk)]; });
+    var clipOn = kind === 'lim' && !!P(d, host, 'clipOn'), clipDb = kind === 'lim' ? P(d, host, 'clip') : 0;
+    if (clipOn) line(c, sq.x0, Y(clipDb), sq.x0 + sq.w, Y(clipDb), p.fg, 1, true);
+    var pts = sample(80, function (u) { var x = lo + u * -lo, o = compOut(x, T, R, K) + mk; return [X(x), Y(clipOn && o > clipDb ? clipDb : o)]; });
     path(c, pts, p.ink, 2);
     var m = meterOf(d, host), gr = (typeof m.reduction === 'number') ? m.reduction : null;
     if (typeof m.level === 'number' && m.level > 0.001 && gr !== null) {
@@ -413,6 +415,14 @@
     if (bar) { c.strokeStyle = p.line; c.lineWidth = 1; c.strokeRect(g.x0 + 0.5, g.y1 - 3.5, g.w, 5); c.fillStyle = p.ink; c.fillRect(g.x0 + 1, g.y1 - 3, g.w * mix, 4); }
     if (!g.small) txt(c, (Math.round(rate * 100) / 100) + ' Hz   depth ' + (Math.round(depth * 10) / 10) + ' ms   base ' + (Math.round(base * 10) / 10) + ' ms   mix ' + Math.round(mix * 100) + '%' + (inv ? '   inverted' : ''), g.x0 + 2, g.y1 + 10);
   }
+  function heroDecor(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), t = P(d, host, 'time'), T = 0.05, mid = g.y0 + g.h / 2;
+    line(c, g.x0, mid, g.x1, mid, p.line, 1);
+    var x = g.x0 + t / T * g.w;
+    line(c, g.x0 + 2, mid, g.x0 + 2, mid - g.h * 0.42, p.ink, 3); line(c, x, mid, x, mid + g.h * 0.42, p.fg, 3);
+    line(c, g.x0 + 2, mid - g.h * 0.42, x, mid - g.h * 0.42, p.dim, 1, true);
+    if (!g.small) { txt(c, 'L = input', g.x0 + 8, g.y0 + 9); txt(c, 'R = input + ' + (Math.round(t * 10000) / 10) + ' ms', g.x1, g.y1 + 10, 'right'); }
+  }
   function heroChannel(c, w, hh, d, host) {
     var p = pal(), g = plot(w, hh, hh < 64), gain = P(d, host, 'gain'), pan = P(d, host, 'pan'), mute = !!P(d, host, 'mute'), m = meterOf(d, host);
     var lvl = typeof m.level === 'number' ? clamp(m.level, 0, 1) : 0, ldb = lvl > 0.0006 ? 20 * Math.log10(lvl) : -60;
@@ -453,33 +463,108 @@
     hit = { buf: buf, n: n, data: data }; PEAKS.push(hit); if (PEAKS.length > 8) PEAKS.shift();
     return data;
   }
+  // ---- program path: shared state per device (selection, a drag in progress), program cache, region geometry
+  var SEL = {};                                   // device.id -> {sel: [region indices], drag: {index, field, value}|null, ver}
+  function selOf(d) { return SEL[d.id] || (SEL[d.id] = { sel: [0], drag: null, ver: 0 }); }
+  var GVER = 0, WATCHED = [], PCACHE = {};
+  function watch(host) {
+    if (!host || typeof host.on !== 'function' || WATCHED.indexOf(host) >= 0) return;
+    WATCHED.push(host);
+    safe(function () { host.on('program', function () { GVER++; }); host.on('document', function () { GVER++; }); });
+  }
+  function progOf(d, host) {
+    var id = P(d, host, 'program');
+    if (!id || !host || typeof host.program !== 'function') return null;
+    watch(host);
+    var c = PCACHE[id], t = Date.now();
+    if (c && c.gver === GVER && t - c.t < 500) return c.prog;
+    var prog = safe(function () { return host.program(id); }, null);
+    PCACHE[id] = { gver: GVER, t: t, prog: prog };
+    return prog;
+  }
+  function selIndex(d, prog) {
+    var s = selOf(d), i;
+    s.sel = s.sel.filter(function (x) { return x >= 0 && x < prog.regions.length; });
+    if (!s.sel.length && prog.regions.length) s.sel = [0];
+    return s.sel.length ? s.sel[0] : -1;
+  }
+  function regionOf(d, prog, i) {          // the region with a drag in progress applied
+    var r = prog.regions[i], s = selOf(d);
+    if (s.drag && s.drag.index === i) { r = Object.assign({}, r); r[s.drag.field] = s.drag.value; }
+    return r;
+  }
+  function totalFrames(buf, info) {
+    var rate = (info && info.meta && info.meta.rate) || buf.sampleRate || 44100;
+    return Math.max(1, (buf.duration || (buf.length / (buf.sampleRate || 44100))) * rate);
+  }
+  function sampleColors(colors) {
+    return { ink: colors.ink, dim: colors.famDim || colors.dim, wash: colors.wash, fg: colors.fg, line: colors.line, bg: colors.panel || colors.bg, on: colors.on, dashed: false };
+  }
+  function drawWave(c, g, buf, rev, color) {
+    var n = Math.max(32, Math.min(400, Math.round(g.w))), pk = peaksOf(buf, n), amp = g.h * 0.46, mid = g.y0 + g.h / 2, i;
+    c.beginPath();
+    for (i = 0; i < n; i++) { var q = pk[rev ? n - 1 - i : i], x = g.x0 + (i + 0.5) / n * g.w; c.moveTo(x, mid - q[1] * amp - 0.5); c.lineTo(x, mid - q[0] * amp + 0.5); }
+    c.strokeStyle = color; c.lineWidth = Math.max(1, g.w / n); dash(c, false); c.stroke();
+  }
+  function flag(c, x, y, right, color) { line(c, x, y, x, y + 14, color, 2); c.fillStyle = color; c.fillRect(right ? x - 7 : x, y, 7, 8); }
+
   function heroSampler(c, w, hh, d, host) {
+    var prog = progOf(d, host);
+    if (prog && prog.regions.length) return heroProgram(c, w, hh, d, host, prog);
     var p = pal(), g = plot(w, hh, hh < 64), id = P(d, host, 'buffer'), s = P(d, host, 'start') || 0, e = P(d, host, 'end') || 1, rev = P(d, host, 'reverse') >= 0.5, loop = P(d, host, 'loop') >= 0.5;
-    var buf = bufferOf(d, host, id), info = audioInfo(host, id), dur = (buf && buf.duration) || (info && info.duration) || 0, mid = g.y0 + g.h / 2, i, n = Math.max(32, Math.min(400, Math.round(g.w)));
+    var buf = bufferOf(d, host, id), info = audioInfo(host, id), dur = (buf && buf.duration) || (info && info.duration) || 0, mid = g.y0 + g.h / 2;
     line(c, g.x0, mid, g.x1, mid, p.line, 1);
-    if (buf) {
-      var pk = peaksOf(buf, n), amp = g.h * 0.46;
-      c.beginPath();
-      for (i = 0; i < n; i++) { var q = pk[rev ? n - 1 - i : i], x = g.x0 + (i + 0.5) / n * g.w; c.moveTo(x, mid - q[1] * amp - 0.5); c.lineTo(x, mid - q[0] * amp + 0.5); }
-      c.strokeStyle = p.ink; c.lineWidth = Math.max(1, g.w / n); dash(c, false); c.stroke();
-    } else if (!g.small) txt(c, id ? 'sample not loaded' : 'no sample', g.x0 + g.w / 2, mid - 6, 'center');
+    if (buf) drawWave(c, g, buf, rev, p.ink);
+    else if (!g.small) txt(c, id ? 'sample not loaded' : 'no sample', g.x0 + g.w / 2, mid - 6, 'center');
     var xs = g.x0 + s * g.w, xe = g.x0 + e * g.w;
     c.globalAlpha = 0.55; c.fillStyle = p.bg; c.fillRect(g.x0, g.y0, Math.max(0, xs - g.x0), g.h); c.fillRect(xe, g.y0, Math.max(0, g.x1 - xe), g.h); c.globalAlpha = 1;
     if (dur > 0) {
       var att = P(d, host, 'attack') || 0, rel = P(d, host, 'release') || 0, span = (e - s) * dur, fa = clamp(att / Math.max(span, 1e-6), 0, 0.5), fr = clamp(rel / Math.max(span, 1e-6), 0, 0.5);
       path(c, [[xs, g.y1], [xs + fa * (xe - xs), g.y0 + 2], [xe - fr * (xe - xs), g.y0 + 2], [xe, g.y1]], p.fg, 1, true);
     }
-    [xs, xe].forEach(function (hx, k) {
-      line(c, hx, g.y0, hx, g.y1, p.fg, 2);
-      c.fillStyle = p.fg; c.fillRect(k === 0 ? hx : hx - 7, g.y0, 7, 10);
-    });
+    [xs, xe].forEach(function (hx, k) { line(c, hx, g.y0, hx, g.y1, p.fg, 2); c.fillStyle = p.fg; c.fillRect(k === 0 ? hx : hx - 7, g.y0, 7, 10); });
     if (!g.small) {
       txt(c, 'start ' + Math.round(s * 100) + '%   end ' + (P(d, host, 'end') ? Math.round(e * 100) + '%' : 'whole'), g.x0 + 2, g.y1 + 10);
       txt(c, (dur ? (Math.round(dur * 100) / 100) + ' s   ' : '') + (P(d, host, 'pitch') ? 'pitch ' + (Math.round(P(d, host, 'pitch') * 10) / 10) + ' st   ' : '') + (loop ? 'loop' : ''), g.x1, g.y1 + 10, 'right');
     }
   }
+
+  // the handles of the selected region: offset, end, and (for looping regions) loop start and end, in fractions of the file
+  function regionHandles(r, total) {
+    var hs = [{ field: 'offset', frac: clamp((r.offset || 0) / total, 0, 1) }, { field: 'end', frac: r.end ? clamp(r.end / total, 0, 1) : 1 }];
+    if ((r.loop === 'continuous' || r.loop === 'sustain') && r.loopEnd > 0) { hs.push({ field: 'loopStart', frac: clamp((r.loopStart || 0) / total, 0, 1) }); hs.push({ field: 'loopEnd', frac: clamp(r.loopEnd / total, 0, 1) }); }
+    return hs;
+  }
+  function heroProgram(c, w, hh, d, host, prog) {
+    var p = pal(), g = plot(w, hh, hh < 64), i = selIndex(d, prog), r = regionOf(d, prog, i), buf = bufferOf(d, host, r.buffer), info = audioInfo(host, r.buffer), mid = g.y0 + g.h / 2;
+    line(c, g.x0, mid, g.x1, mid, p.line, 1);
+    if (!buf) { if (!g.small) txt(c, r.buffer ? 'sample "' + r.buffer + '" not loaded' : 'no sample', g.x0 + g.w / 2, mid - 6, 'center'); }
+    else {
+      drawWave(c, g, buf, !!r.reverse, p.ink);
+      var tot = totalFrames(buf, info), hs = regionHandles(r, tot), X = function (f) { return g.x0 + f * g.w; };
+      var o = hs[0].frac, en = hs[1].frac;
+      c.globalAlpha = 0.55; c.fillStyle = p.bg; c.fillRect(g.x0, g.y0, Math.max(0, X(o) - g.x0), g.h); c.fillRect(X(en), g.y0, Math.max(0, g.x1 - X(en)), g.h); c.globalAlpha = 1;
+      if (hs.length > 2) {
+        var ls = hs[2].frac, le = hs[3].frac, rate = (info && info.meta && info.meta.rate) || buf.sampleRate || 44100, xf = clamp((r.xfade || 0) * rate / tot, 0, le - ls);
+        c.globalAlpha = 0.12; c.fillStyle = p.ink; c.fillRect(X(ls), g.y0, X(le) - X(ls), g.h); c.globalAlpha = 1;
+        if (xf > 0) { c.beginPath(); c.moveTo(X(le) - xf * g.w, g.y1); c.lineTo(X(le), g.y1); c.lineTo(X(le), g.y0); c.closePath(); c.globalAlpha = 0.35; c.fillStyle = p.fg; c.fill(); c.globalAlpha = 1; }
+        flag(c, X(ls), g.y1 - 14, false, p.ink); flag(c, X(le), g.y1 - 14, true, p.ink);
+      }
+      flag(c, X(o), g.y0, false, p.fg); flag(c, X(en), g.y0, true, p.fg);
+      var lh = safe(function () { return d.ref._lastHit; }, null), now = safe(function () { return host.context().currentTime; }, null);
+      if (lh && lh.region === i && typeof lh.t0 === 'number' && now != null) {
+        var fr = o + (now - lh.t0) * (lh.rate || 1) * (buf.sampleRate || 44100) / tot;
+        if (fr >= o && fr <= en) line(c, X(fr), g.y0, X(fr), g.y1, p.on, 1);
+      }
+      if (!g.small) txt(c, (Math.round((buf.duration || 0) * 100) / 100) + ' s   ' + (r.loop || 'none'), g.x1, g.y1 + 10, 'right');
+    }
+    if (!g.small) txt(c, prog.name + '   region ' + (i + 1) + '/' + prog.regions.length + '   keys ' + r.lokey + '..' + r.hikey, g.x0 + 2, g.y1 + 10);
+  }
+
   function samplerPointer(phase, pt, d, host, api, st) {
-    var g = plot(pt.w, pt.h, pt.h < 64), s = P(d, host, 'start') || 0, e = P(d, host, 'end') || 1;
+    var g = plot(pt.w, pt.h, pt.h < 64), prog = progOf(d, host);
+    if (prog && prog.regions.length) return programPointer(phase, pt, g, d, host, api, st, prog);
+    var s = P(d, host, 'start') || 0, e = P(d, host, 'end') || 1;
     if (phase === 'down') {
       var xs = g.x0 + s * g.w, xe = g.x0 + e * g.w, ds = Math.abs(pt.x - xs), de = Math.abs(pt.x - xe);
       if (Math.min(ds, de) > 12) return null;
@@ -492,12 +577,240 @@
     }
     return st || null;
   }
+  // drag a region handle: preview while dragging, one setRegion (one undo step) on release
+  function programPointer(phase, pt, g, d, host, api, st, prog) {
+    var i = selIndex(d, prog), s = selOf(d);
+    if (phase === 'down') {
+      var r = prog.regions[i], buf = bufferOf(d, host, r.buffer);
+      if (!buf) return null;
+      var tot = totalFrames(buf, audioInfo(host, r.buffer)), hs = regionHandles(r, tot), best = null, bd = 12;
+      hs.forEach(function (hd) { var dd = Math.abs(pt.x - (g.x0 + hd.frac * g.w)); if (dd < bd) { bd = dd; best = hd; } });
+      return best ? { field: best.field, index: i, tot: tot, id: P(d, host, 'program') } : null;
+    }
+    if (!st) return null;
+    var f = clamp((pt.x - g.x0) / g.w, 0, 1), cur = regionOf(d, prog, st.index), val;
+    if (phase === 'move') {
+      var fr = Math.round(f * st.tot);
+      if (st.field === 'end') val = f >= 0.995 ? 0 : Math.max(fr, (cur.offset || 0) + 1);
+      else if (st.field === 'offset') val = Math.min(fr, (cur.end || st.tot) - 1);
+      else if (st.field === 'loopStart') val = Math.min(fr, cur.loopEnd - 1);
+      else val = Math.max(fr, (cur.loopStart || 0) + 1);
+      s.drag = { index: st.index, field: st.field, value: val };
+      s.ver++; api.redraw();
+    } else if (phase === 'up') {
+      var dr = s.drag; s.drag = null; s.ver++;
+      if (dr) { var patch = {}; patch[dr.field] = dr.value; safe(function () { host.editor().setRegion(st.id, dr.index, patch); host.commit(); }); }
+      api.redraw();
+    }
+    return st;
+  }
   function bufferOptions(d, host) {
     var out = [{ value: '', label: '(none)' }], l = audioList(host), i;
     for (i = 0; i < l.length; i++) out.push({ value: l[i].id, label: l[i].name || String(l[i].id) });
     var cur = P(d, host, 'buffer');
     if (cur && !l.some(function (x) { return x.id === cur; })) out.push({ value: cur, label: cur + ' (missing)' });
     return out;
+  }
+  function programOptions(d, host) {
+    var out = [{ value: '', label: '(single sample)' }], l = safe(function () { return host.programs(); }, []) || [], i;
+    for (i = 0; i < l.length; i++) out.push({ value: l[i].id, label: (l[i].name || l[i].id) + (l[i].missing ? ' (' + l[i].missing + ' missing)' : '') });
+    var cur = P(d, host, 'program');
+    if (cur && !l.some(function (x) { return x.id === cur; })) out.push({ value: cur, label: cur + ' (missing)' });
+    return out;
+  }
+  function assignProgram(v, d, host) { if (typeof host.assignProgram === 'function') host.assignProgram(d.track, v || ''); else host.setParam(d.pathPrefix + '.program', v || ''); }
+
+  // ---- zone map: 128 keys x 127 velocities, regions as rectangles (window density, program path)
+  var ZONE_STRIP = 14;
+  function zoneRects(prog, w, gh) {
+    return prog.regions.map(function (r, i) {
+      var off = (r.seqLen > 1 ? 2 * (r.seq - 1) : 0), lo = Math.max(0, r.lokey);
+      return { i: i, x0: lo / 128 * w + off, x1: (r.hikey + 1) / 128 * w + off, y0: (127 - r.hivel) / 127 * gh + off, y1: (128 - r.lovel) / 127 * gh + off };
+    });
+  }
+  function zoneDraw(c, w, hh, d, host, colors) {
+    Faces.palette = sampleColors(colors || {});
+    var p = pal(), prog = progOf(d, host), gh = hh - ZONE_STRIP, k, s = selOf(d);
+    c.fillStyle = p.wash; c.fillRect(0, 0, w, hh);
+    for (k = 0; k < 128; k += 12) { var x = k / 128 * w; line(c, x, 0, x, gh, p.line, 1); if (w > 300) txt(c, 'C' + (k / 12 - 1), x + 2, gh - 3); }
+    line(c, 0, gh + 0.5, w, gh + 0.5, p.line, 1);
+    if (!prog) { txt(c, 'no program: choose one in SOURCE, or load, map or slice', w / 2, gh / 2, 'center'); return; }
+    var lh = safe(function () { return d.ref._lastHit; }, null), now = safe(function () { return host.context().currentTime; }, null);
+    zoneRects(prog, w, gh).forEach(function (q) {
+      var r = regionOf(d, prog, q.i), rect = q;
+      if (s.drag && s.drag.index === q.i) rect = zoneRects({ regions: [r] }, w, gh)[0];
+      var missing = !bufferOf(d, host, r.buffer), sel = s.sel.indexOf(q.i) >= 0, hit = lh && lh.region === q.i && now != null && typeof lh.t0 === 'number' && now - lh.t0 < 0.15;
+      c.globalAlpha = hit ? 0.8 : (missing ? 0.12 : 0.32); c.fillStyle = hit ? p.on : p.ink; c.fillRect(rect.x0, rect.y0, rect.x1 - rect.x0, rect.y1 - rect.y0); c.globalAlpha = 1;
+      if (missing) for (var hx = rect.x0 - (rect.y1 - rect.y0); hx < rect.x1; hx += 6) {
+        var ax = Math.max(rect.x0, hx), ay = rect.y1 - (ax - hx), bx = Math.min(rect.x1, hx + (rect.y1 - rect.y0)), by = rect.y1 - (bx - hx);
+        if (bx > ax) line(c, ax, Math.min(ay, rect.y1), bx, Math.max(by, rect.y0), p.dim, 1);
+      }
+      c.strokeStyle = sel ? p.fg : p.ink; c.lineWidth = sel ? 2 : 1; dash(c, false); c.strokeRect(rect.x0 + 0.5, rect.y0 + 0.5, rect.x1 - rect.x0, rect.y1 - rect.y0);
+      var rx = (r.root + 0.5) / 128 * w; line(c, rx, gh + 2, rx, hh - 2, sel ? p.fg : p.ink, 2);
+    });
+  }
+  function zoneMap(api) {
+    var W = root.Widgets, d = api.device, host = api.host;
+    if (!W || typeof W.curve !== 'function') return null;
+    var cw = Math.max(200, api.width), ch = 150, el = document.createElement('div'), st = { w: cw, h: ch }, drag = null;
+    var cv = W.curve({ width: cw, height: ch, draw: function (c, w, hh, colors) { zoneDraw(c, w, hh, d, host, colors); } });
+    el.className = 'face-section hv-zone'; el.style.flex = '1 1 100%';
+    var title = document.createElement('h4'); title.className = 'face-section-title'; title.textContent = 'zones (key by velocity)';
+    el.appendChild(title); el.appendChild(cv.el);
+    function where(ev) { var r = cv.el.getBoundingClientRect ? cv.el.getBoundingClientRect() : { left: 0, top: 0 }; return { x: (ev.clientX || 0) - r.left, y: (ev.clientY || 0) - r.top }; }
+    function mk(ev, hitIdx) { return where(ev); }
+    cv.el.addEventListener('pointerdown', function (ev) {
+      if (ev.button) return;
+      var prog = progOf(d, host); if (!prog) return;
+      var pt = where(ev), gh = st.h - ZONE_STRIP, rects = zoneRects(prog, st.w, gh), hit = null, i, s = selOf(d);
+      for (i = rects.length - 1; i >= 0; i--) if (pt.x >= rects[i].x0 - 4 && pt.x <= rects[i].x1 + 4 && pt.y >= rects[i].y0 - 4 && pt.y <= rects[i].y1 + 4 && pt.y <= gh) { hit = rects[i]; break; }
+      if (!hit) { if (!ev.shiftKey) { s.sel = []; s.ver++; } return; }
+      var edges = [['lokey', Math.abs(pt.x - hit.x0)], ['hikey', Math.abs(pt.x - hit.x1)], ['hivel', Math.abs(pt.y - hit.y0)], ['lovel', Math.abs(pt.y - hit.y1)]].sort(function (a, b) { return a[1] - b[1]; });
+      if (s.sel.indexOf(hit.i) >= 0 && edges[0][1] <= 4) { drag = { index: hit.i, field: edges[0][0], gh: gh, id: P(d, host, 'program') }; if (cv.el.setPointerCapture && ev.pointerId != null) safe(function () { cv.el.setPointerCapture(ev.pointerId); }); return; }
+      var at = s.sel.indexOf(hit.i);
+      if (ev.shiftKey) { if (at >= 0) s.sel.splice(at, 1); else s.sel.push(hit.i); } else s.sel = [hit.i];
+      s.ver++; cv.redraw();
+    });
+    cv.el.addEventListener('pointermove', function (ev) {
+      if (!drag) return;
+      var pt = where(ev), s = selOf(d), prog = progOf(d, host), r = prog && prog.regions[drag.index], val;
+      if (!r) return;
+      if (drag.field === 'lokey') val = clamp(Math.floor(pt.x / st.w * 128), 0, r.hikey);
+      else if (drag.field === 'hikey') val = clamp(Math.floor(pt.x / st.w * 128), Math.max(0, r.lokey), 127);
+      else if (drag.field === 'hivel') val = clamp(127 - Math.floor(pt.y / drag.gh * 127), r.lovel, 127);
+      else val = clamp(128 - Math.round(pt.y / drag.gh * 127), 1, r.hivel);
+      s.drag = { index: drag.index, field: drag.field, value: val }; s.ver++; cv.redraw();
+    });
+    function end() {
+      if (!drag) return;
+      var s = selOf(d), dr = s.drag, id = drag.id; drag = null; s.drag = null; s.ver++;
+      if (dr) { var patch = {}; patch[dr.field] = dr.value; safe(function () { host.editor().setRegion(id, dr.index, patch); host.commit(); }); }
+      cv.redraw();
+    }
+    cv.el.addEventListener('pointerup', end); cv.el.addEventListener('pointercancel', end);
+    var last = '';
+    return { el: el, update: function () { var s = selOf(d), sg = GVER + ':' + s.ver + ':' + JSON.stringify(s.sel) + ':' + P(d, host, 'program'); var lh = safe(function () { return d.ref._lastHit; }, null); if (sg !== last || lh) { last = sg; cv.redraw(); } },
+             resize: function (w) { st.w = Math.max(200, w | 0); if (cv.resize) cv.resize(st.w, st.h); }, zone: cv, rects: function () { var pr = progOf(d, host); return pr ? zoneRects(pr, st.w, st.h - ZONE_STRIP) : []; } };
+  }
+
+  // ---- region panel: edits the selected region(s) through the document (setRegion), not setParam
+  var REGION_NUM = [['root', 0, 127, 1], ['lokey', 0, 127, 1], ['hikey', 0, 127, 1], ['lovel', 1, 127, 1], ['hivel', 1, 127, 1], ['tune', -100, 100, 1], ['gain', -24, 24, 0.1], ['pan', -1, 1, 0.05], ['xfade', 0, 5, 0.001], ['seq', 1, 16, 1], ['seqLen', 1, 16, 1]];
+  function regionPanel(api) {
+    var d = api.device, host = api.host, doc = document, el = doc.createElement('section'), fields = {}, last = '';
+    el.className = 'face-section hv-region'; el.style.flex = '1 1 100%';
+    var title = doc.createElement('h4'); title.className = 'face-section-title'; title.textContent = 'region'; el.appendChild(title);
+    var row = doc.createElement('div'); row.className = 'face-controls'; el.appendChild(row);
+    function targets() { var prog = progOf(d, host); if (!prog) return []; selIndex(d, prog); return selOf(d).sel.slice(); }
+    function apply(patch) {
+      var prog = progOf(d, host), id = P(d, host, 'program'), t = targets(), ed = safe(function () { return host.editor(); }, null);
+      if (!prog || !ed || !t.length) return;
+      var run = function () { t.forEach(function (i) { ed.setRegion(id, i, patch); }); };
+      if (typeof ed.group === 'function') ed.group(run); else run();
+      safe(function () { host.commit(); });
+      selOf(d).ver++;
+    }
+    function labelled(name, input) { var l = doc.createElement('label'); l.className = 'hv-regfield'; l.style.display = 'flex'; l.style.flexDirection = 'column'; l.style.fontSize = '10px'; var s = doc.createElement('span'); s.textContent = name; l.appendChild(s); l.appendChild(input); row.appendChild(l); }
+    REGION_NUM.forEach(function (f) {
+      var inp = doc.createElement('input'); inp.type = 'number'; inp.min = f[1]; inp.max = f[2]; inp.step = f[3]; inp.style.width = '64px'; inp.style.background = 'var(--panel-raised)'; inp.style.color = 'var(--fg)'; inp.style.border = '1px solid var(--line)'; inp.setAttribute('aria-label', f[0]);
+      inp.addEventListener('change', function () { var v = parseFloat(inp.value); if (v === v) { var patch = {}; patch[f[0]] = clamp(v, f[1], f[2]); apply(patch); } });
+      fields[f[0]] = inp; labelled(f[0], inp);
+    });
+    ['group', 'offBy'].forEach(function (n) {
+      var inp = doc.createElement('input'); inp.type = 'text'; inp.style.width = '64px'; inp.style.background = 'var(--panel-raised)'; inp.style.color = 'var(--fg)'; inp.style.border = '1px solid var(--line)'; inp.setAttribute('aria-label', n);
+      inp.addEventListener('change', function () { var patch = {}; patch[n] = String(inp.value); apply(patch); });
+      fields[n] = inp; labelled(n, inp);
+    });
+    var W = root.Widgets, loopSel = null, rev = null;
+    if (W && W.select) { loopSel = W.select({ label: 'loop', options: ['none', 'oneshot', 'continuous', 'sustain'], value: 'none', size: 'face', onInput: function (v) { apply({ loop: v }); } }); row.appendChild(loopSel.el); }
+    if (W && W.toggle) { rev = W.toggle({ label: 'reverse', value: false, size: 'face', onInput: function (v) { apply({ reverse: v ? 1 : 0 }); } }); row.appendChild(rev.el); }
+    var clear = doc.createElement('button'); clear.type = 'button'; clear.textContent = 'overrides: clear'; clear.className = 'btn'; clear.setAttribute('aria-label', 'clear region overrides');
+    clear.addEventListener('click', function () { apply({ env: null, filter: null, fenv: null, vib: null, lfo: null }); });
+    row.appendChild(clear);
+    function update() {
+      var s = selOf(d), prog = progOf(d, host), sg = GVER + ':' + s.ver + ':' + JSON.stringify(s.sel) + ':' + (prog ? prog.regions.length : -1);
+      if (sg === last) return; last = sg;
+      var i = prog ? selIndex(d, prog) : -1, r = i >= 0 ? prog.regions[i] : null;
+      title.textContent = r ? 'region ' + (i + 1) + ' of ' + prog.regions.length + (s.sel.length > 1 ? ' (' + s.sel.length + ' selected: edits apply to all)' : '') : 'region (none selected)';
+      Object.keys(fields).forEach(function (k) { fields[k].value = r && r[k] != null ? r[k] : ''; fields[k].disabled = !r; });
+      if (loopSel && r) loopSel.set(r.loop || 'none'); if (rev && r) rev.set(!!r.reverse);
+      clear.disabled = !r;
+    }
+    update();
+    return { el: el, update: update, fields: fields, apply: apply };
+  }
+
+  // ---- buttons: load, map, slice, export, re-detect; the status line counts import warnings
+  function buttonsPanel(api) {
+    var d = api.device, host = api.host, doc = document, el = doc.createElement('section'), row = doc.createElement('div'), status = doc.createElement('span'), warn = [];
+    el.className = 'face-section hv-prog-buttons'; el.style.flex = '1 1 100%'; row.className = 'face-controls'; el.appendChild(row);
+    status.className = 'hv-prog-status'; status.setAttribute('role', 'status');
+    function report(msg, w) { warn = w || []; status.textContent = msg + (warn.length ? ' (' + warn.length + ' warnings)' : ''); status.title = warn.join('\n'); }
+    function btn(label, fn, enabled) {
+      var b = doc.createElement('button'); b.type = 'button'; b.className = 'btn'; b.textContent = label; b.setAttribute('aria-label', label);
+      if (!enabled) b.disabled = true;
+      b.addEventListener('click', function () { try { fn(); } catch (e) { report(label + ' failed: ' + (e && e.message ? e.message : e)); } });
+      row.appendChild(b); return b;
+    }
+    function pick(accept, dir, cb) {
+      var inp = doc.createElement('input'); inp.type = 'file'; inp.multiple = true; if (accept) inp.accept = accept; if (dir) inp.setAttribute('webkitdirectory', '');
+      inp.addEventListener('change', function () { cb(inp.files ? Array.prototype.slice.call(inp.files) : []); });
+      if (inp.click) inp.click();
+    }
+    function finish(p, what) {
+      Promise.resolve(p).then(function (r) { var id = r && r.id != null ? r.id : r; if (id) assignProgram(id, d, host); report(what + ': ' + (id || 'nothing'), r && r.warnings); }, function (e) { report(what + ' failed: ' + (e && e.message ? e.message : e)); });
+    }
+    function has(fn) { return typeof host[fn] === 'function'; }
+    btn('Load SFZ…', function () {
+      pick('.sfz,audio/*,.wav,.aif,.aiff,.flac', false, function (files) {
+        var sfz = files.filter(function (f) { return /\.sfz$/i.test(f.name); })[0], map = {};
+        files.forEach(function (f) { map[f.webkitRelativePath || f.name] = f; map[f.name] = f; });
+        if (sfz) finish(host.importProgram(sfz, { files: map }), 'loaded ' + sfz.name);
+      });
+    }, has('importProgram'));
+    btn('Map folder…', function () { pick('audio/*', true, function (files) { if (files.length) finish(host.mapFiles(files, { mode: 'auto' }), 'mapped ' + files.length + ' files'); }); }, has('mapFiles'));
+    btn('Slice…', function () {
+      var prog = progOf(d, host), r = prog && prog.regions[selIndex(d, prog)], bid = (r && r.buffer) || P(d, host, 'buffer');
+      if (!bid) { report('slice: no sample selected'); return; }
+      finish(host.sliceToProgram(bid, {}), 'sliced ' + bid);
+    }, has('sliceToProgram'));
+    btn('Export SFZ…', function () {
+      host.exportProgram(d.track, { shell: root.HavantechnoShell }).then(function (r) {
+        report('exported ' + ((r && r.id) || d.track));
+        if (r && r.text && !r.path && root.Blob && root.URL && root.URL.createObjectURL && doc.body) {
+          var a = doc.createElement('a'); a.href = root.URL.createObjectURL(new root.Blob([r.text], { type: 'text/plain' })); a.download = String(r.id || d.track) + '.sfz'; doc.body.appendChild(a); if (a.click) a.click(); if (a.remove) a.remove();
+        }
+      }, function (e) { report('export failed: ' + (e && e.message ? e.message : e)); });
+    }, has('exportProgram'));
+    btn('Re-detect pitch', function () {
+      var prog = progOf(d, host), r = prog && prog.regions[selIndex(d, prog)], bid = (r && r.buffer) || P(d, host, 'buffer');
+      if (bid) Promise.resolve(host.detectPitch(bid)).then(function () { report('pitch re-detected for ' + bid); });
+    }, has('detectPitch'));
+    row.appendChild(status);
+    return { el: el, update: function () {}, report: report };
+  }
+  var PROGRAM_PANELS = [
+    { density: ['window'], build: function (a) { return zoneMap(a); } },
+    { density: ['window'], build: function (a) { return regionPanel(a); } },
+    { density: ['window'], build: function (a) { return buttonsPanel(a); } }
+  ];
+
+
+  // FM (DX-style pair): the sideband spectrum from Bessel functions of the index, and the carrier and modulator envelopes
+  function besselJ(n, x) { var sum = 0, k, term = Math.pow(x / 2, n) / fact(n); for (k = 0; k < 30; k++) { sum += term; term *= -(x * x / 4) / ((k + 1) * (k + 1 + n)); } return sum; }
+  function fact(n) { var r = 1; for (var i = 2; i <= n; i++) r *= i; return r; }
+  function heroFM(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), L = region(g, 0, 0.58), R = region(g, 0.64, 1), ratio = P(d, host, 'ratio'), idx = P(d, host, 'index') * (0.5 + 0.5 * (1 - P(d, host, 'indexEnv') * 0.5)), n;
+    var cx = L.x0 + L.w * 0.35, unit = L.w * 0.06 * Math.min(1, 2 / Math.max(ratio, 0.5));
+    line(c, L.x0, L.y1, L.x1, L.y1, p.line, 1);
+    for (n = -6; n <= 12; n++) {
+      var a = Math.abs(besselJ(Math.abs(n), idx)), x = cx + n * ratio * unit;
+      if (x < L.x0 || x > L.x1 || a < 0.02) continue;
+      line(c, x, L.y1, x, L.y1 - clamp(a, 0, 1) * L.h * 0.95, n === 0 ? p.fg : p.ink, 2);
+    }
+    var at = P(d, host, 'attack'), de = P(d, host, 'decay'), su = P(d, host, 'sustain'), re = P(d, host, 'release'), ma = P(d, host, 'modAttack'), md = P(d, host, 'modDecay'), HOLD = 0.4, T = at + de + HOLD + re;
+    envLine(c, R, T, function (t) { return t < at ? t / at : t < at + de ? 1 - (1 - su) * (t - at) / de : t < at + de + HOLD ? su : su * Math.max(0, 1 - (t - at - de - HOLD) / re); }, p.ink, 0.18);
+    path(c, sample(60, function (u) { var t = u * T, v = t < ma ? t / ma : Math.exp(-(t - ma) / md * 2); return [R.x0 + u * R.w, R.y1 - v * R.h * 0.92]; }), p.dim, 1.5, true);
+    if (!g.small) { txt(c, 'ratio ' + (Math.round(ratio * 100) / 100) + '  index ' + (Math.round(P(d, host, 'index') * 10) / 10), L.x0 + 2, g.y1 + 10); txt(c, 'carrier / modulator', R.x1, g.y1 + 10, 'right'); }
   }
 
   // ------------------------------------------------------------------ definitions
@@ -517,7 +830,7 @@
     reverb: '<path d="M2 3v10M2 5Q6 5 14 13"/>', chorus: '<path d="M1 8c2-6 4-6 5 0s3 6 5 0 3-3 4 0"/>',
     filter: '<path d="M1 6h8Q12 6 15 14"/>', eq3: '<path d="M1 10Q4 4 8 9T15 6"/><circle cx="3" cy="8" r="1"/><circle cx="8" cy="9" r="1"/><circle cx="13" cy="7" r="1"/>',
     saturator: '<path d="M2 13C7 13 5 3 14 3"/>', widener: '<path d="M3 3Q-1 8 3 13M13 3Q17 8 13 13M8 4v8"/>',
-    channel: '<path d="M5 2v12M11 2v12M3 6h4M9 10h4"/>', sampler: '<path d="M2 8h1M4 5v6M6 3v10M8 6v4M10 2v12M12 5v6M14 7v2"/>'
+    channel: '<path d="M5 2v12M11 2v12M3 6h4M9 10h4"/>', fm: '<path d="M1 8q2-6 4 0t4 0t4 0M3 13h10"/>', decorrelate: '<path d="M2 12V4M5 12V7M10 12V4M13 12V7"/>', sampler: '<path d="M2 8h1M4 5v6M6 3v10M8 6v4M10 2v12M12 5v6M14 7v2"/>'
   };
 
   Faces.define('kick', { glyph: G.kick, hero: heroKick, width: W(176, 440, 560),
@@ -532,6 +845,9 @@
   Faces.define('stab', { glyph: G.stab, hero: heroStab, width: W(176, 540, 620),
     sections: [sec('voice', ['spread', 'detune']), sec('filter', ['cutoff', 'res', 'env', 'decay']), sec('hp', ['hp']), sec('amp', ['attack', 'release']), sec('drive', ['drive']), OUT],
     strip: ['cutoff', 'res', 'spread', 'drive'] });
+  Faces.define('fm', { glyph: G.fm, hero: heroFM, width: W(176, 500, 620),
+    sections: [sec('operators', ['ratio', 'index', 'indexEnv', 'feedback']), sec('amp', ['attack', 'decay', 'sustain', 'release']), sec('mod env', ['modAttack', 'modDecay']), sec('pitch', ['detune', 'glide']), OUT],
+    strip: ['ratio', 'index', 'decay', 'release'] });
   Faces.define('clap', { glyph: G.clap, hero: heroClap, width: W(176, 400, 520),
     sections: [sec('burst', ['flams', 'flam', 'decay']), sec('tone', ['tone', 'q']), sec('tail', ['tail', 'tailDecay']), OUT], strip: ['tone', 'decay', 'tail'] });
   var HAT = function (glyph) { return { glyph: glyph, hero: heroHat, width: W(176, 360, 480),
@@ -565,18 +881,176 @@
   Faces.define('compressor', { glyph: G.compressor, hero: heroComp, live: true, width: W(176, 420, 520), heroH: { strip: 44, face: 100, window: 200 },
     sections: [sec('threshold', ['threshold', 'ratio', 'knee']), sec('timing', ['attack', 'release']), sec('out', ['makeup'])], strip: ['threshold', 'ratio', 'makeup'] });
   Faces.define('limiter', { glyph: G.limiter, hero: heroLimiter, live: true, width: W(176, 360, 480), heroH: { strip: 44, face: 100, window: 200 },
-    sections: [sec('level', ['threshold', 'ceiling']), sec('timing', ['release'])], strip: ['threshold', 'ceiling', 'release'] });
+    sections: [sec('level', ['threshold', 'ceiling']), sec('timing', ['release']), sec('clip', ['clipOn', 'clip'])], strip: ['threshold', 'ceiling', 'release'] });
   Faces.define('sidechain', { glyph: G.sidechain, hero: heroDuck, live: true, width: W(176, 360, 480),
     sections: [sec('duck', ['depth']), sec('envelope', ['attack', 'hold', 'release', 'curve'])], strip: ['depth', 'release'] });
   Faces.define('widener', { glyph: G.widener, hero: heroWidener, live: true, width: W(176, 260, 360),
     sections: [sec('width', ['width', 'monoBelow'])], strip: ['width'] });
   Faces.define('chorus', { glyph: G.chorus, hero: heroChorus, width: W(176, 340, 460),
     sections: [sec('modulation', ['rate', 'depth']), sec('voices', ['base', 'invert']), sec('mix', ['mix'])], strip: ['rate', 'depth', 'mix'] });
-  Faces.define('sampler', { glyph: G.sampler, hero: heroSampler, heroPointer: samplerPointer, sigExtra: function (d, host) { var id = P(d, host, 'buffer'); return !!bufferOf(d, host, id) + ':' + (audioInfo(host, id) ? 1 : 0); },
-    width: W(176, 460, 620), heroH: { strip: 44, face: 90, window: 200 },
+  Faces.define('sampler', { glyph: G.sampler, hero: heroSampler, heroPointer: samplerPointer, panels: PROGRAM_PANELS,
+    live: function (d, host) { return !!(d.ref && typeof d.ref === 'object' && P(d, host, 'program')); },
+    sigExtra: function (d, host) { var id = P(d, host, 'buffer'), s = selOf(d); watch(host); return !!bufferOf(d, host, id) + ':' + (audioInfo(host, id) ? 1 : 0) + ':' + GVER + ':' + s.ver + ':' + JSON.stringify(s.sel); },
+    width: W(176, 460, 700), heroH: { strip: 44, face: 90, window: 200 },
     options: { buffer: bufferOptions, choke: ['', 'A', 'B', 'C', 'D'] },
-    sections: [sec('sample', ['buffer', 'start', 'end', 'pitch']), sec('envelope', ['attack', 'release', { p: 'loop', widget: 'toggle' }, { p: 'reverse', widget: 'toggle' }]), sec('out', ['level', 'choke'])],
-    strip: ['start', 'end', 'pitch', 'level'] });
+    sections: [
+      sec('source', [{ p: 'program', options: programOptions, write: assignProgram }, 'buffer', 'key', 'shift', 'pitch', 'fine', 'start', 'end', { p: 'reverse', widget: 'toggle' }]),
+      sec('amp', ['delay', 'attack', 'hold', 'decay', 'sustain', 'release', 'veltrack']),
+      sec('filter', ['filter', 'cutoff', 'reso', 'fEnv', 'fAttack', 'fDecay', 'fSustain', 'fRelease', 'fKey', 'fVel']),
+      sec('lfo', ['vibRate', 'vibDepth', 'vibDelay', 'lfoWave', 'lfoRate', 'lfoCutoff', 'lfoAmp']),
+      sec('voice', [{ p: 'gate', widget: 'toggle' }, 'poly', 'choke', { p: 'loop', widget: 'toggle' }, 'level'])],
+    quick: ['pitch', 'attack', 'release', 'level', 'cutoff', 'key'],
+    strip: ['pitch', 'attack', 'release', 'level'] });
+  Faces.define('decorrelate', { glyph: G.decorrelate, hero: heroDecor, width: W(176, 300, 400), heroH: { strip: 40, face: 70, window: 140 },
+    sections: [sec('delay', ['time'])], strip: ['time'] });
   Faces.define('channel', { glyph: G.channel, hero: heroChannel, live: true, width: W(176, 280, 400), heroH: { strip: 44, face: 70, window: 110 },
     labels: { gain: 'level' }, sections: [sec('level', ['gain']), sec('pan', ['pan']), sec('mute', ['mute']), { title: 'sends', match: '^send\\.' }], strip: ['gain', 'pan', 'mute'] });
+  // ------------------------------------------------------------------ drum voices (A12, engine/drums.js): 27 types, 5 hero shapes
+  // One hero per shape, read from whichever params the voice has (so the three 808 toms and three congas, the 909 toms and the
+  // hats share a drawing). Controls marked basis 'prior' in the spec get a dotted ring (faces.js).
+  function pv(d, host, n, dflt) { var v = (d.spec && d.spec[n]) ? P(d, host, n) : undefined; return v == null ? dflt : v; }
+  var EXP60 = DB1000;
+  function envLine(c, g, T, fn, color, alpha) {
+    var pts = sample(90, function (u) { var t = u * T; return [g.x0 + u * g.w, g.y1 - clamp(fn(t), 0, 1) * g.h * 0.92]; });
+    area(c, pts, g.y1, color, alpha == null ? 0.18 : alpha); path(c, pts, color, 2);
+  }
+  // kick: pitch glide (log Hz) over the amplitude envelope. 808: tune x shift falling over shiftTime, droop; 909: start -> end with a time constant, hold, decay
+  function heroDKick(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), nine = pv(d, host, 'start', null) != null, f0, f1, T, pitch, amp;
+    if (nine) {
+      var st = pv(d, host, 'start', 274), en = pv(d, host, 'end', 53), tp = pv(d, host, 'tune', 0.007), hold = pv(d, host, 'hold', 0.06), td = pv(d, host, 'decay', 0.035);
+      T = Math.max(0.1, hold + td * 6); f0 = en; f1 = st;
+      pitch = function (t) { return en + (st - en) * Math.exp(-t / tp); };
+      amp = function (t) { return t < hold ? 1 : Math.exp(-(t - hold) / td); };
+    } else {
+      var tune = pv(d, host, 'tune', 50), shift = pv(d, host, 'shift', 2), sT = pv(d, host, 'shiftTime', 0.006), droop = pv(d, host, 'droop', 0.1), dec = pv(d, host, 'decay', 0.35);
+      T = Math.max(0.15, dec * 1.1); f0 = tune; f1 = tune * shift;
+      pitch = function (t) { return (t < sT ? tune * Math.pow(shift, 1 - t / sT) : tune) * (1 - droop * 0.2 * (t / dec)); };
+      amp = function (t) { return Math.exp(-t / dec * EXP60); };
+    }
+    function Y(f) { return g.y1 - lx(f, 30, 450) * g.h; }
+    if (!g.small) [50, 100, 200].forEach(function (f) { line(c, g.x0, Y(f), g.x1, Y(f), p.line, 1); txt(c, f, g.x1 - 2, Y(f) - 2, 'right'); });
+    envLine(c, { x0: g.x0, w: g.w, y1: g.y1, h: g.h * 0.5 }, T, amp, p.ink, 0.18);
+    path(c, sample(90, function (u) { var t = u * T; return [g.x0 + u * g.w, Y(pitch(t))]; }), p.ink, 2);
+    var click = pv(d, host, 'click', null);
+    if (click != null) line(c, g.x0 + 1, g.y1, g.x0 + 1, g.y1 - click * g.h * 0.6, p.fg, 2);
+    if (!g.small) { txt(c, Math.round(f1) + ' Hz', g.x0 + 4, Y(f1) - 3); txt(c, Math.round(f0) + ' Hz  ' + Math.round(T * 1000) + ' ms', g.x1, g.y1 + 10, 'right'); }
+  }
+  var TOM_HZ = { lt: 100, mt: 150, ht: 200, lc: 200, mc: 280, hc: 380 };
+  // toms and congas: short pitch sweep over the amplitude decay, a noise tail
+  function heroDTom(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), base = TOM_HZ[d.type.slice(0, 2)] || 150, nine = d.type.slice(2) === '909', f0, f1, tp, hold = 0, dec, T, nz;
+    if (nine) { f0 = pv(d, host, 'base', base) * Math.pow(2, pv(d, host, 'tune', 0)); f1 = f0 * (1 + pv(d, host, 'depth', 1)); tp = pv(d, host, 'pitchDecay', 0.1); hold = pv(d, host, 'hold', 0.03); dec = pv(d, host, 'decay', 0.08); nz = pv(d, host, 'noise', 0.05); }
+    else { f0 = base * (0.75 + 0.5 * pv(d, host, 'tune', 50) / 100); f1 = f0 * (1 + 2 * pv(d, host, 'sweep', 0.3)); tp = 0.012; dec = pv(d, host, 'decay', 0.2); nz = pv(d, host, 'noise', 0); }
+    T = Math.max(0.1, hold + dec * (nine ? 6 : 1.1));
+    function Y(f) { return g.y1 - lx(f, 40, 1200) * g.h; }
+    var amp = nine ? function (t) { return t < hold ? 1 : Math.exp(-(t - hold) / dec); } : function (t) { return Math.exp(-t / dec * EXP60); };
+    envLine(c, { x0: g.x0, w: g.w, y1: g.y1, h: g.h * 0.5 }, T, amp, p.ink, 0.18);
+    var nd = pv(d, host, 'noiseDecay', dec);
+    if (nz > 0) envLine(c, { x0: g.x0, w: g.w, y1: g.y1, h: g.h * 0.3 }, T, function (t) { return nz * Math.exp(-t / nd * EXP60); }, p.dim, 0.35);
+    path(c, sample(90, function (u) { var t = u * T; return [g.x0 + u * g.w, Y(f0 + (f1 - f0) * Math.exp(-t / tp))]; }), p.ink, 2);
+    if (!g.small) { txt(c, Math.round(f0) + ' Hz', g.x1 - 2, Y(f0) - 3, 'right'); txt(c, Math.round(T * 1000) + ' ms', g.x1, g.y1 + 10, 'right'); }
+  }
+  // snare: two resonators and the noise band on a log frequency axis
+  function heroDSnare(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), nine = d.type === 'sd909', f1, ratio = pv(d, host, 'ratio', 2), sn, nlo;
+    if (nine) { f1 = pv(d, host, 'base', 190) * Math.pow(2, pv(d, host, 'tune', 0)); sn = Math.pow(10, pv(d, host, 'snappy', 0) / 20) * 0.6; nlo = pv(d, host, 'hpf', 2000); }
+    else { f1 = pv(d, host, 'tune', 238); sn = pv(d, host, 'snappy', 0.5) * 1.1; nlo = 1000 + 3000 * pv(d, host, 'tone', 0.5); }
+    function X(f) { return g.x0 + lx(f, 80, 14000) * g.w; }
+    [100, 1000, 10000].forEach(function (f) { line(c, X(f), g.y0, X(f), g.y1, p.line, 1); if (!g.small) txt(c, fhz(f), X(f) + 2, g.y1 + 10); });
+    var x0 = X(nlo), nz = [[x0, g.y1], [x0, g.y1 - clamp(sn, 0, 1) * g.h * 0.5], [g.x1, g.y1 - clamp(sn, 0, 1) * g.h * 0.5], [g.x1, g.y1]];
+    c.beginPath(); c.moveTo(nz[0][0], nz[0][1]); nz.forEach(function (q) { c.lineTo(q[0], q[1]); }); c.closePath(); c.globalAlpha = 0.28; c.fillStyle = p.dim; c.fill(); c.globalAlpha = 1;
+    [[f1, 0.95], [f1 * ratio, 0.65]].forEach(function (r) { var x = X(r[0]); line(c, x, g.y1, x, g.y1 - r[1] * g.h * 0.92, p.ink, 3); dot(c, x, g.y1 - r[1] * g.h * 0.92, 3, p.ink); });
+    if (!g.small) { txt(c, Math.round(f1) + ' Hz', X(f1) - 3, g.y0 + 9, 'right'); txt(c, Math.round(f1 * ratio) + ' Hz', X(f1 * ratio) + 4, g.y0 + 9); txt(c, 'noise > ' + fhz(nlo), g.x1, g.y1 - 4, 'right'); }
+  }
+  var BANK = [205.3, 304.4, 369.6, 522.7, 540, 800];
+  // hats and cymbals: the six-oscillator metal bank as lines, the filter curve over them, and the voice's envelope
+  function heroDMetal(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), t = d.type, nine = /909$/.test(t), cb = t === 'cb808', L = region(g, 0, 0.62), R = region(g, 0.68, 1);
+    var ratio = nine ? Math.pow(2, pv(d, host, 'tune', 0)) : pv(d, host, 'tune', 1), spread = pv(d, host, 'spread', 0), freqs = cb ? BANK.slice(4) : BANK;
+    function X(f) { return L.x0 + lx(f, 150, 16000) * L.w; }
+    [1000, 10000].forEach(function (f) { line(c, X(f), L.y0, X(f), L.y1, p.line, 1); if (!g.small) txt(c, fhz(f), X(f) + 2, g.y1 + 10); });
+    var hp = pv(d, host, 'hp', 7000), tone = pv(d, host, 'tone', 0.5), bpf = cb ? pv(d, host, 'tone', 2640) : 3400;
+    function curve(fn, alpha, dashed) { path(c, sample(80, function (u) { var f = 150 * Math.pow(16000 / 150, u), db = clamp(fn(f), -40, 6); return [L.x0 + u * L.w, L.y1 - (db + 40) / 46 * L.h]; }), p.dim, 1.5, dashed); }
+    if (t === 'cy808') { curve(function (f) { return resp('bandpass', 3400, 1, 0, f) + 20 * Math.log10(Math.max(0.05, 1 - tone)); }, 1, true); curve(function (f) { return resp('highpass', 7000, 0, 0, f) + 20 * Math.log10(Math.max(0.05, tone)); }, 1, false); }
+    else if (!nine) { curve(function (f) { return resp('bandpass', bpf, 1, 0, f) + (cb ? 0 : resp('highpass', hp, 0, 0, f)); }, 1, false); }
+    else curve(function (f) { return resp('bandpass', 3400, 1, 0, f) + resp('highpass', 6000, 0, 0, f); }, 1, false);
+    freqs.forEach(function (f, i) {
+      var x = X(f * ratio); line(c, x, L.y1, x, L.y1 - L.h * 0.62, p.ink, 2);
+      if (spread > 0) { var j = f * ratio * 0.05 * spread; line(c, X(f * ratio - j), L.y1 - L.h * 0.3, X(f * ratio + j), L.y1 - L.h * 0.3, p.fg, 1); }
+    });
+    // envelope
+    var dec = pv(d, host, 'decay', 0.1), hold = pv(d, host, 'hold', 0), T, fn;
+    if (t === 'oh808') { T = Math.max(0.2, dec * 1.2); fn = function (u) { return u < 0.03 ? 1 - 0.75 * u / 0.03 : 0.25 * Math.exp(-(u - 0.03) / dec * EXP60); }; }
+    else if (t === 'ch808') { T = Math.max(0.1, dec * 1.3); fn = function (u) { return Math.exp(-u / dec * EXP60); }; }
+    else if (t === 'cy808') { T = dec * 1.1; fn = function (u) { return u < 0.005 ? u / 0.005 : Math.exp(-(u - 0.005) / dec * EXP60); }; }
+    else if (cb) { var fa = pv(d, host, 'fast', 0.015); T = Math.max(0.2, dec * 1.3); fn = function (u) { return u < fa ? 1 - 0.7 * u / fa : 0.3 * Math.exp(-(u - fa) / dec * EXP60); }; }
+    else if (t === 'cr909' || t === 'rd909') { T = t === 'cr909' ? 2.2 : 2.6; fn = function (u) { return Math.exp(-u / (T / 1.2) * EXP60 * 0.8); }; }
+    else { T = Math.max(0.05, hold + dec * 6); fn = function (u) { return u < hold ? 1 : Math.exp(-(u - hold) / dec); }; }
+    envLine(c, R, T, fn, p.ink, 0.2);
+    var cr = pv(d, host, 'crush', null);
+    if (cr != null && R.w > 20) for (var i = 0; i < Math.round(cr * 8); i++) line(c, R.x0 + 2 + i * 4, R.y0 + 2, R.x0 + 2 + i * 4, R.y0 + 8, p.fg, 2);
+    if (!g.small) { txt(c, (T >= 1 ? Math.round(T * 10) / 10 + ' s' : Math.round(T * 1000) + ' ms'), R.x1, g.y1 + 10, 'right'); if (ratio !== 1) txt(c, 'x' + (Math.round(ratio * 100) / 100), L.x0 + 2, g.y1 + 10); }
+  }
+  // claps: the burst train, then the tail
+  function heroDBurst(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), nine = d.type === 'cp909', n = Math.round(pv(d, host, 'bursts', 4)), sp = pv(d, host, nine ? 'spread' : 'spacing', 0.01), bd = pv(d, host, 'burstDecay', 0.008), dec = pv(d, host, 'decay', 0.2), tail = pv(d, host, 'tail', 0.5), i;
+    var tb = n * sp, T = tb + Math.max(dec, bd) * 1.1 + 0.01;
+    function X(t) { return g.x0 + t / T * g.w; }
+    for (i = 0; i < n; i++) path(c, [[X(i * sp), g.y1 - g.h * 0.8], [X(i * sp + bd * 3), g.y1]], p.ink, 2);
+    var tl = sample(60, function (u) { var t = u * dec; return [X(tb + t), g.y1 - Math.exp(-t / dec * EXP60) * (0.15 + 0.8 * tail) * g.h * 0.92]; });
+    area(c, tl, g.y1, p.ink, 0.2); path(c, tl, p.ink, 2); line(c, g.x0, g.y1, g.x1, g.y1, p.line, 1);
+    if (!g.small) txt(c, n + ' bursts x ' + (Math.round(sp * 10000) / 10) + ' ms   tail ' + Math.round(dec * 1000) + ' ms', g.x0 + 2, g.y1 + 10);
+  }
+  // rim, claves, maracas: resonator lines (log Hz) and a short envelope
+  function heroDShort(c, w, hh, d, host) {
+    var p = pal(), g = plot(w, hh, hh < 64), t = d.type, L = region(g, 0, 0.58), R = region(g, 0.64, 1), dec = pv(d, host, 'decay', 0.03), tune = pv(d, host, 'tune', 1), peaks, q = pv(d, host, 'q', 3);
+    if (t === 'rs808') peaks = [1700 * tune, 480 * tune]; else if (t === 'rs909') peaks = [1700 * tune]; else if (t === 'cl808') peaks = [tune, tune * 1.5]; else peaks = [];
+    function X(f) { return L.x0 + lx(f, 200, 12000) * L.w; }
+    [1000, 10000].forEach(function (f) { line(c, X(f), L.y0, X(f), L.y1, p.line, 1); });
+    if (t === 'ma808') { var hp = pv(d, host, 'tone', 5000); path(c, sample(60, function (u) { var f = 200 * Math.pow(60, u), db = clamp(resp('highpass', hp, 0, 0, f), -40, 3); return [L.x0 + u * L.w, L.y1 - (db + 40) / 43 * L.h]; }), p.ink, 2); }
+    peaks.forEach(function (f, i) {
+      var x = X(f), h0 = i ? 0.55 : 0.9;
+      if (t === 'rs909' || t === 'cl808') path(c, sample(40, function (u) { var ff = f * Math.pow(2, (u - 0.5) * 2); return [L.x0 + lx(ff, 200, 12000) * L.w, L.y1 - clamp(1 / (1 + Math.pow((ff / f - f / ff) * q, 2)), 0, 1) * h0 * L.h]; }), p.dim, 1);
+      line(c, x, L.y1, x, L.y1 - h0 * L.h, p.ink, 3);
+    });
+    var att = t === 'ma808' ? 0.003 : 0.0005, T = Math.max(0.03, dec * 1.4);
+    envLine(c, R, T, function (u) { return u < att ? u / att : Math.exp(-(u - att) / dec * EXP60); }, p.ink, 0.2);
+    var ck = pv(d, host, 'click', null); if (ck != null) line(c, R.x0 + 1, R.y1, R.x0 + 1, R.y1 - ck * R.h * 0.8, p.fg, 2);
+    if (!g.small) { txt(c, Math.round(dec * 1000) + ' ms', R.x1, g.y1 + 10, 'right'); if (peaks.length) txt(c, fhz(peaks[0]) + ' Hz', L.x0 + 2, g.y1 + 10); }
+  }
+
+  var SKIN808 = { ink: '#ff5a36', dim: '#a3402a', wash: '#2b0e08' }, SKIN909 = { ink: '#cfd3da', dim: '#767a82', wash: '#16171a' };
+  var DG = {   // glyphs
+    kick: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3"/>', snare: '<path d="M2 6h12M3 6v4Q8 13 13 10V6M5 3l2 3M11 3l-2 3"/>', clap: G.clap, hat: '<path d="M2 10Q8 4 14 10M8 10v4"/>',
+    cym: '<path d="M2 8Q8 2 14 8Q8 6 2 8M8 8v6"/>', tom: '<ellipse cx="8" cy="6" rx="5.5" ry="2.5"/><path d="M2.5 6v5Q8 14 13.5 11V6"/>', rim: '<path d="M3 12L8 4l5 8M5.5 8h5"/>', bell: '<path d="M4 12h8M5 12Q5 5 8 4Q11 5 11 12"/>', shaker: G.shaker
+  };
+  function drumFace(type, skin, hero, glyph, groups, strip, w) {
+    Faces.define(type, { glyph: glyph, hero: hero, skin: skin, width: W(176, w || 400, (w || 400) + 120), heroH: { strip: 44, face: 84, window: 180 },
+      sections: groups.map(function (g) { return sec(g[0], g[1]); }).concat([sec('out', ['drive', 'level'])]), strip: strip });
+  }
+  drumFace('bd808', SKIN808, heroDKick, DG.kick, [['pitch', ['tune', 'shift', 'shiftTime', 'droop']], ['body', ['decay', 'tone', 'click']]], ['tune', 'decay', 'tone']);
+  drumFace('sd808', SKIN808, heroDSnare, DG.snare, [['body', ['tune', 'ratio', 'decay']], ['snap', ['snappy', 'tone', 'noiseDecay']]], ['tune', 'tone', 'snappy']);
+  drumFace('cp808', SKIN808, heroDBurst, DG.clap, [['bursts', ['bursts', 'spacing', 'burstDecay']], ['tone', ['tone', 'q']], ['tail', ['decay', 'tail']]], ['tone', 'bursts', 'decay']);
+  drumFace('ch808', SKIN808, heroDMetal, DG.hat, [['metal', ['tune', 'spread']], ['filter', ['hp']], ['env', ['decay']]], ['tune', 'hp', 'decay']);
+  drumFace('oh808', SKIN808, heroDMetal, DG.hat, [['metal', ['tune', 'spread']], ['filter', ['hp']], ['env', ['decay']]], ['tune', 'hp', 'decay']);
+  drumFace('cy808', SKIN808, heroDMetal, DG.cym, [['metal', ['tune', 'spread']], ['filter', ['tone']], ['env', ['decay']]], ['tune', 'tone', 'decay']);
+  drumFace('cb808', SKIN808, heroDMetal, DG.bell, [['metal', ['tune']], ['filter', ['tone']], ['env', ['fast', 'decay']]], ['tune', 'tone', 'decay']);
+  ['lt', 'mt', 'ht', 'lc', 'mc', 'hc'].forEach(function (k) {
+    drumFace(k + '808', SKIN808, heroDTom, DG.tom, [['pitch', ['tune', 'sweep']], ['body', ['decay', 'click']], ['noise', ['noise', 'noiseDecay']]], ['tune', 'decay', 'sweep']);
+  });
+  drumFace('rs808', SKIN808, heroDShort, DG.rim, [['resonators', ['tune']], ['env', ['decay', 'click']]], ['tune', 'decay']);
+  drumFace('cl808', SKIN808, heroDShort, DG.rim, [['tone', ['tune', 'q']], ['env', ['decay']]], ['tune', 'decay']);
+  drumFace('ma808', SKIN808, heroDShort, DG.shaker, [['tone', ['tone']], ['env', ['decay']]], ['tone', 'decay']);
+  drumFace('bd909', SKIN909, heroDKick, DG.kick, [['pitch', ['start', 'end', 'tune']], ['body', ['attack', 'hold', 'decay']], ['click', ['clickDecay', 'clickLp']]], ['start', 'end', 'decay'], 460);
+  drumFace('sd909', SKIN909, heroDSnare, DG.snare, [['body', ['base', 'tune', 'ratio', 'bodyDecay']], ['glide', ['glide', 'glideTime']], ['snap', ['snappy', 'tone', 'hpf']]], ['tune', 'tone', 'snappy'], 460);
+  ['lt', 'mt', 'ht'].forEach(function (k) {
+    drumFace(k + '909', SKIN909, heroDTom, DG.tom, [['pitch', ['base', 'tune', 'depth', 'pitchDecay']], ['body', ['hold', 'decay']], ['noise', ['noise']]], ['tune', 'decay', 'depth']);
+  });
+  drumFace('rs909', SKIN909, heroDShort, DG.rim, [['resonator', ['tune', 'q']], ['env', ['decay']]], ['tune', 'q', 'decay']);
+  drumFace('cp909', SKIN909, heroDBurst, DG.clap, [['bursts', ['bursts', 'spread', 'burstDecay']], ['tone', ['tone', 'q']], ['tail', ['decay', 'tail']]], ['tone', 'bursts', 'decay']);
+  drumFace('ch909', SKIN909, heroDMetal, DG.hat, [['env', ['decay', 'hold']], ['crush', ['crush']]], ['decay', 'hold', 'crush']);
+  drumFace('oh909', SKIN909, heroDMetal, DG.hat, [['env', ['decay', 'hold']], ['crush', ['crush']]], ['decay', 'hold', 'crush']);
+  drumFace('cr909', SKIN909, heroDMetal, DG.cym, [['metal', ['tune']], ['crush', ['crush']]], ['tune', 'crush']);
+  drumFace('rd909', SKIN909, heroDMetal, DG.cym, [['metal', ['tune']], ['crush', ['crush']]], ['tune', 'crush']);
 })();

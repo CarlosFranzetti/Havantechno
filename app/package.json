@@ -1,15 +1,28 @@
 {
   "name": "havantechno",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Havantechno: a remix DAW (web and Electron, plain JavaScript, no bundler)",
   "main": "shell/main.js",
   "license": "AGPL-3.0-or-later",
   "private": true,
   "scripts": {
     "start": "electron .",
-    "web": "node ../tools/serve.js"
+    "web": "node ../tools/serve.js",
+    "icon": "node build/make-icon.js",
+    "pack": "electron-builder --config electron-builder.config.js --dir",
+    "dist": "electron-builder --config electron-builder.config.js",
+    "dist:linux": "electron-builder --config electron-builder.config.js --linux",
+    "dist:mac": "electron-builder --config electron-builder.config.js --mac",
+    "dist:win": "electron-builder --config electron-builder.config.js --win"
   },
   "devDependencies": {
-    "electron": "45.0.0"
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0"
+  },
+  "author": "Havantechno contributors",
+  "homepage": "https://github.com/CarlosFranzetti/havantechno",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CarlosFranzetti/havantechno.git"
   }
 }

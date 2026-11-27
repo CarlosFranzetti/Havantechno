@@ -13,10 +13,13 @@
   var shell = root.HavantechnoShell || null;
 
   var LS_VIEW = 'hv.view';
+  // Pressing Crew V2: Mixer (ui/mixer-view.js) and Clips (ui/clip-view.js) join the switch; Tab switches System Editor
+  // and Step View, or Mixer and Clips; Ctrl/Cmd or Alt + 1..4 picks one (log-V2.md)
   var VIEWS = [
-    { id: 'system', label: 'System Editor', global: 'SystemEditor' },
-    { id: 'step', label: 'Step View', global: 'StepView' },
-    { id: 'mixer', label: 'Mixer', global: null }
+    { id: 'system', label: 'System Editor', global: 'SystemEditor', key: '1' },
+    { id: 'step', label: 'Step View', global: 'StepView', key: '2' },
+    { id: 'mixer', label: 'Mixer', global: 'MixerView', key: '3' },
+    { id: 'clips', label: 'Clips', global: 'ClipView', key: '4' }
   ];
 
   // ------------------------------------------------------------------ helpers
@@ -84,6 +87,7 @@
     '.ap-meter-fb{width:120px;height:8px;background:var(--line,#2a2a3a);position:relative}',
     '.ap-meter-fb>i{position:absolute;left:0;top:0;bottom:0;background:var(--on,#75f97f);width:0}',
     '.ap-spacer{flex:1 1 0}',
+    '.ap-right{margin-left:auto;flex-wrap:nowrap;gap:6px}',
     '.ap-view{height:100%;position:relative;overflow:auto}',
     '.ap-note{padding:24px;color:var(--dim,#8a8aa0)}',
     '.ap-menu{position:fixed;z-index:900;min-width:200px;background:var(--panel-raised,#1b1b26);border:1px solid var(--line,#2a2a3a);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.6);padding:4px;color:var(--fg,#d8d8e6)}',
@@ -126,10 +130,17 @@
     save: doSave,
     open: doOpen,
     exportWav: doExport,
+    exportAudio: function () { return doExportDialog(); },
+    importAudio: function () { return doImportAudio(); },
+    openSettings: function (tab) { return openSettings(tab); },
     undo: function () { return doUndo(false); },
     redo: function () { return doUndo(true); },
     toast: toast,
     relinkMissing: relinkMissing,
+    importTrack: doImport,
+    showReport: function () { return openReport(); },
+    closeReport: function () { return closeReport(); },
+    toggleAB: function () { return toggleAB(); },
     boot: boot
   };
 
@@ -198,6 +209,13 @@
       audio: function () { return host.audio(); },
       loadAudio: function (src, o) { return host.loadAudio(src, o); },
       transportPos: function () { return host.transport.pos(); },
+      // Patch Crew P4: panels in child windows edit steps, add tracks and start/stop through these
+      document: function () { return host.document(); },
+      editor: function () { return host.editor(); },
+      commit: function () { return host.commit(); },
+      transportToggle: function () { return host.transport.toggle(); },
+      transportStop: function () { return host.transport.stop(); },
+      audition: function (t, o) { return typeof host.audition === 'function' ? host.audition(t, o) : false; },
       playing: function () { return !!host.transport.playing; },
       on: function (type, fn) { return host.on(type, fn); },
       off: function (type, fn) { return host.off(type, fn); },
@@ -258,7 +276,101 @@
       toast('Exported ' + name + '.wav');
       return { name: name + '.wav' };
     }).then(function (r) { finish(); return r; }, function (e) { report('export', e); toast('Export failed: ' + (e && e.message ? e.message : e)); finish(); return null; });
-    function finish() { S.busy = false; if (b) { b.disabled = false; b.textContent = 'Export WAV'; } }
+    function finish() { S.busy = false; if (b) { b.disabled = false; b.textContent = 'Export\u2026'; } }
+  }
+
+  // ---- Export… (ui/export-dialog.js on V1's calls); the plain 16-bit whole-song path stays the fallback
+  function XD() { return root.ExportDialog || null; }
+  function doExportDialog() {
+    var h = S.host, xd = XD();
+    if (!h) return Promise.resolve(null);
+    var av = xd && typeof xd.available === 'function' ? xd.available(h) : { ok: false };
+    if (!av.ok) return doExport();
+    try { return xd.open(h, { shell: shell, toast: toast }); } catch (e) { report('export dialog', e); return doExport(); }
+  }
+  function doImportAudio() {
+    var h = S.host, xd = XD();
+    if (!h) return Promise.resolve([]);
+    if (!xd || typeof xd.importAudio !== 'function') { toast('Import audio is not available: ui/export-dialog.js did not load.'); return Promise.resolve([]); }
+    return xd.importAudio(h, { shell: shell, toast: toast });
+  }
+  function importAudioWhy() {
+    var h = S.host;
+    if (!XD()) return 'ui/export-dialog.js did not load.';
+    if (!h || typeof h.addAudioTrack !== 'function') return 'Audio tracks are not in this engine yet (host.addAudioTrack is missing).';
+    return '';
+  }
+  function openSettings(tab) {
+    var St = root.Settings;
+    if (!St || typeof St.open !== 'function') { toast('Settings are not available: ui/settings.js did not load.'); return false; }
+    return St.open(tab);
+  }
+  // device windows open on the panel or the controls (Settings 'view.deviceOpen'): Windows remembers the view per device
+  // in hv.win.<id>; a device opened for the first time gets 'controls' written there before Windows.open reads it
+  function wrapWindows() {
+    var W = root.Windows;
+    if (!W || W.__v2wrapped || typeof W.open !== 'function') return;
+    var orig = W.open;
+    W.open = function (id) {
+      try {
+        if (root.Settings && root.Settings.get('view.deviceOpen') === 'controls' && id) {
+          var k = 'hv.win.' + id, sv = null;
+          try { sv = JSON.parse(root.localStorage.getItem(k) || 'null'); } catch (e1) { sv = null; }
+          if (!sv || !sv.v) { sv = sv && typeof sv === 'object' ? sv : {}; sv.v = 'controls'; try { root.localStorage.setItem(k, JSON.stringify(sv)); } catch (e2) { /* blocked */ } }
+        }
+      } catch (e) { report('deviceOpen', e); }
+      return orig.apply(W, arguments);
+    };
+    W.__v2wrapped = true;
+  }
+  // saved audio options (Settings 'audio.*'): passed to Host.create as opts.audio (bootMain); only the output device is
+  // applied again once audio runs (setSinkId needs a running context; the rate and latency are already in it)
+  function applyAudioSettings(host) {
+    var St = root.Settings;
+    if (!St || typeof host.setAudioOptions !== 'function') return;
+    if (!St.get('audio.sinkId')) return;
+    var o = { sinkId: St.get('audio.sinkId') };
+    try { Promise.resolve(host.setAudioOptions(o)).then(null, function (e) { report('setAudioOptions', e); }); } catch (e) { report('setAudioOptions', e); }
+  }
+
+  // ---- import, report, A/B (Dubplate Crew D2; ui/import-view.js)
+  function IV() { return root.ImportView || null; }
+  function doImport() {
+    var h = S.host, iv = IV();
+    if (!h) return Promise.resolve(null);
+    if (!iv || typeof iv.importTrack !== 'function') { toast('Import is not available: ui/import-view.js did not load.'); return Promise.resolve(null); }
+    return iv.importTrack(h, { shell: shell, toast: toast, onDone: function () { openReport(); } });
+  }
+  function openReport() {
+    var h = S.host, iv = IV();
+    if (!h || !iv || typeof iv.mount !== 'function') return false;
+    if (S.report) { S.report.refresh(true); S.report.focus(); return true; }
+    var host_ = doc.getElementById('view');
+    try {
+      S.report = iv.mount(host_, h, { onClose: closeReport });
+      if (S.bar.report) S.bar.report.setAttribute('aria-pressed', 'true');
+      S.report.focus();
+    } catch (e) { report('report', e); S.report = null; return false; }
+    return true;
+  }
+  function closeReport() {
+    if (!S.report) return false;
+    try { S.report.dispose(); } catch (e) { report('report dispose', e); }
+    S.report = null;
+    if (S.bar.report) { S.bar.report.setAttribute('aria-pressed', 'false'); try { S.bar.report.focus(); } catch (e2) { /* ignore */ } }
+    return true;
+  }
+  function reportWhy() {
+    var h = S.host;
+    if (!IV()) return 'The report view did not load (ui/import-view.js).';
+    if (!h || typeof h.analysis !== 'function') return 'This engine keeps no analysis yet (host.analysis is missing).';
+    var a = null; try { a = h.analysis(); } catch (e) { a = null; }
+    return a ? '' : 'No analysis in this song: import a track first.';
+  }
+  function toggleAB() {
+    if (S.bar.abCtl) return S.bar.abCtl.toggle();
+    toast('A/B is not available: ui/import-view.js did not load.');
+    return null;
   }
 
   // ---- views
@@ -268,7 +380,6 @@
   }
   function showView(id) {
     var h = S.host; if (!h) return false;
-    if (id === 'mixer') { toast('The Mixer drawer is not built yet.', 2500); return false; }
     var spec = null, i;
     for (i = 0; i < VIEWS.length; i++) if (VIEWS[i].id === id) spec = VIEWS[i];
     if (!spec) return false;
@@ -299,11 +410,15 @@
     }
     return true;
   }
+  // Tab switches within a pair, as it always switched System Editor and Step View: the two editing views, and the Mixer
+  // with the Clips (V2's choice, log-V2.md); Ctrl/Cmd or Alt + 1..4 picks any view
+  var PAIR = { system: 'step', step: 'system', mixer: 'clips', clips: 'mixer' };
   function toggleView() {
-    var next = S.viewId === 'system' ? 'step' : 'system';
+    var next = PAIR[S.viewId] || 'system';
     if (!viewAvailable(next)) return false;
     return showView(next);
   }
+  function viewByKey(d) { for (var i = 0; i < VIEWS.length; i++) if (VIEWS[i].key === d) return VIEWS[i].id; return null; }
   function refreshSwitch() {
     var btns = S.bar.viewBtns || {};
     for (var id in btns) if (btns.hasOwnProperty(id)) btns[id].setAttribute('aria-pressed', id === S.viewId ? 'true' : 'false');
@@ -320,19 +435,21 @@
       if (key === 'o') { doOpen(); return true; }
       if (key === 'z' && !k.inField) { doUndo(!!k.shift); return true; }
       if (key === 'y' && !k.inField) { doUndo(true); return true; }
-      if (key === '1') { showView('system'); return true; }
-      if (key === '2') { showView('step'); return true; }
+      if (viewByKey(key)) { showView(viewByKey(key)); return true; }
+      if (key === ',' && !k.shift) { openSettings(); return true; }
+      if (key === 'e' && k.shift) { doExportDialog(); return true; }
       return false;
     }
     if (k.alt && !mod && !k.shift) {
-      if (k.code === 'Digit1') { showView('system'); return true; }
-      if (k.code === 'Digit2') { showView('step'); return true; }
+      var dg = /^Digit([1-4])$/.exec(k.code || '');
+      if (dg && viewByKey(dg[1])) { showView(viewByKey(dg[1])); return true; }
       return false;
     }
     if (mod || k.alt || k.inField) return false;
     if (k.key === ' ' || k.code === 'Space') { if (!k.repeat) { try { h.transport.toggle(); } catch (e) { report('toggle', e); } } return true; }
     if (k.key === 'Tab' && !k.shift) { if (!k.repeat) toggleView(); return true; }
     if (key === 'v' && !k.shift) { if (!k.repeat && root.Windows) root.Windows.toggleAll(); return true; }
+    if (key === 'a' && !k.shift) { if (!k.repeat) toggleAB(); return true; }        // D2: A/B (song or reference)
     return false;
   }
   function installKeys() {
@@ -360,9 +477,10 @@
     seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'View');
     B.viewBtns = {};
     VIEWS.forEach(function (v) {
-      var b = button('', v.label, v.id === 'mixer' ? 'Mixer drawer (placeholder)' : v.label + ' (Tab switches System Editor and Step View)');
+      var b = button('', v.label, v.label + ' (Ctrl/Cmd+' + v.key + ' or Alt+' + v.key + '; Tab switches it with ' + (v.id === 'system' ? 'Step View' : v.id === 'step' ? 'the System Editor' : v.id === 'mixer' ? 'Clips' : 'the Mixer') + ')');
       b.setAttribute('aria-pressed', 'false');
-      if (v.id === 'mixer') { b.disabled = true; b.title = 'Mixer drawer: not built yet'; }
+      b.setAttribute('data-view-switch', v.id);
+      if (!viewAvailable(v.id)) { b.disabled = true; b.title = v.label + ': its file did not load'; }
       b.addEventListener('click', function () { showView(v.id); });
       B.viewBtns[v.id] = b;
       seg.appendChild(b);
@@ -414,9 +532,15 @@
     B.pos.title = 'bar · step · section';
     bar.appendChild(B.pos);
 
-    B.ab = button('', 'A/B', 'Compare with the reference (not available yet)');
-    B.ab.disabled = true;
-    bar.appendChild(B.ab);
+    // A/B, level match and reference gain (D2, ui/import-view.js); the placeholder stays if that file is missing
+    if (IV() && typeof IV().abControl === 'function') {
+      try { B.abCtl = IV().abControl(host, { toast: toast }); bar.appendChild(B.abCtl.el); } catch (e) { report('abControl', e); B.abCtl = null; }
+    }
+    if (!B.abCtl) {
+      B.ab = button('', 'A/B', 'A/B is not available: ui/import-view.js did not load');
+      B.ab.disabled = true;
+      bar.appendChild(B.ab);
+    }
 
     var mw = el('span', 'ap-meter');
     mw.title = 'Master level';
@@ -429,12 +553,15 @@
     }
     bar.appendChild(mw);
 
-    bar.appendChild(el('span', 'ap-spacer'));
+    // D2: the project actions are one right-aligned cluster; when the bar is too narrow for everything (1440 px with the
+    // A/B group) the cluster wraps to a second row as a unit instead of splitting mid-group
+    var right = el('div', 'ap-grp ap-right');
+    bar.appendChild(right);
 
     B.rel = button('', 'Re-enable arranged (0)', 'Hand held parameters back to the arrangement');
     B.rel.disabled = true;
     B.rel.addEventListener('click', function () { try { host.releaseAll(); } catch (e) { report('releaseAll', e); } });
-    bar.appendChild(B.rel);
+    right.appendChild(B.rel);
 
     var ur = el('div', 'ap-seg');
     B.undo = button('', '\u21B6', 'Undo (Ctrl/Cmd+Z)');
@@ -443,24 +570,50 @@
     B.undo.addEventListener('click', function () { doUndo(false); });
     B.redo.addEventListener('click', function () { doUndo(true); });
     ur.appendChild(B.undo); ur.appendChild(B.redo);
-    bar.appendChild(ur);
+    right.appendChild(ur);
 
     var sv = el('div', 'ap-seg');
     B.save = button('', 'Save', 'Save the song (Ctrl/Cmd+S)');
     B.open = button('', 'Open', 'Open a song (Ctrl/Cmd+O)');
     B.save.addEventListener('click', doSave);
     B.open.addEventListener('click', doOpen);
-    sv.appendChild(B.save); sv.appendChild(B.open);
-    bar.appendChild(sv);
+    B.imp = button('', 'Import\u2026', 'Import a track: analyse it, build a recreation beside it, save it as a project');
+    B.imp.addEventListener('click', doImport);
+    sv.appendChild(B.save); sv.appendChild(B.open); sv.appendChild(B.imp);
+    right.appendChild(sv);
 
-    B.export = button('', 'Export WAV', 'Render the whole song to a WAV file');
-    B.export.addEventListener('click', doExport);
-    bar.appendChild(B.export);
+    B.report = button('', 'Report', 'Show the analysis report');
+    B.report.setAttribute('aria-pressed', 'false');
+    B.report.addEventListener('click', function () {
+      var why = reportWhy();
+      if (why) { toast(why); return; }
+      if (S.report) closeReport(); else openReport();
+    });
+    right.appendChild(B.report);
+
+    // V2: Export… opens the export dialog (mix, stems, span, format) when the engine has host.exportAudio, else it
+    // renders the whole song to one 16-bit WAV as before; Audio… adds audio files as audio tracks at the playhead
+    var xs = el('div', 'ap-seg');
+    B.export = button('', 'Export\u2026', 'Export audio: the mix or stems, the song or a span (Ctrl/Cmd+Shift+E)');
+    B.export.addEventListener('click', function () { doExportDialog(); });
+    B.impAudio = button('', 'Audio\u2026', 'Import audio files as audio tracks at the playhead');
+    B.impAudio.addEventListener('click', function () {
+      var why = importAudioWhy();
+      if (why) { toast(why, 5000); return; }
+      doImportAudio();
+    });
+    xs.appendChild(B.export); xs.appendChild(B.impAudio);
+    right.appendChild(xs);
 
     B.win = button('', 'Windows', 'Device windows: hide all, tile, cascade, link');
     B.win.setAttribute('aria-haspopup', 'menu'); B.win.setAttribute('aria-expanded', 'false');
     B.win.addEventListener('click', function () { toggleWinMenu(); });
-    bar.appendChild(B.win);
+    right.appendChild(B.win);
+
+    B.settings = button('', 'Settings', 'Settings: audio, view, about (Ctrl/Cmd+,)');
+    B.settings.setAttribute('aria-haspopup', 'dialog');
+    B.settings.addEventListener('click', function () { openSettings(); });
+    right.appendChild(B.settings);
 
     frame.appendChild(bar);
   }
@@ -533,6 +686,7 @@
     if (doc.activeElement !== B.bpm) { var bv = h.bpm(); var bs = String(Math.round(bv * 100) / 100); if (B.bpm.value !== bs) B.bpm.value = bs; }
     if (doc.activeElement !== B.swing) { var sv = h.swing(); var ssv = (Math.round(sv * 100) / 100).toFixed(2); if (B.swing.value !== ssv) B.swing.value = ssv; }
     try { var m = h.meter('master'); B.meter.set(m && m.level ? m.level : 0); } catch (e3) { /* no meter yet */ }
+    if (B.abCtl && S.frame % 4 === 0) { try { B.abCtl.update(); } catch (e6) { report('abControl', e6); } }
     if (S.frame % 4 === 0) {
       var n = 0; try { n = h.heldCount(); } catch (e4) { n = 0; }
       if (B._held !== n) { B._held = n; B.rel.textContent = 'Re-enable arranged (' + n + ')'; B.rel.disabled = n === 0; }
@@ -542,6 +696,21 @@
       try { var ed = h.editor(); cu = !!ed.canUndo(); cr = !!ed.canRedo(); } catch (e5) { /* ignore */ }
       if (B.undo.disabled === cu) B.undo.disabled = !cu;
       if (B.redo.disabled === cr) B.redo.disabled = !cr;
+      var iw = importAudioWhy();
+      if (B._iw !== iw) {
+        B._iw = iw;
+        if (iw) { B.impAudio.setAttribute('aria-disabled', 'true'); B.impAudio.title = iw; }
+        else { B.impAudio.removeAttribute('aria-disabled'); B.impAudio.title = 'Import audio files as audio tracks at the playhead'; }
+      }
+      var xa = XD() && typeof XD().available === 'function' ? XD().available(h) : { ok: false, why: '' };
+      var xt = xa.ok ? 'Export audio: the mix or stems, the song or a span (Ctrl/Cmd+Shift+E)' : 'Export the whole song as one 16-bit WAV (' + (xa.why || 'the export dialog did not load') + ')';
+      if (B.export.title !== xt) B.export.title = xt;
+      var rw = reportWhy();
+      if (B._rw !== rw) {
+        B._rw = rw;
+        if (rw) { B.report.setAttribute('aria-disabled', 'true'); B.report.title = rw; }
+        else { B.report.removeAttribute('aria-disabled'); B.report.title = 'Show the analysis report'; }
+      }
       var wc = root.Windows ? root.Windows.count() : 0;
       var wt = 'Windows' + (wc ? ' (' + wc + ')' : '') + (wc && root.Windows.isHidden() ? ' hidden' : '');
       if (B.win.textContent !== wt) B.win.textContent = wt;
@@ -598,6 +767,7 @@
           return;
         }
         overlay.hidden = true; S.started = true;
+        applyAudioSettings(host);
         afterStart(host, true);
       }
       var p;
@@ -641,6 +811,11 @@
     try {
       if (new root.URLSearchParams(root.location.search).get('song') === 'v2' && root.Song && typeof root.Song.documentV2 === 'function') opts.doc = root.Song.documentV2();
     } catch (e0) { report('song param', e0); }
+    // V2: the saved audio options (Settings 'audio.*') go to the engine before its context exists (V1's opts.audio)
+    try {
+      var St0 = root.Settings;
+      if (St0 && typeof St0.get === 'function') opts.audio = { latencyHint: St0.get('audio.latencyHint'), sampleRate: St0.get('audio.sampleRate') || 0, sinkId: St0.get('audio.sinkId') || '' };
+    } catch (e00) { report('audio settings', e00); }
     try { host = root.Host.create(opts); } catch (e) {
       report('Host.create', e);
       viewEl.appendChild(el('div', 'ap-note', 'The engine could not start: ' + (e && e.message ? e.message : e)));
@@ -656,12 +831,15 @@
     doc.body.appendChild(S.toastEl);
 
     if (root.Windows) root.Windows.init({ host: host, layer: doc.getElementById('windows') });
+    wrapWindows();
+    if (root.Settings && typeof root.Settings.attach === 'function') { try { root.Settings.attach(host, { shell: shell, toast: toast }); } catch (e1) { report('Settings.attach', e1); } }
     buildBar(host);
     S.viewHost = el('div', 'ap-view');
     viewEl.appendChild(S.viewHost);
 
-    var first = lsGet(LS_VIEW);
-    if (first !== 'step' || !viewAvailable('step')) first = 'system';
+    var pref = root.Settings && typeof root.Settings.get === 'function' ? root.Settings.get('view.default') : 'last';
+    var first = pref && pref !== 'last' ? pref : lsGet(LS_VIEW);
+    if (!first || !viewAvailable(first)) first = 'system';
     showView(first);
 
     try {
@@ -703,12 +881,14 @@
 
     var subs = [];
     var h = {};
-    ['setParam', 'getParam', 'hold', 'release', 'releaseAll', 'heldCount', 'isHeld', 'device', 'devices', 'meter', 'sections', 'tracks', 'sends', 'bpm', 'swing', 'totalBars', 'mute', 'solo', 'bypass', 'isBypassed', 'audio', 'loadAudio'].forEach(function (n) {
+    ['setParam', 'getParam', 'hold', 'release', 'releaseAll', 'heldCount', 'isHeld', 'device', 'devices', 'meter', 'sections', 'tracks', 'sends', 'bpm', 'swing', 'totalBars', 'mute', 'solo', 'bypass', 'isBypassed', 'audio', 'loadAudio', 'document', 'editor', 'commit', 'audition'].forEach(function (n) {
       if (typeof bridge[n] === 'function') h[n] = function () { return bridge[n].apply(bridge, arguments); };
     });
     h.on = function (type, fn) { subs.push([type, fn]); bridge.on(type, fn); return h; };
     h.off = function (type, fn) { bridge.off(type, fn); return h; };
     h.transport = { pos: function () { return bridge.transportPos(); } };
+    if (typeof bridge.transportToggle === 'function') h.transport.toggle = function () { return bridge.transportToggle(); };
+    if (typeof bridge.transportStop === 'function') h.transport.stop = function () { return bridge.transportStop(); };
     Object.defineProperty(h.transport, 'playing', { enumerable: true, get: function () { return bridge.playing(); } });
 
     var emb;

@@ -67,6 +67,44 @@ the section, or absolute), `--tail s` (appended to the window, default 0), `--js
   mainA 1.05 to 1.08 s. The 16-bar window is the scoring length; the full song is feasible now but is
   not needed for the per-section checks.
 
+## render.js: labels, `--labels-only`, `--sampler-from` (D3, 2026-11-11)
+
+Spec: `docs/research/2026-11-09-lab-crew/transcripts/log-L2.md` section 10. Every other option and the WAV are
+unchanged; the one change for callers that use no new flag is the extra `labels` key in each sidecar.
+
+- **`labels`** (every sidecar): an object keyed by track id, one entry per track that has at least one trigger in
+  the rendered bars, plus `_master` (the master chain's unit types). Entry fields: `element`, `type` (the
+  instrument as `Synths.create` got it), `family` (`synth`, `drums`, `classic`, `sampler`), `machine` (`tr808`,
+  `tr909`, `other`), `source` (`synth`, or `sample` for a sampler track and for the TR-909 hats and cymbals, which
+  `tools/analysis-truth.js` also labels as samples), `params` (the instrument's params at the first rendered bar,
+  after the arrangement's `set` values and ramps up to there), `polyphony` (most notes sounding at once, each
+  note lasting `dur` plus the `release` param if there is one; a chord counts its notes), `notes` (sorted unique
+  MIDI numbers), `reverb` and `delay` (`{send, ...the send processor's params, kind: 'shared (send or bus)'}`,
+  reverb `rt60` being its `size` param in seconds and `predelayMs` its `predelay`; `{present: false}` when the
+  track's send is 0), `soloed`, and `events` (trigger count). The events are recorded from a dry `Sequencer`
+  built from the same document the render used, scheduling the same bars, so they are the engine's own and not a
+  re-derivation. Not covered: per-section changes to send levels, parameter locks beyond the first bar, and a
+  track bypassed or muted by the host (a muted track still lists as sounding). With `--solo`, every track that
+  has triggers is listed, `soloed` marks the ones soloed.
+- **`--labels-only`**: writes only the sidecar (`wav: null`, `labelsOnly: true`, `gridStartSample` and
+  `latencySamples` null because no latency probe runs; `lengthSamples` is what a render would give). 0.8 s wall
+  for mainA, 0.01 s of it in the labels.
+- **`--sampler-from <track>[:rr3|:pitched]`** (app page): the song is rendered with that track's instrument
+  replaced by a sampler playing a capture of the instrument, on the same cells, channel strip, sends and
+  sidechain. The capture is made with one instance of the instrument in one offline context at the hit's own
+  velocity, from the first hit at or after the first rendered bar; the sampler's `level` is set to undo its own
+  velocity scaling at that velocity, and its attack to the minimum 0.5 ms. Plain: first hit, the track's `kind`
+  becomes `drum` so no note transposes it. `:rr3`: the first three hits go to a program as round robins (hit
+  index modulo 3 picks the region); the label `roundRobin.meanAbsDiffRatio` says how different the three
+  captures really are (a deterministic voice gives about 0). `:pitched`: one note, played back with `pitch`
+  set so the captured note replays as heard, and transposed to each event's MIDI; the note must be within 24
+  semitones of 48. The sidecar names `samplerFrom`, the file gets `-smp-<track>[-rr3|-pitched]`, and the track's
+  labels become `type: 'sampler'`, `family: 'sampler'`, `source: 'sample'` plus `sampleOf`, `sampleMode`,
+  `sampleHits`, `sampleSeconds`, `sampleBuffers`, `samplePitch`, `roundRobin`, `sampleNote`. L2's
+  `:<bars>` form (capture the first N bars) is not built. The replay is not sample-exact against the synth:
+  the plain kick's own first and second hit differ (residual -7 dB in a solo render), so one capture cannot match
+  both; measure a sample-truth score against the labels, not a null test against the synth render.
+
 ## score.py: input, windows and the reference grid
 
 - Everything is decoded to 44.1 kHz stereo float32 with ffmpeg.
@@ -267,3 +305,19 @@ O1's (round 4 and round 2, section 5) and used only as reference points.
 correlation (identical and independent noise), tempo (126 BPM click train), kick glide (synthetic 264/51/24 ms),
 sub duck (synthetic 0.8 duck). `node --check tools/render.js` passes. Renders and scores are recorded in
 `docs/research/2026-10-23-build-crew/transcripts/log-A9.md`.
+
+## solo-bundle.js: hosted bundles of the solo pages
+
+`node tools/solo-bundle.js app/solo/303.html [--out tools/out/bundles/303] [--note "engine version"] [--test]`, or `--all` for every `app/solo/*.html`.
+Turns a solo page into `tools/out/bundles/<name>/` (git-ignored build output): the fragment `<name>.html` (no doctype, html, head or body; starts
+with `<title>`, the `claude:viewport-fit-sides` meta, ONE inlined `<style>` with a bare dark `:root` token block, body side padding by safe-area
+`max()`, doubled gutters and body margins removed, colour literals in the page's own CSS turned into tokens, then markup, then scripts with
+relative paths and no `..`), the referenced files copied unchanged under `engine/`, `engine/worklets/` (read from `Worklets.files`), `ui/` and
+the page's own scripts, `files.json` (published path to absolute path in the bundle), and `test.html` (fragment in a skeleton imitating the
+host head). It fails on any absolute URL, `alert`/`confirm`/`prompt`, or CSS `url()`/`@import`; it only warns about code that can start a
+download or sets `style.display`. A static lint always runs on the written fragment. `--test` serves the bundle on a free port, loads
+`test.html` at 1280x800 and as an iPhone 13, taps the start control (`#so-start`, tried first, plus a list; `--start-selector` overrides),
+waits, then reports page errors, console errors, failed or off-host requests, the engine kind (`window.HVT303`, or any `window.HVT*`/`Solo*`
+object with `host()`, such as the `global` a `Solo.boot` page names), sound (nine master-meter reads over two seconds; the first only attaches
+the analyser), horizontal overflow, and saves `shot-*.png` in the bundle. Exit code 1 on any failure. Not covered: audible quality,
+real iOS Safari, and the host's actual wrapper.

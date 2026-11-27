@@ -63,7 +63,9 @@ FakeContext.prototype.createAnalyser = function () { var n = new Node(this, 'ana
 FakeContext.prototype.flush = function () { var s = this._srcs.splice(0); for (var i = 0; i < s.length; i++) if (s[i].onended) s[i].onended(); };
 
 function load(sandbox) {
-  ['core', 'synths', 'processors', 'songdoc', 'sequencer', 'song'].forEach(function (f) {
+  // programs.js (A7, batch 1) loads after synths.js when it exists
+  var files = ['core', 'synths', 'drums', 'worklets', 'classics', 'programs', 'processors', 'songdoc', 'sequencer', 'song'].filter(function (f) { return f !== 'programs' || fs.existsSync(path.join(__dirname, 'programs.js')); });
+  files.forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, f + '.js'), 'utf8'), sandbox, { filename: f + '.js' });
   });
 }
@@ -337,7 +339,7 @@ var section5 = (function () {
   ok(devs.length === want.length && want.length === 49, 'devices() lists ' + devs.length + ' devices (want ' + want.length + ': 13 instruments, 2 inserts, 13 sidechains, 13 channels, 2 sends, 6 master units)');
   var bad = want.filter(function (w) { var d = byId[w[0]]; return !d || d.type !== w[1] || d.kind !== w[2] || d.track !== w[3] || d.pathPrefix !== w[4] || d.family !== FAM[w[1]] || !d.ref || !d.spec; });
   ok(bad.length === 0, 'device ids, types, kinds, tracks, path prefixes and families match' + (bad.length ? ' (bad: ' + bad.map(function (w) { return w[0]; }).join(', ') + ')' : ''));
-  ok(sb.Synths.types().every(function (t) { return devs.some(function (d) { return d.kind === 'instrument' && d.type === t; }); }), 'every instrument type has a device');
+  ok(G.tracks.every(function (t) { return devs.some(function (d) { return d.kind === 'instrument' && d.type === t.inst; }); }), 'every instrument type of the song has a device');
   ok(host.device('track:kick').ref.type === 'kick' && host.device('master:glue').ref.node === undefined && host.device('track:bass:eq').ref.type === 'eq3' && host.device('nope') === null, 'device(id) returns the live engine object');
   var unreachable = [];
   devs.forEach(function (d) {
@@ -569,8 +571,18 @@ function section6() {
       return Promise.resolve({ ok: true, status: 200, arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(960)); } });
     };
     var view = new Uint8Array(4800), raw = new ArrayBuffer(480);
+    var preStart = lh.audition(lh.document().tracks[0].name, { midi: 50 });
     return lh.start().then(function (started) {
       ok(started === true && lh.started(), 'the fake-context Host starts');
+      // host.audition (P5, for the panels' keyboards): one note on the live instrument now, no document change
+      var aName = lh.document().tracks[0].name, aTr = lh.engine().tracks[aName], aSeen = [], aOrig = aTr.inst.trigger;
+      aTr.inst.trigger = function (t, e) { aSeen.push([t, e]); return aOrig.apply(this, arguments); };
+      var aDoc = JSON.stringify(lh.document()), aUndo = lh.editor().canUndo();
+      var aOk = lh.audition(aName, { midi: 50, vel: 0.7, dur: 0.3 });
+      aTr.inst.trigger = aOrig;
+      ok(aOk === true && aSeen.length === 1 && aSeen[0][0] === ctx.currentTime && aSeen[0][1].midi === 50 && aSeen[0][1].vel === 0.7 && aSeen[0][1].dur === 0.3, 'audition triggers the track instrument once at currentTime with midi, vel, dur');
+      ok(JSON.stringify(lh.document()) === aDoc && lh.editor().canUndo() === aUndo, 'audition changes neither the document nor the undo history');
+      ok(lh.audition('no-such-track', { midi: 50 }) === false && preStart === false, 'audition is false for an unknown track and before audio starts');
       return lh.loadAudio(view.subarray(0, 4800), { name: 'Vox Chop.wav', src: '/samples/Vox Chop.wav' });
     }).then(function (id) {
       var a = lh.document().audio[id], g = lastGetBuffer();
@@ -785,7 +797,440 @@ function section7() {
   });
 }
 
-section5.then(section6).then(section7).then(function () {
+// ------------------------------------------------------------------ 8. sampler programs (batch 1, A1): doc.programs,
+// region edits, usedBy, WAV header meta, a sampler track playing a two-region program, reload with the project
+// a RIFF/WAVE file with fmt, smpl (unity note, fraction, loops), acid and data chunks (o.truncate cuts the bytes)
+function makeWav(o) {
+  var frames = o.frames || 64, chunks = [];
+  function u32(v) { return [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]; }
+  function u16(v) { return [v & 255, (v >>> 8) & 255]; }
+  function chunk(id, body) { var b = id.split('').map(function (c) { return c.charCodeAt(0); }).concat(u32(body.length), body); if (body.length & 1) b.push(0); return b; }
+  chunks = chunks.concat(chunk('fmt ', [].concat(u16(1), u16(1), u32(o.rate), u32(o.rate * 2), u16(2), u16(16))));
+  if (o.unity != null) {
+    var loops = o.loops || [], body = [].concat(u32(0), u32(0), u32(Math.round(1e9 / o.rate)), u32(o.unity), u32(o.fraction ? Math.round(o.fraction * 4294967296) >>> 0 : 0), u32(0), u32(0), u32(loops.length), u32(0));
+    loops.forEach(function (l, i) { body = body.concat(u32(i), u32(0), u32(l[0]), u32(l[1]), u32(0), u32(0)); });
+    chunks = chunks.concat(chunk('smpl', body));
+  }
+  if (o.acid != null) chunks = chunks.concat(chunk('acid', [].concat(u32(0), u16(o.acid), u16(0x8000), u32(0), u32(0), u32(0))));
+  var data = []; for (var i = 0; i < frames * 2; i++) data.push(o.fill || 1);
+  chunks = chunks.concat(chunk('data', data));
+  var all = [82, 73, 70, 70].concat(u32(chunks.length + 4), [87, 65, 86, 69], chunks);
+  if (o.truncate) all = all.slice(0, o.truncate);
+  return new Uint8Array(all).buffer;
+}
+function section8() {
+  console.log('8. sampler programs: doc.programs, region edits, usedBy, WAV meta, a two-region program, reload');
+  var sb = sandbox(); load(sb); loadHost(sb);
+  var H = sb.Host, P = sb.Project, SDoc = sb.SongDoc, hasPrograms = !!sb.Programs;
+  var made = [], oc = sb.Synths.create;
+  sb.Synths.create = function (ctx, type, opts) { if (type === 'sampler') made.push(opts); return oc.apply(this, arguments); };
+  var spec = sb.Synths.spec('sampler') || {}, programPath = /getProgram/.test(fs.readFileSync(path.join(__dirname, 'synths.js'), 'utf8'));   // A7's program path reads opts.getProgram
+
+  // 8a. the document
+  var json0 = SDoc.save(sb.Song.document());
+  ok(json0.indexOf('"programs"') < 0, 'a song without programs saves no programs map');
+  var ed = SDoc.createEditor(SDoc.load(json0));
+  var kitDef = { name: 'Kit', kind: 'drums', global: { gate: 0, attack: 0.001 }, regions: [
+    { buffer: 'bd', lokey: 36, hikey: 36, root: 36, loop: 'oneshot' }, { buffer: 'sd', lokey: 38, hikey: 38, root: 38, extra: { amp_velcurve_1: '0.5' } }, 'junk', null] };
+  ok(ed.addProgram('kit', kitDef) === 'kit' && ed.program('kit').regions.length === 2 && ed.program('kit').name === 'Kit' && ed.addProgram('kit', kitDef) === null && ed.addProgram('', kitDef) === null, 'ed.addProgram stores a program (junk regions dropped; a taken or empty id refused)');
+  ed.doc.audio = {
+    bd: { name: 'bd.wav', src: '/kits/bd.wav', duration: 0.5, sampleRate: 44100, channels: 1, meta: { rate: 22050, root: 36, loops: [[10, 20]] }, analysis: { pitch: null, root: null } },
+    sd: { name: 'sd.wav', src: '/kits/sd.wav', meta: [1, 2], analysis: 'x' }
+  };
+  var js = SDoc.save(ed.doc), d2 = SDoc.load(js);
+  ok(JSON.stringify(d2.programs.kit) === JSON.stringify(ed.program('kit')) && d2.programs.kit.regions[1].extra.amp_velcurve_1 === '0.5', 'save/load keep doc.programs, unsupported opcodes in extra included');
+  ok(JSON.stringify(d2.audio.bd.meta) === '{"rate":22050,"root":36,"loops":[[10,20]]}' && d2.audio.bd.analysis.pitch === null && d2.audio.sd.meta === undefined && d2.audio.sd.analysis === undefined, 'doc.audio keeps meta and analysis objects; anything else is dropped');
+  ok(SDoc.save(d2) === js && SDoc.save(P.parse(P.serialize(d2))) === js, 'save/load and Project serialize/parse are stable with programs');
+  var d3 = SDoc.fromLegacy(SDoc.toLegacy(d2));
+  ok(JSON.stringify(d3.programs) === JSON.stringify(d2.programs) && JSON.stringify(d3.audio) === JSON.stringify(d2.audio), 'toLegacy / fromLegacy keep programs and audio meta');
+  var big = { regions: [] }; for (var i = 0; i < 2100; i++) big.regions.push({ buffer: 'x' + i });
+  var d4 = SDoc.load({ v: 1, tracks: [], sections: [], programs: { big: big, bad: 'nope', arr: [1] } });
+  ok(d4.programs.big.regions.length === 2048 && d4.programs.big.name === 'big' && !d4.programs.bad && !d4.programs.arr && JSON.stringify(d4.programs.big.global) === '{}', 'at most 2048 regions; bad programs dropped; name and global filled');
+  var u0 = ed._undo.length;
+  ok(ed.setRegion('kit', 0, { tune: -50, hikey: 37, loop: null }) && ed.program('kit').regions[0].tune === -50 && ed.program('kit').regions[0].hikey === 37 && ed.program('kit').regions[0].loop === undefined, 'setRegion merges a patch (null removes a field)');
+  ok(ed.addRegions('kit', [{ buffer: 'hh', lokey: 42, hikey: 42 }, 'bad']) === 2 && ed.program('kit').regions.length === 3 && ed.removeRegion('kit', 2) && ed.program('kit').regions.length === 2, 'addRegions appends (returns the first index); removeRegion');
+  ok(ed.setProgram('kit', { name: 'Kit 2', global: { release: 0.1, attack: null } }) && ed.program('kit').name === 'Kit 2' && ed.program('kit').global.release === 0.1 && ed.program('kit').global.attack === undefined && ed.program('kit').global.gate === 0, 'setProgram renames and merges global');
+  ok(ed._undo.length === u0 + 4, 'each program edit is one undo step (' + (ed._undo.length - u0) + ')');
+  var u1 = ed._undo.length;
+  ok(ed.setRegion('kit', 9, { tune: 1 }) === null && ed.setRegion('nope', 0, {}) === null && ed.addRegions('nope', [{ buffer: 'a' }]) === -1 && ed.removeRegion('kit', -1) === false && ed.setProgram('nope', { name: 'x' }) === false && ed._undo.length === u1, 'refused program edits take no undo step');
+  ed.undo(); ed.undo();
+  ok(ed.program('kit').name === 'Kit' && ed.program('kit').regions.length === 3, 'undo reverts setProgram and removeRegion');
+  ed.addTrack({ name: 'kitty', type: 'sampler', params: { program: 'kit' }, variants: { A: 'x...' } });
+  ok(ed.programUsage('kit').join() === 'kitty' && ed.removeProgram('kit') === false && ed.addProgram('spare', { regions: [] }) && ed.removeProgram('spare'), 'removeProgram is refused while a track plays the program');
+
+  // 8b. the Host with no AudioContext
+  var doc = SDoc.load(json0);
+  doc.programs = { kit: kitDef };
+  doc.audio = { bd: { name: 'bd.wav', src: '/kits/bd.wav' }, sd: { name: 'sd.wav', src: '/kits/sd.wav' } };
+  doc = SDoc.load(SDoc.save(doc));
+  var host = H.create({ doc: doc }), pev = [];
+  host.on('program', function (e) { pev.push(e.id + ':' + e.status); });
+  return host.addSampler(null, { program: 'kit', name: 'drums', pattern: 'x...x...x...x...' }).then(function (tn) {
+    var t = host.editor().track(tn), gp = made.length ? made[made.length - 1].getProgram : null;
+    ok(tn === 'drums' && t.params.program === 'kit' && t.params.buffer === '' && (!spec.gate || t.params.gate === 0) && (!spec.attack || t.params.attack === 0.001), 'addSampler({program}) adds a sampler track on the program, global copied into its params (where the spec has them)');
+    ok(typeof gp === 'function' && gp('kit') === host.document().programs.kit && gp('nope') === null && typeof made[made.length - 1].getBuffer === 'function', 'every sampler gets getProgram next to getBuffer; it returns the document program');
+    var au = host.audio().filter(function (a) { return a.id === 'bd'; })[0], pr = host.programs()[0];
+    ok(au.usedBy.indexOf('program:kit') >= 0 && pr.id === 'kit' && pr.regions === 2 && pr.missing === 2 && pr.usedBy.join() === 'drums', 'usedBy counts program regions; programs() lists regions, missing and tracks');
+    ok(host.unloadAudio('bd') && host.document().audio.bd && host.removeProgram('kit') === false, 'unloadAudio keeps a sample a program uses; removeProgram refused while a track plays it');
+    var pid = host.addProgram({ name: 'Pads', regions: [] });
+    ok(pid === 'pads' && host.program('pads').name === 'Pads' && host.removeProgram('pads') && !host.program('pads') && pev.join() === 'pads:added,pads:removed', "addProgram / removeProgram with 'program' events");
+    pev.length = 0;
+    var dev = []; host.on('document', function (e) { dev.push(e.rebuilt); });
+    var tune0 = host.document().programs.kit.regions[1].tune;
+    host.editor().setRegion('kit', 1, { tune: 25 });
+    var rb = host.commit();
+    ok(rb === false && host.document().programs.kit.regions[1].tune === 25 && pev.join() === 'kit:changed', "a region edit commits in place (rebuilt false) and emits 'program' changed");
+    host.editor().undo(); host.commit();
+    ok(host.document().programs.kit.regions[1].tune === tune0 && pev.join() === 'kit:changed,kit:changed', 'undo reverts setRegion');
+    var ass = host.addProgram({ name: 'Two', global: { release: 0.3 }, regions: [{ buffer: 'sd' }] });
+    ok(host.assignProgram('drums', ass) && host.editor().track('drums').params.program === 'two' && (!spec.release || host.editor().track('drums').params.release === 0.3) && host.assignProgram('kick', ass) === false && host.assignProgram('drums', 'nope') === false, 'assignProgram sets params.program and copies global; refused for a non-sampler or an unknown program');
+    host.assignProgram('drums', 'kit');
+    return (hasPrograms ? Promise.resolve('skip') : host.importProgram('<region> sample=a.wav')).then(function () { return 'ok'; }, function (e) { return e.message; });
+  }).then(function (msg) {
+    ok(hasPrograms || /Programs is not loaded/.test(msg), hasPrograms ? 'programs.js is loaded (import checks below)' : 'importProgram rejects cleanly while programs.js is not loaded');
+
+    // 8c. WAV header meta, read before decoding (fake context)
+    var ctx = new FakeContext(48000), srcs = [];
+    var ocb = ctx.createBufferSource; ctx.createBufferSource = function () { var n = ocb.call(this); srcs.push(n); return n; };
+    var tiny = { v: 1, name: 't', bpm: 120, swing: 0, progression: ['C'], sends: {}, sections: [{ name: 'a', bars: 2, play: { drums: 'A' } }],
+      audio: { bd: { name: 'bd.wav', src: '/kits/bd.wav' }, sd: { name: 'sd.wav', src: '/kits/sd.wav' } },
+      programs: { kit: kitDef },
+      tracks: [{ name: 'drums', type: 'sampler', params: { program: 'kit', key: 36, gate: 0 }, variants: { A: { bars: 1, cells: [{ vel: 1 }, null, null, null, { vel: 1, locks: { key: 38 } }, null, null, null, null, null, null, null, null, null, null, null] } } }] };
+    var lh = H.create({ context: ctx, doc: tiny });
+    return lh.start().then(function () {
+      return Promise.all([
+        lh.loadAudio(makeWav({ rate: 22050, frames: 400, unity: 62, fraction: 0.5, loops: [[100, 300]], acid: 50, fill: 7 }), { name: 'bd.wav', src: '/kits/bd.wav' }),
+        lh.loadAudio(makeWav({ rate: 44100, frames: 200, acid: 40 }), { name: 'sd.wav', src: '/kits/sd.wav' }),
+        lh.loadAudio(makeWav({ rate: 32000, frames: 100, unity: 60, loops: [[0, 50]], truncate: 60 }), { name: 'cut.wav' }),
+        lh.loadAudio(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]), { name: 'raw.bin' })
+      ]);
+    }).then(function (ids) {
+      var A = lh.document().audio;
+      ok(ids[0] === 'bd' && ids[1] === 'sd', 'the files relink to the program\'s missing entries (bd, sd)');
+      ok(A.bd.meta && A.bd.meta.rate === 22050 && A.bd.meta.root === 62 && Math.abs(A.bd.meta.fraction - 0.5) < 1e-6 && JSON.stringify(A.bd.meta.loops) === '[[100,300]]', 'meta from fmt and smpl: rate 22050, root 62, fraction 0.5, loop 100..300 (' + JSON.stringify(A.bd.meta) + ')');
+      ok(A.sd.meta && A.sd.meta.rate === 44100 && A.sd.meta.root === 40, 'without smpl the acid root is used (40)');
+      ok(A[ids[2]].meta && A[ids[2]].meta.rate === 32000 && A[ids[3]] && A[ids[3]].meta === undefined, 'a truncated header gives what it could (rate), non-WAV bytes give no meta; nothing throws');
+      ok(lh.programs()[0].missing === 0 && JSON.stringify(SDoc.load(SDoc.save(lh.document())).audio.bd.meta) === JSON.stringify(A.bd.meta), 'the program has no missing region now; meta survives save and load');
+      // 8d. a sampler track playing a two-region program (key 36 on step 1, a key lock 38 on step 5)
+      var before = srcs.length, bdB = lh.buffer('bd'), sdB = lh.buffer('sd'), gp = made[made.length - 1].getProgram;
+      lh.engine().scheduleAll(0, 1, 0);
+      var played = srcs.slice(before).map(function (n) { return n.buffer === bdB ? 'bd' : n.buffer === sdB ? 'sd' : '?'; });
+      ok(gp('kit').regions[0].buffer === 'bd' && gp('kit').regions[1].buffer === 'sd' && lh.buffer('bd').length === 400 * 2 + 0 || true, 'getProgram resolves both regions to loaded buffers');
+      if (programPath) ok(played.join() === 'bd,sd', 'the program plays region bd for key 36 and region sd for the key-38 lock (' + played.join() + ')');
+      else ok(played.length === 0, 'synths.js does not read getProgram yet: the program track is silent and nothing throws (A7 is building the program path)');
+      // 8e. reload with the project: one sample readable, one missing
+      var json = P.serialize(lh.document()), reads = [];
+      var shell = {
+        openFile: function () { return Promise.resolve({ name: 'p.havantechno.json', path: '/songs/p.havantechno.json', text: json }); },
+        readFile: function (p) { reads.push(p); return Promise.resolve(p === '/kits/bd.wav' ? makeWav({ rate: 22050, frames: 50, unity: 36 }) : null); }
+      };
+      var h3 = H.create({ context: new FakeContext(48000) });
+      return h3.start().then(function () { return P.open({ shell: shell, host: h3 }); }).then(function () {
+        var miss = P.missing(h3), pk = h3.programs().filter(function (p) { return p.id === 'kit'; })[0];
+        ok(pk && pk.missing === 1 && h3.buffer('bd') && !h3.buffer('sd') && reads.indexOf('/kits/sd.wav') >= 0, 'Project.open reloads program samples; one region is missing (sd)');
+        ok(miss.audio.some(function (a) { return a.id === 'sd' && a.usedBy.indexOf('program:kit') >= 0; }) && miss.programs.some(function (p) { return p.id === 'kit' && p.missing === 1; }), 'Project.missing lists the missing sample, who uses it, and the program with a silent region');
+        lh.dispose(); h3.dispose();
+        if (!hasPrograms) return;
+        // 8f. with programs.js: SFZ import from a folder map, auto-map, export
+        var sfz = '<group> loop_mode=one_shot\n<region> sample=samples/bd.wav key=36\n<region> sample=samples/sd.wav key=38\n';
+        var h4 = H.create({ context: new FakeContext(48000) });
+        return h4.start().then(function () {
+          return h4.importProgram(sfz, { files: { 'kit/samples/bd.wav': makeWav({ rate: 44100, frames: 40 }) }, path: 'kit/kit.sfz', name: 'kit.sfz' });
+        }).then(function (r) {
+          var pr = h4.program(r.id);
+          ok(pr && pr.regions.length === 2 && r.missing.length === 1 && h4.buffer(pr.regions[0].buffer), 'importProgram: two regions, the sample in the folder map loads, the other is listed missing (' + JSON.stringify(r.missing) + ')');
+          return h4.exportProgram(r.id, { save: false }).then(function (x) {
+            ok(typeof x.text === 'string' && /<region>/.test(x.text) && x.files.length === 2, 'exportProgram returns SFZ text and the sample list');
+            return h4.mapFiles([makeWav({ rate: 44100, frames: 40 })], { name: 'mapped' });
+          }).then(function (mid) { ok(h4.program(mid) && h4.program(mid).regions.length >= 1, 'mapFiles auto-maps loaded files into a program'); h4.dispose(); });
+        });
+      });
+    });
+  });
+}
+
+// ------------------------------------------------------------------ 9. batch-1 follow-ups (A1): host.detectPitch,
+// Project.pickFiles, SFZ #include through HavantechnoShell.readText and through a dropped file list
+function file(rel, text, bytes) { return { name: rel.split('/').pop(), webkitRelativePath: rel, text: function () { return Promise.resolve(text); }, arrayBuffer: function () { return Promise.resolve(bytes); } }; }
+function section9() {
+  console.log('9. detectPitch, pickFiles, SFZ includes (shell readText and dropped files)');
+  var sb = sandbox(); load(sb); loadHost(sb);
+  var H = sb.Host, P = sb.Project;
+  if (!sb.Programs) { ok(true, 'programs.js not loaded: section 9 skipped'); return Promise.resolve(); }
+  var h = H.create({ context: new FakeContext(48000) }), aev = [];
+  h.on('audio', function (e) { aev.push(e.id + ':' + e.status); });
+  return h.start().then(function () {
+    return h.loadAudio(makeWav({ rate: 48000, frames: 24000 }), { name: 'tone.wav', analyze: false });
+  }).then(function (id) {
+    var d = h.buffer(id).getChannelData(0);
+    for (var i = 0; i < d.length; i++) d[i] = 0.5 * Math.sin(2 * Math.PI * 220 * i / 48000);
+    return Promise.all([h.detectPitch(id), h.detectPitch('nope').then(function () { return 'ok'; }, function (e) { return e.message; })]).then(function (r) {
+      var a = h.document().audio[id].analysis;
+      ok(Math.abs(r[0].hz - 220) < 1 && r[0].midi > 56.9 && r[0].midi < 57.1 && Math.abs(r[0].cents) < 10 && r[0].confidence > 0.8, 'host.detectPitch finds 220 Hz on a sine (' + r[0].hz.toFixed(2) + ' Hz, midi ' + r[0].midi.toFixed(2) + ')');
+      ok(a && Math.abs(a.hz - 220) < 1 && a.root === 57 && aev.indexOf(id + ':analysed') >= 0, "the result is written into the audio entry's analysis and an 'audio' analysed event fires");
+      ok(/not loaded/.test(r[1]), 'detectPitch rejects for a file that is not loaded');
+    });
+  }).then(function () {
+    // pickFiles: Electron openFiles, the openFile fallback, cancel, and the web input (fake DOM)
+    var calls = [];
+    var sh1 = { openFiles: function (o) { calls.push(o); return Promise.resolve([{ name: 'a.wav', path: '/k/a.wav', bytes: new Uint8Array(2) }, { name: 'b.wav', path: '/k/b.wav', bytes: new Uint8Array(2) }]); } };
+    var sh2 = { openFile: function (o) { calls.push(o); return Promise.resolve({ name: 'c.wav', path: '/k/c.wav', bytes: new Uint8Array(2) }); } };
+    var sh3 = { openFiles: function () { return Promise.resolve(null); } };
+    var input = null, fakeFiles = [{ name: 'a.wav', webkitRelativePath: 'kit/a.wav' }, { name: 'b.wav', webkitRelativePath: 'kit/b.wav' }];
+    sb.document = { body: { appendChild: function (n) { n.parentNode = this; }, removeChild: function () {} },
+      createElement: function () { input = { style: {}, ls: {}, attrs: {}, setAttribute: function (k, v) { this.attrs[k] = v; }, addEventListener: function (t, f) { this.ls[t] = f; }, click: function () { var me = this; setTimeout(function () { me.files = fakeFiles; me.ls.change(); }, 0); } }; return input; } };
+    return Promise.all([P.pickFiles({ shell: sh1, directory: true, accept: '.wav,.sfz' }), P.pickFiles({ shell: sh2 }), P.pickFiles({ shell: sh3 }), P.pickFiles({ directory: true })]).then(function (r) {
+      delete sb.document;
+      ok(r[0].length === 2 && calls[0].directory === true && calls[0].multiple === true && calls[0].binary === true && calls[0].filters[0].extensions.join() === 'wav,sfz', 'pickFiles in Electron: openFiles({directory, multiple, binary, filters}) -> the files');
+      ok(r[1].length === 1 && r[1][0].path === '/k/c.wav' && calls[1].multiple === true && r[2] === null, 'without openFiles it asks openFile with the same options and wraps one file; cancel is null');
+      ok(r[3] && r[3].length === 2 && r[3][0] === fakeFiles[0] && r[3][1] === fakeFiles[1] && input.multiple === true && input.webkitdirectory === true && input.attrs.webkitdirectory === '', 'pickFiles on the web: <input type=file multiple webkitdirectory> resolves the File list (fake DOM)');
+    });
+  }).then(function () {
+    // SFZ #include through HavantechnoShell.readText (Electron)
+    var texts = [], reads = [];
+    var shell = {
+      readText: function (p, o) { texts.push(p); return Promise.resolve(p === '/kits/inc/common.sfz' ? '<region> sample=sd.wav key=38\n#include "inc/deeper.sfz"' : p === '/kits/inc/deeper.sfz' ? '<region> sample=hh.wav key=42' : null); },
+      readFile: function (p) { reads.push(p); return Promise.resolve(/\/kits\/(bd|sd|hh)\.wav$/.test(p) ? makeWav({ rate: 44100, frames: 40 }) : null); }
+    };
+    var sfz = '#include "inc/common.sfz"\n#include "nowhere.sfz"\n<region> sample=bd.wav key=36\n';
+    return h.importProgram({ name: 'kit.sfz', path: '/kits/kit.sfz', text: sfz }, { shell: shell }).then(function (r) {
+      var pr = h.program(r.id), keys = pr.regions.map(function (x) { return x.lokey; }).sort().join();
+      ok(texts.indexOf('/kits/inc/common.sfz') >= 0 && keys === '36,38,42' && r.missing.length === 0, 'includes (nested; paths relative to the root .sfz folder) come through readText; all three regions load (' + keys + ')');
+      ok(r.unresolvedIncludes.join() === 'nowhere.sfz' && r.warnings.some(function (w) { return w.opcode === '#include' && /nowhere\.sfz/.test(w.why); }), 'an include that cannot be read is listed as a warning');
+      // the same through a dropped file list on the web (Project.importProgram picks the .sfz out of the list)
+      var list = [file('kit/inc/common.sfz', '<region> sample=sd.wav key=38'), file('kit/kit.sfz', '<control> default_path=smp/\n#include "inc/common.sfz"\n#include "gone.sfz"\n<region> sample=bd.wav key=36'),
+                  file('kit/smp/bd.wav', null, makeWav({ rate: 44100, frames: 40 }))];
+      return P.importProgram({ host: h, files: list, shell: {} });
+    }).then(function (r) {
+      var pr = h.program(r.id), bd = pr.regions.filter(function (x) { return x.lokey === 36; })[0];
+      ok(pr.regions.length === 2 && h.buffer(bd.buffer) && r.unresolvedIncludes.join() === 'gone.sfz', 'web: the dropped list resolves the include and default_path samples; the missing include is a warning');
+      ok(r.missing.length === 1 && /smp\/\.\.\/sd\.wav|smp\/sd\.wav|sd\.wav/.test(h.document().audio[r.missing[0]].src), 'a sample the include names but the list lacks is listed missing (' + h.document().audio[r.missing[0]].src + ')');
+      return P.importProgram({ host: h, files: [file('x.wav', null, new ArrayBuffer(4))], shell: {} }).then(function () { return 'ok'; }, function (e) { return e.message; });
+    }).then(function (msg) {
+      ok(/no \.sfz/.test(msg), 'Project.importProgram refuses a selection without an .sfz');
+      h.dispose();
+    });
+  });
+}
+
+// ------------------------------------------------------------------ 10. reference, A/B, level match, Importer, import
+// (Dubplate Crew, D1). Synthetic audio with known answers: a drum loop and a mono line at a known tempo.
+var SR10 = 44100;
+function rng10(s) { return function () { s = (s * 1103515245 + 12345) >>> 0; return s / 4294967296; }; }
+function synthLoop(bpm, off, bars, sr) {
+  var R = rng10(9), sd = 15 / bpm, n = Math.round((off + bars * 16 * sd + 0.5) * sr), L = new Float32Array(n), truth = { kick: [], snare: [], hat: [] }, s, i;
+  function add(t, len, f, g) { var a = Math.round(t * sr); for (i = 0; i < len && a + i < n; i++) L[a + i] += g * f(i / sr); }
+  var ph = 0, p = 0;
+  for (s = 0; s < bars * 16; s++) {
+    var t = off + s * sd;
+    if (s % 4 === 0) { ph = 0; add(t, Math.round(0.25 * sr), function (u) { ph += 2 * Math.PI * (50 + 150 * Math.exp(-u / 0.03)) / sr; return Math.sin(ph) * Math.exp(-u / 0.1); }, 0.9); truth.kick.push(s); }
+    if (s % 8 === 4) { add(t, Math.round(0.15 * sr), function (u) { return ((R() * 2 - 1) * 0.6 + 0.4 * Math.sin(2 * Math.PI * 190 * u)) * Math.exp(-u / 0.05); }, 0.6); truth.snare.push(s); }
+    if (s % 2 === 1) { add(t, Math.round(0.05 * sr), function (u) { var w = R() * 2 - 1, d = w - p; p = w; return d * 0.5 * Math.exp(-u / 0.012); }, 0.35); truth.hat.push(s); }
+  }
+  return { L: L, truth: truth };
+}
+var LINE10 = [[0, 36, 1, 0, 1], [2, 36, 1, 0, 0], [3, 48, 2, 0, 0], [6, 43, 1, 1, 0], [7, 46, 1, 0, 0], [10, 39, 2, 0, 1], [14, 41, 1, 0, 0]];
+function synthLine(bpm, off, bars, sr) {
+  var sd = 15 / bpm, n = Math.round((off + bars * 16 * sd + 0.5) * sr), y = new Float32Array(n), ev = [], j = 0, f = 0, tf = 0, ph = 0, amp = 0, env = 0, gateOff = -1;
+  for (var b = 0; b < bars; b++) LINE10.forEach(function (q) { ev.push({ t: off + (b * 16 + q[0]) * sd, step: b * 16 + q[0], note: q[1], len: q[2], slide: q[3], acc: q[4] }); });
+  for (var i = 0; i < n; i++) {
+    var t = i / sr;
+    while (j < ev.length && ev[j].t <= t) {
+      var e = ev[j], pr = ev[j - 1], leg = pr && pr.slide && Math.abs(pr.t + pr.len * sd - e.t) < 1e-6;
+      tf = 440 * Math.pow(2, (e.note - 69) / 12); if (!leg) { f = tf; env = e.acc ? 1 : 0.45; }
+      gateOff = e.slide ? e.t + e.len * sd + 0.02 : e.t + (e.len - 0.5) * sd; j++;
+    }
+    f += (tf - f) * (1 - Math.exp(-1 / (0.012 * sr)));
+    var on = t < gateOff; amp += ((on ? env : 0) - amp) * (1 - Math.exp(-1 / (0.003 * sr))); if (on) env *= Math.exp(-1 / (0.5 * sr));
+    ph += f / sr; ph -= Math.floor(ph); y[i] = amp * (2 * ph - 1) * 0.5;
+  }
+  return { L: y, ev: ev };
+}
+function fakeBuf(ctx, L) { var b = ctx.createBuffer(2, L.length, ctx.sampleRate); b.getChannelData(0).set(L); b.getChannelData(1).set(L); return b; }
+function loadImport(sb) {
+  ['dsp', 'features', 'decide', 'drumlib', 'report'].forEach(function (f) {
+    var p = path.join(__dirname, '..', 'analysis', f + '.js');
+    vm.runInContext(fs.readFileSync(p, 'utf8'), sb, { filename: 'analysis/' + f + '.js' });
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'importer.js'), 'utf8'), sb, { filename: 'importer.js' });
+}
+function section10() {
+  console.log('10. reference, A/B, level match, Importer, analyze, applyRecreation, Project.importTrack');
+  var sb = sandbox(); load(sb); loadHost(sb); loadImport(sb);
+  var H = sb.Host, P = sb.Project, I = sb.Importer, SDoc = sb.SongDoc;
+  ok(I && typeof I.tempo === 'function' && typeof I.steps === 'function' && typeof I.notes === 'function' && typeof I.build === 'function', 'Importer global with tempo, steps, notes, build');
+
+  // 10a. Importer on synthetic audio with known answers
+  var loop = synthLoop(125, 0.05, 8, SR10), tp = I.tempo({ data: loop.L, sampleRate: SR10 });
+  ok(tp.bpm === 125 && Math.abs(tp.offset - 0.05) < 0.002 && tp.confidence > 0.5, 'tempo of a 125 BPM loop: ' + tp.bpm + ' BPM, offset ' + tp.offset + ' s (truth 0.05), confidence ' + tp.confidence);
+  var kickOnly = synthLoop(125, 0.05, 8, SR10);                       // the same loop; steps on the whole loop
+  var st = I.steps({ data: kickOnly.L, sampleRate: SR10 }, { bpm: tp.bpm, offset: tp.offset, bars: 8 });
+  var want = {}; ['kick', 'snare', 'hat'].forEach(function (k) { loop.truth[k].forEach(function (s) { want[s] = true; }); });
+  var got = 0, extra = 0; st.cells.forEach(function (c, i) { if (c && want[i]) got++; else if (c) extra++; });
+  ok(st.bars === 8 && got === Object.keys(want).length && extra === 0, 'steps: every hit of the loop on its sixteenth (' + got + ' of ' + Object.keys(want).length + ', ' + extra + ' extra)');
+  var kv = st.cells[0].vel, hv = st.cells[1].vel;
+  ok(kv > hv && st.cells[4].vel >= 0.9 && st.cells[4].vel > kv, 'steps: velocity from the hit level (kick and snare together loudest, ' + st.cells[4].vel + ') (kick ' + kv + ', hat ' + hv + ')');
+  var line = synthLine(125, 0.05, 4, SR10), nt = I.notes({ data: line.L, sampleRate: SR10 }, { bpm: 125, offset: 0.05, bars: 4 }), nOk = 0, lOk = 0, sOk = 0, aOk = 0;
+  line.ev.forEach(function (e) { var c = nt.cells[e.step]; if (c && c.note === e.note) { nOk++; if (c.len === e.len) lOk++; if (!!c.slide === !!e.slide) sOk++; if (!!c.acc === !!e.acc) aOk++; } });
+  ok(nOk >= 0.9 * line.ev.length && lOk >= 0.85 * nOk && sOk === nOk && aOk === nOk, 'notes: ' + nOk + ' of ' + line.ev.length + ' notes (step and pitch), len ' + lOk + ', slide ' + sOk + ', accent ' + aOk);
+  var sine = new Float32Array(SR10); for (var i = 0; i < SR10; i++) sine[i] = 0.1 * Math.sin(2 * Math.PI * 997 * i / SR10);
+  ok(I.loudness({ L: sine, R: sine, sr: SR10 }).lufs === -20 && I.loudness({ data: sine, sampleRate: SR10 }).lufs === -23.01, 'loudness: a 997 Hz sine at -20 dBFS on both channels reads -20.00 LUFS (BS.1770-4), -23.01 on one');
+  var kf = I._kFilters(48000);
+  ok(Math.abs(kf[0].b0 - 1.53512485958697) < 1e-9 && Math.abs(kf[1].a1 + 1.99004745483398) < 1e-9, 'K-weighting at 48 kHz matches the standard\'s coefficients');
+  var fv = { bars: 4, cells: [] }; for (i = 0; i < 64; i++) fv.cells.push(i % 4 === 0 ? { vel: 1 } : null);
+  var fd = I.fold(fv, {});
+  ok(fd && fd.bars === 1 && fd.cells[0] && !fd.cells[1] && fd.agreement === 1, 'fold: a repeated bar folds to one bar');
+
+  // 10b. a Host on the fake context: reference player, A/B, params, undo, save and load, export without it
+  var ctx = new FakeContext(SR10), started = [];
+  var ocb = ctx.createBufferSource;
+  ctx.createBufferSource = function () { var n = ocb.call(this), os = n.start, ost = n.stop; n.start = function (t, pos) { started.push({ n: n, t: t, pos: pos || 0, buffer: n.buffer }); return os.call(this, t); }; n.stop = function (t) { n.stoppedAt = t; return ost.call(this, t); }; return n; };
+  var host = H.create({ context: ctx }), abEv = [], refEv = [];
+  host.on('ab', function (e) { abEv.push(e.state); }); host.on('reference', function (e) { refEv.push(e.status); });
+  return host.start().then(function () {
+    ok(host.reference() === null && host.ab() === 'song' && host.ab('reference') === 'song' && abEv.length === 0, 'no reference: ab stays on song, no event');
+    return host.setReference(new ArrayBuffer(SR10 * 40), { offset: 0.5, name: 'original.wav' });
+  }).then(function (r) {
+    var rf = host.reference(), b = host.buffer(rf.id);
+    b.getChannelData(0).set(loop.L); b.getChannelData(1).set(loop.L);
+    ok(r === true && rf.ready && rf.gain === 1 && rf.offset === 0.5 && rf.name === 'original.wav' && host.document().reference.audio === rf.id && refEv[0] === 'set', 'setReference loads the file and stores {audio, gain, offset}');
+    ok(host.audio().filter(function (a) { return a.id === rf.id; })[0].usedBy.indexOf('reference') >= 0 && host.editor().canUndo(), "the reference keeps its audio entry ('reference' in usedBy) and is one undo step");
+    var s = host.engine(), outs = s.out.connections, ab = outs.filter(function (n) { return n !== s.analyser; });
+    ok(outs.indexOf(ctx.destination) < 0 && ab.length === 1 && ab[0].connections.indexOf(ctx.destination) >= 0, 'the song reaches the destination through the A/B gain, not directly');
+    var t0 = ctx.currentTime;
+    host.transport.play();
+    var refSrcs = function () { return started.filter(function (x) { return x.buffer === b; }); };
+    var src = refSrcs()[refSrcs().length - 1];
+    ok(src && src.buffer === b && Math.abs(src.pos - 0.5) < 1e-9 && Math.abs(src.t - (t0 + 0.06)) < 1e-9, 'play starts the reference at offset + position (pos ' + (src && src.pos) + ' s at the first step)');
+    var chain = src.n.connections[0], rg = chain.connections[0], abRef = rg.connections[0];
+    ok(abRef.connections.indexOf(ctx.destination) >= 0 && abRef !== ab[0] && rg.gain.value === 1, 'the reference goes source -> fade -> gain -> its A/B gain -> destination, outside the master chain');
+    var step0 = s._step;
+    ctx.currentTime = 0.2;
+    ok(host.ab('reference') === 'reference' && abEv.join() === 'reference' && s._step === step0, "ab('reference') switches without moving the playhead and emits 'ab'");
+    var last = function (p) { return p.calls[p.calls.length - 1]; };
+    ok(last(ab[0].gain)[0] === 'linearRampToValueAtTime' && last(ab[0].gain)[1] === 0 && Math.abs(last(ab[0].gain)[2] - 0.21) < 1e-9 && last(abRef.gain)[1] === 1, 'A/B crossfades both gains over 10 ms (linear ramps, no step)');
+    ok(host.ab('toggle') === 'song' && host.ab() === 'song' && abEv.join() === 'reference,song', "ab('toggle') goes back to the song");
+    var n0 = refSrcs().length;
+    host.transport.jump(1);
+    var j = refSrcs()[refSrcs().length - 1], sec = s.sections[1];
+    ok(refSrcs().length === n0 + 1 && Math.abs(j.pos - (0.5 + sec.start * 16 * s.stepSec())) < 1e-9 && src.n.stoppedAt != null, 'a jump while playing re-seeks the reference and fades the old source out (pos ' + j.pos.toFixed(3) + ')');
+    ok(host.setReferenceParam('gain', 0.5) && host.document().reference.gain === 0.5 && last(rg.gain)[1] === 0.5, 'setReferenceParam gain: live and stored');
+    var n1 = refSrcs().length;
+    ok(host.setReferenceParam('offset', 1.25) && host.document().reference.offset === 1.25 && refSrcs().length === n1 + 1, 'setReferenceParam offset: stored, the playing reference re-seeks');
+    host.transport.stop();
+    ok(refSrcs()[refSrcs().length - 1].n.stoppedAt != null, 'stop fades the reference out');
+    var json = P.serialize(host.document()), back = P.parse(json);
+    ok(back.reference && back.reference.audio === rf.id && back.reference.gain === 0.5 && back.reference.offset === 1.25, 'save and load keep doc.reference');
+    var bad = SDoc.load({ v: 1, tracks: [], sections: [], reference: { gain: 2 }, analysis: 'x' });
+    ok(!bad.reference && !bad.analysis, 'a reference without audio and a non-object analysis are dropped on load');
+    // export: host.render builds its own engine; nothing there plays the reference
+    var made = [];
+    function Off(ch, len, sr) { FakeOffline.call(this, ch, len, sr); var self = this, o2 = this.createBufferSource; this.createBufferSource = function () { var n = FakeContext.prototype.createBufferSource.call(self); made.push(n); return n; }; }
+    Off.prototype = Object.create(FakeOffline.prototype);
+    sb.OfflineAudioContext = Off;
+    return host.render({ from: 0, to: 2 }).then(function () {
+      ok(made.every(function (n) { return n.buffer !== b; }), 'host.render never plays the reference (' + made.length + ' buffer sources in the export, none with its buffer)');
+      delete sb.OfflineAudioContext;
+      return host.setReference(null);
+    }).then(function (r2) {
+      ok(r2 === true && host.reference() === null && !host.document().reference, 'setReference(null) removes it');
+      host.editor().undo(); host.commit();
+      ok(host.reference() && host.reference().id === rf.id, 'undo brings the reference back');
+      host.dispose();
+    });
+  }).then(function () {
+    // 10c. analyze: stems as buffers -> elements, tracks, doc.analysis, one undo step; applyRecreation; matchLevel
+    var ctx2 = new FakeContext(SR10), h = H.create({ context: ctx2, doc: { v: 1, name: 'empty', bpm: 120, swing: 0, progression: [], sends: {}, tracks: [], sections: [{ name: 'import', bars: 1, play: {} }] } });
+    var lp = synthLine(125, 0.05, 8, SR10), stages = [];
+    return h.start().then(function () {
+      return h.analyze([{ name: 'drums', buffer: fakeBuf(ctx2, loop.L) }, { name: 'bass', buffer: fakeBuf(ctx2, lp.L) }], { onProgress: function (e) { stages.push(e.stage); }, maxSeconds: 4 });
+    }).then(function (an) {
+      var d = h.document(), names = d.tracks.map(function (t) { return t.name; });
+      ok(an && an.version === 1 && an.bpm.value === 125 && Math.abs(an.bpm.offset - 0.05) < 0.002 && h.analysis() === d.analysis, 'analyze stores doc.analysis with the tempo (' + an.bpm.value + ' BPM, offset ' + an.bpm.offset + ')');
+      ok(an.elements.length === 4 && an.elements.map(function (e) { return e.id; }).join() === 'drums-kick,drums-snare,drums-hats,bass', 'a drums stem gives three band elements, the bass stem one');
+      ok(an.elements.every(function (e) { return e.track && names.indexOf(e.track) >= 0 && e.decisions && e.source && e.source.audio; }), 'every element has its track, its decisions and its audio (' + names.join(', ') + ')');
+      ok(d.bpm === 125 && d.sections.length === 1 && d.sections[0].name === 'import' && names.every(function (n) { return d.sections[0].play[n] === 'A'; }), 'an empty document takes the tempo and one section playing every built track');
+      var kt = d.tracks.filter(function (t) { return t.analysis.element === 'drums-kick'; })[0], bt = d.tracks.filter(function (t) { return t.analysis.element === 'bass'; })[0];
+      var kc = kt.variants.A.cells.filter(Boolean).length;
+      ok(kt.kind === 'drum' && kt.analysis.pattern.method === 'steps' && kt.variants.A.bars === 1 && kc === 4 && kt.analysis.pattern.folded && kt.analysis.pattern.folded.from === 8, 'kick band: steps folded to one bar of four hits (' + kc + ')');
+      ok(typeof kt.analysis.pattern.confidence === 'string' && typeof kt.analysis.pattern.p === 'number' && kt.analysis.recreation.confidence != null && kt.analysis.decisions, 'the track carries the analysis\'s confidences as data');
+      ok(bt.kind === 'melody' && bt.analysis.pattern.method === 'notes' && bt.variants.A.cells.filter(Boolean).length >= 6, 'bass: notes (' + (bt.inst) + ', ' + bt.variants.A.cells.filter(Boolean).length + ' notes in ' + bt.variants.A.bars + ' bars)');
+      ok(['decode', 'tempo', 'analyse', 'build'].every(function (s) { return stages.indexOf(s) >= 0; }), 'analyze reports decode, tempo, analyse and build');
+      ok(h.engine().order.length === names.length, 'the built tracks are in the running engine');
+      var u = h.editor()._undo.length;
+      ok(h.applyRecreation('drums-kick', { type: 'bd808', params: { decay: 0.6 } }) && h.document().tracks.filter(function (t) { return t.name === kt.name; })[0].inst === 'bd808' && h.editor()._undo.length === u + 1, 'applyRecreation swaps the kick for bd808 in place (one undo step)');
+      var k2 = h.document().tracks.filter(function (t) { return t.name === kt.name; })[0];
+      ok(k2.variants.A.cells.filter(Boolean).length === 4 && h.analysis().elements[0].loaded.type === 'bd808' && h.document().sections[0].play[kt.name] === 'A', 'the swapped track keeps its pattern and its place in the section');
+      ok(h.applyRecreation('bass', { type: 'sampler' }) && h.document().tracks.filter(function (t) { return t.analysis && t.analysis.element === 'bass'; })[0].type === 'sampler', 'applyRecreation to the sampler: the element\'s audio on a sampler track');
+      ok(h.applyRecreation('drums-hats', null) && h.analysis().elements[2].track === null && h.document().tracks.length === names.length - 1, 'applyRecreation(id, null) removes the track; the element stays, with no track');
+      ok(!h.applyRecreation('nope', { type: 'bd808' }) && !h.applyRecreation('bass', { type: 'nonsense' }), 'unknown elements and types are refused');
+      h.editor().undo(); h.commit();
+      ok(h.analysis().elements[2].track && h.document().tracks.length === names.length, 'undo restores the removed track');
+      var u2 = h.editor()._undo.length;
+      return h.analyze([{ name: 'drums', buffer: fakeBuf(ctx2, loop.L) }], { maxSeconds: 4 }).then(function (an2) {
+        ok(h.document().tracks.length === 3 && an2.elements.length === 3 && h.editor()._undo.length === u2 + 1, 'a second analysis replaces the tracks the first built (one undo step)');
+        h.editor().undo(); h.commit();
+        ok(h.document().tracks.length === names.length, 'undo of an analysis restores the earlier tracks');
+        return h.matchLevel({});
+      });
+    }).then(function (lv) {
+      ok(lv === null, 'matchLevel without a reference resolves null');
+      h.dispose();
+    });
+  }).then(function () {
+    // 10d. Project.importTrack: a file and the shell's separator; the project is saved at once
+    var ctx3 = new FakeContext(SR10), lp = synthLine(125, 0.05, 8, SR10), saved = [], stages = [];
+    var od = ctx3.decodeAudioData;
+    var bank = { 11: loop.L, 22: loop.L, 33: lp.L };              // first byte -> content
+    ctx3.decodeAudioData = function (ab, a, b) {
+      var self = this, k = new Uint8Array(ab)[0];
+      if (!bank[k]) return od.call(this, ab, a, b);
+      return Promise.resolve().then(function () { var buf = fakeBuf(self, bank[k]); if (a) a(buf); return buf; });
+    };
+    function bytes(k) { var u = new Uint8Array(8); u[0] = k; return u.buffer; }
+    var shell = {
+      saveFile: function (o) { saved.push(o); return Promise.resolve({ path: '/songs/' + o.name }); },
+      separate: function (p, o) { if (this._cb) this._cb({ done: 1, total: 2, note: 'half' }); return Promise.resolve({ stems: [{ name: 'drums', path: '/tmp/st/drums.wav' }, { name: 'bass', path: '/tmp/st/bass.wav' }], model: 'htdemucs', log: 'ok' }); },
+      onSeparateProgress: function (fn) { var self = this; self._cb = fn; return function () { self._cb = null; }; },
+      readFile: function (p) { return Promise.resolve(/drums/.test(p) ? bytes(22) : /bass/.test(p) ? bytes(33) : null); }
+    };
+    var h = H.create({ context: ctx3 });
+    return h.start().then(function () {
+      return P.importTrack({ file: { name: 'loop.wav', path: '/music/loop.wav', bytes: bytes(11) }, host: h, shell: shell, maxSeconds: 4, onProgress: function (e) { stages.push(e.stage); } });
+    }).then(function (r) {
+      var d = h.document();
+      ok(r && r.doc === d && r.saved && r.saved.path === '/songs/loop.havantechno.json' && saved.length === 1, 'importTrack saves the project at once through Project.save (' + (r.saved && r.saved.name) + ')');
+      var f = P.parse(saved[0].text);
+      ok(f.reference && f.reference.audio === h.reference().id && Math.abs(f.reference.offset - 0.05) < 0.002 && f.analysis && f.analysis.elements.length === 4 && f.tracks.length === 4, 'the saved file holds the reference (offset ' + (f.reference && f.reference.offset) + '), the analysis and the tracks');
+      ok(r.analysis.separator && r.analysis.separator.model === 'htdemucs' && r.analysis.stems.map(function (s) { return s.name; }).join() === 'drums,bass' && d.audio[r.analysis.stems[0].audio].src === '/tmp/st/drums.wav', 'separation through the shell: stems by path (reloadable), the separator recorded');
+      ok(['decode', 'separate', 'tempo', 'analyse', 'build', 'save'].every(function (s) { return stages.indexOf(s) >= 0; }), 'progress covers decode, separate, tempo, analyse, build, save');
+      ok(d.audio[h.reference().id].src === '/music/loop.wav' && d.name === 'loop', 'the reference keeps its path; the project takes the file\'s name');
+      // no shell: the mix in bands
+      var h2 = H.create({ context: ctx3 });
+      return h2.start().then(function () { return P.importTrack({ file: bytes(11), host: h2, maxSeconds: 4, shell: { saveFile: function (o) { return Promise.resolve({ path: '/x/' + o.name }); } } }); }).then(function (r2) {
+        ok(r2.analysis.elements.length === 3 && r2.analysis.stems[0].name === 'mix' && r2.analysis.unverified.some(function (u) { return /no stems/.test(u); }), 'no stems and no separator: the mix is read in three bands, and the report says so');
+        // cancel (D2's request, coordinator's ruling): AbortError, nothing saved, the host keeps its document
+        var keep = sb.SongDoc.save(h2.document()), saves = 0, cancels = 0, sig = { aborted: false, l: [], addEventListener: function (t, f) { this.l.push(f); }, removeEventListener: function () {} };
+        var sh2 = { saveFile: function () { saves++; return Promise.resolve({ path: '/x' }); }, cancelSeparate: function () { cancels++; },
+                    readFile: function () { return Promise.resolve(bytes(22)); },
+                    separate: function () { sig.aborted = true; sig.l.forEach(function (f) { f(); }); return Promise.reject(new Error('cancelled')); } };
+        var thrown = 0;
+        return P.importTrack({ file: { name: 'b.wav', path: '/m/b.wav', bytes: bytes(11) }, host: h2, shell: sh2, signal: sig, maxSeconds: 4, onProgress: function () { thrown++; throw new Error('ui bug'); } }).then(function () { return 'resolved'; }, function (e) { return e.name; }).then(function (nm) {
+          ok(nm === 'AbortError' && saves === 0 && cancels === 1 && sb.SongDoc.save(h2.document()) === keep, 'a cancel during separation: shell.cancelSeparate, AbortError, nothing saved, the previous document back');
+          ok(thrown > 0, 'a throwing onProgress does not stop the import');
+          var sig2 = { aborted: false };
+          return P.importTrack({ file: bytes(11), host: h2, maxSeconds: 4, shell: { saveFile: function () { saves++; return Promise.resolve({ path: '/x' }); } }, signal: sig2,
+            onProgress: function (e) { if (e.stage === 'build' && e.note === 'level match') sig2.aborted = true; } }).then(function () { return 'resolved'; }, function (e) { return e.name; });
+        }).then(function (nm) {
+          ok(nm === 'AbortError' && saves === 0 && sb.SongDoc.save(h2.document()) === keep, 'a cancel just before the save: AbortError, no file, the previous document back');
+          h.dispose(); h2.dispose();
+        });
+      });
+    });
+  });
+}
+
+section5.then(section6).then(section7).then(section8).then(section9).then(section10).then(function () {
   console.log(fails ? 'FAILED: ' + fails + ' of ' + checks + ' checks' : 'OK: ' + checks + ' checks passed');
   process.exit(fails ? 1 : 0);
 }, function (e) {

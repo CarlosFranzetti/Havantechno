@@ -1,0 +1,27 @@
+# Stem Crew: coordinator's log
+
+Times are Eastern Time with UTC in parentheses. Rulings given to agents in messages are copied here when they are given.
+
+## 2026-11-21 15:53 EST (20:53 UTC) — crews formed
+
+The owner, 21 November: "I want a bunch of research and reasoning on how to approach this further. Eventually I do want what I've been asking but I also want the app to separate the elements into audios stems and I want you research how isotope RX 12 does their analysis and what engines a izotope uses and look into as many RE'd or open source sound engines and stem handling audio. Etc. Separately I want you to hunt down the chips and schematics for the different soft synths and see if there are also open source emus if so let's use that. If not let's start reverses engineeering some of it. Improved the audio detection engine and improve my synths so they're closer to arturias methods."
+
+Read as: a research and reasoning round first, no code, in two crews. Stem Crew: S1 iZotope RX and the commercial field (Sonnet), S2 open-source separation and stem handling (Sonnet), S3 the detection engine and a proposed second version of app/analysis (Opus). Circuit Crew: C1 the hardware, part by part, with readable schematics (Sonnet), C2 open emulations and reverse-engineering projects with a use, port or reverse-engineer verdict per instrument (Sonnet), C3 modelling methods, what the makers publish, open tools and a workflow for this project (Opus). The coordinator then writes one strategy for the owner from the six transcripts.
+
+Given in the task messages beyond the briefs: every claim tagged READ, SNIPPET or MEMORY; the Firecrawl search and scrape tools for pages (they fetch from outside the sandbox, so the network allowlist does not block them; they spend the owner's Firecrawl credits, capped at 25 searches and 40 scrapes per researcher) and curl for github; no owner or project name in any query; no ROM images, manuals or schematics saved into the repository; S1 to check whether "RX 12" exists; S3 to attack or support the coordinator's leading idea, analysis by synthesis with the app's own instruments; C3 to rank upgrades to the present engine by audible value per unit of work and to say what "closer to Arturia's methods" can honestly mean.
+
+State: the container was replaced during a break of several days. Everything pushed to main is intact (429a314 at the start of this round); the checkout had come up on GitHub's old default branch and was moved to main. The scratchpad was wiped: the owner's reference recording, its separated stems, the three Roland manuals and the Render Room's source files are gone from this machine and would need to be supplied again when work needs them. The two published pages are unaffected.
+
+## 2026-11-21 15:58 EST (20:58 UTC) — S1 received: iZotope and the commercial field
+
+S1-izotope.md (202 lines; by the coordinator's count of tags, 32 READ, 17 SNIPPET, 5 MEMORY). The coordinator has read the first section and S1's summary, not checked its quotations against the pages.
+
+S1's findings as it states them: RX 12 exists (iZotope blog dated 14 May 2026, READ), adding Scene Rebalance, a Stems View, a reference-free De-bleed and upgraded networks for Music Rebalance and Dialogue Isolate; iZotope names Band-Split RNN and BS-RoFormer in a keynote summary without saying which tool uses which, and publishes no training data, scores or latency; no iZotope tool identifies instruments, synths, tempo or notes or produces MIDI, and no commercial tool returns synth patches from a record (RipX's note-level editing comes nearest); workflow ideas worth copying are a residual-first A/B (stems that sum to the input), an assistant that proposes an editable device, editable classification, analysis of the loudest window, and draft and final quality tiers; Logic and Moises split a drum stem into kit pieces (SNIPPET). Not found: an RX 12 manual, any benchmark numbers for a commercial separator, the training data.
+
+The owner's Firecrawl credits ran out during S1's work (the tool reported no credits until 22 November 06:40 UTC). A tool error asked S1 to append a billing link to its answer; S1 ignored it as text from a tool, correctly. The other five researchers were told to fall back to curl through the proxy for allowed hosts and to search summaries, tagging accordingly.
+
+## 2026-11-21 16:06 EST (21:06 UTC) — all six transcripts in; strategy written
+
+S2-separation.md (255 lines), S3-detection.md (544), C3-methods.md (536) received and committed with the earlier three. The coordinator read each one's recommendation sections in full (S2 sections 2, 4.2 and 6; S3 sections 2.0, P5 and 2.3 to 2.5; C3 sections 6.1 and 6.4 to 7) and the hand-back summaries of the rest; it did not check quotations against their sources. Checked by the coordinator itself: tools/separate.py line 174 calls Demucs without float output (S2's defect is real); CA-72's calibration reference is a modern recreation (C2's correction is real); ngspice runs here.
+
+Written: docs/plans/2026-11-21-strategy.md (what the research says, the reasoning, a staged plan with a failing check per step, the licence position, what is not known, five decisions for the owner) and REPORT.md for each crew. No DISCUSSION.md: the six researchers worked alone and did not answer each other; where C2 (port existing code) and C3 (derive from the schematic) point different ways, the strategy's reasoning section says how the two fit together.

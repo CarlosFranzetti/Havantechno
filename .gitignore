@@ -4,3 +4,7 @@ tools/out/
 *.log
 .DS_Store
 __pycache__/
+app/dist/
+
+# files the owner supplies for their own machine (ROM images, unlicensed samples): never committed
+/local/

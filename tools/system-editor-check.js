@@ -68,7 +68,8 @@ sb.OfflineAudioContext = function () {
 };
 
 var used = {};
-['engine/core.js', 'engine/synths.js', 'engine/processors.js', 'engine/songdoc.js', 'engine/sequencer.js', 'engine/song.js'].forEach(load);
+
+['engine/core.js', 'engine/drums.js', 'engine/worklets.js', 'engine/classics.js', 'engine/programs.js', 'engine/synths.js', 'engine/processors.js', 'engine/songdoc.js', 'engine/sequencer.js', 'engine/song.js'].forEach(load);
 
 // UI parts: real if present and loadable, fake otherwise
 function tryLoad(rel, global_) {
@@ -419,4 +420,109 @@ function samplerTests() {
   });
 }
 
-samplerTests().then(finish, function (e) { console.log('FAIL: ' + e.message); process.exitCode = 1; });
+
+// ------------------------------------------------------------------ programs: folder / several files -> one track, .sfz -> import (stub host)
+function programTests() {
+  var calls = { add: [], imp: [] }, stub = Object.create(host);
+  stub.addSampler = function (src, o) { calls.add.push([src, o]); return Promise.resolve('Stub_' + calls.add.length); };
+  stub.importProgram = function (src, o) { calls.imp.push([src, o]); return Promise.resolve({ id: 'prog' + calls.imp.length, warnings: ['w'], missing: [] }); };
+  var el2 = new FakeNode('div'), view2 = sb.SystemEditor.mount(el2, stub);
+  var body2 = el2.find(function (x) { return hasClass(x, 'se-body'); })[0];
+  function mk(name, type) { return { name: name, type: type || 'audio/wav', arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(8)); } }; }
+  function fileEntry(dir, f) { return { isFile: true, isDirectory: false, name: f.name, fullPath: '/' + dir + '/' + f.name, file: function (cb) { cb(f); } }; }
+  function dirEntry(name, kids) {
+    return { isFile: false, isDirectory: true, name: name, fullPath: '/' + name, createReader: function () { var done = false; return { readEntries: function (cb) { if (done) cb([]); else { done = true; cb(kids.map(function (k) { return fileEntry(name, k); })); } } }; } };
+  }
+  function drop(dt) { body2.fire('drop', { dataTransfer: dt, preventDefault: function () {} }); }
+  function statusText() { return el2.find(function (x) { return hasClass(x, 'se-status'); })[0].textContent; }
+  var empty = '................', kick = mk('kick.wav'), snare = mk('snare.wav'), note = mk('readme.txt', 'text/plain');
+  var sfz = mk('Kit.sfz', ''), sfz2 = mk('kit2.sfz', '');
+  return Promise.resolve().then(function () {
+    // (a) a dropped folder: walked through webkitGetAsEntry, non-audio skipped, one call with a folder map named after the folder
+    drop({ types: ['Files'], files: [], items: [{ webkitGetAsEntry: function () { return dirEntry('Kit', [kick, snare, note]); } }] });
+    return waitFor(function () { return calls.add.length === 1; }, 'the folder drop');
+  }).then(function () {
+    var c = calls.add[0];
+    ok(c[0] && !Array.isArray(c[0]) && Object.keys(c[0]).sort().join() === 'Kit/kick.wav,Kit/snare.wav' && c[0]['Kit/kick.wav'] === kick, 'a dropped folder calls host.addSampler once with a {relativePath: File} map of its audio files');
+    ok(c[1].name === 'Kit' && c[1].family === 'drums' && c[1].pattern === empty, 'the folder track is named after the folder, family drums, empty pattern');
+    // (b) several audio files dropped together: one track from a file list
+    drop({ types: ['Files'], files: [kick, snare, mk('hat.wav')] });
+    return waitFor(function () { return calls.add.length === 2; }, 'the multi-file drop');
+  }).then(function () {
+    var c = calls.add[1];
+    ok(Array.isArray(c[0]) && c[0].length === 3 && c[0][0] === kick && c[1].name === undefined && c[1].family === 'drums', 'several audio files make one addSampler call with the file list (one track)');
+    // (c) one audio file: as before, a plain sampler
+    drop({ types: ['Files'], files: [kick] });
+    return waitFor(function () { return calls.add.length === 3; }, 'the single-file drop');
+  }).then(function () {
+    var c = calls.add[2];
+    ok(c[0] === kick && c[1].name === 'kick', 'a single audio file still makes a plain sampler (the file itself, name from the file)');
+    // (d) an .sfz with its samples: importProgram, then a track that plays the program
+    drop({ types: ['Files'], files: [sfz, kick, snare] });
+    return waitFor(function () { return calls.imp.length === 1 && calls.add.length === 4; }, 'the sfz drop');
+  }).then(function () {
+    var ci = calls.imp[0], ca = calls.add[3];
+    ok(ci[0] === sfz && ci[1].path === 'Kit.sfz' && Object.keys(ci[1].files).sort().join() === 'kick.wav,snare.wav', 'a dropped .sfz calls host.importProgram(file, {files, path}) with its samples as the folder map');
+    ok(ca[0] === null && ca[1].program === 'prog1' && ca[1].name === 'Kit' && ca[1].pattern === empty, 'the imported program gets a new sampler track (addSampler {program})');
+    return waitFor(function () { return /1 warning/.test(statusText()); }, 'the import status');
+  }).then(function () {
+    ok(/1 warning/.test(statusText()), 'import warnings show in the status line (' + statusText() + ')');
+    // (e) the menu: Sampler track from folder... and Import SFZ...
+    var picks = [];
+    sb.Project = { pickFiles: function (o) { picks.push(o); return Promise.resolve(o.directory
+      ? [Object.assign(mk('a.wav'), { webkitRelativePath: 'Drums/a.wav' }), Object.assign(mk('b.wav'), { webkitRelativePath: 'Drums/b.wav' })]
+      : [sfz2, kick]); }, pickAudio: sb.Project && sb.Project.pickAudio };
+    function plus() { return el2.find(function (x) { return hasClass(x, 'se-btn') && x.textContent === '+ track'; })[0]; }
+    function item(re) { return el2.find(function (x) { return hasClass(x, 'se-menuitem') && re.test(x.textContent); })[0]; }
+    plus().fire('click');
+    ok(item(/Sampler track from folder/) && item(/Import SFZ/), 'the + track menu lists "Sampler track from folder..." and "Import SFZ..."');
+    item(/Sampler track from folder/).fire('click');
+    return waitFor(function () { return calls.add.length === 5; }, 'the folder pick').then(function () {
+      var c = calls.add[4];
+      ok(picks[0].directory === true && picks[0].multiple === true, 'Sampler track from folder asks the picker for a directory');
+      ok(Object.keys(c[0]).sort().join() === 'Drums/a.wav,Drums/b.wav' && c[1].name === 'Drums', 'the picked folder becomes one mapped sampler track named after it');
+      plus().fire('click'); item(/Import SFZ/).fire('click');
+      return waitFor(function () { return calls.imp.length === 2 && calls.add.length === 6; }, 'the sfz pick');
+    }).then(function () {
+      ok(/\.sfz/.test(picks[1].accept) && calls.imp[1][0] === sfz2 && calls.imp[1][1].path === 'kit2.sfz' && calls.add[5][1].program === 'prog2', 'Import SFZ picks an .sfz (and samples), imports it and adds the program track');
+    });
+  }).then(function () { view2.dispose(); }, function (e) { view2.dispose(); throw e; });
+}
+
+
+// ------------------------------------------------------------------ drum machines: kits and single voices from the + track menu
+function drumTests() {
+  if (hostKind !== 'real Host.create()' || !sb.Drums) { console.log('  (drum cases skipped: need the real Host and Drums)'); return Promise.resolve(); }
+  function plus() { return mountEl.find(function (x) { return hasClass(x, 'se-btn') && x.textContent === '+ track'; })[0]; }
+  function item(re) { return mountEl.find(function (x) { return hasClass(x, 'se-menuitem') && re.test(x.textContent); })[0]; }
+  function types() { return host.document().tracks.map(function (t) { return t.type || t.inst; }); }
+  function undoN() { return host.editor()._undo.length; }
+  var n0 = host.document().tracks.length, u0 = undoN(), expect808 = ['bd808', 'sd808', 'cp808', 'ch808', 'oh808', 'cb808', 'lt808', 'mt808', 'ht808'];
+  plus().fire('click');
+  ok(item(/TR-808 kit/) && item(/TR-909 kit/) && item(/Drum voice/), 'the + track menu lists TR-808 kit, TR-909 kit and Drum voice...');
+  item(/TR-808 kit/).fire('click');
+  var d = host.document(), added = d.tracks.slice(n0);
+  ok(added.length === 9 && added.map(function (t) { return t.type; }).join() === expect808.join(), 'TR-808 kit adds nine tracks with the core voice types (' + added.map(function (t) { return t.type; }).join(',') + ')');
+  ok(undoN() === u0 + 1, 'the 808 kit is one undo entry (+' + (undoN() - u0) + ')');
+  ok(added.every(function (t) { return t.family === 'drums' && t.variants.A.cells.every(function (c) { return c === null; }); }), 'kit tracks are family drums with an empty pattern');
+  var names = mountEl.find(function (x) { return x.attrs['data-track']; }).map(function (x) { return x.attrs['data-track']; });
+  ok(names.indexOf('bd808') >= 0 && names.indexOf('bd808') <= 6 + 9 + 1 && mountEl.find(function (x) { return x.attrs['data-track'] === 'bd808'; })[0].attrs['data-fam'] === 'drums', 'kit rows render under DRUMS');
+  host.editor().undo(); host.commit();
+  ok(host.document().tracks.length === n0, 'one undo removes the whole kit');
+  var u1 = undoN(); plus().fire('click'); item(/TR-909 kit/).fire('click');
+  var a9 = host.document().tracks.slice(n0).map(function (t) { return t.type; });
+  ok(a9.join() === 'bd909,sd909,cp909,ch909,oh909,lt909,mt909,ht909,rs909,cr909,rd909' && undoN() === u1 + 1, 'TR-909 kit adds eleven tracks in one undo entry (' + a9.length + ')');
+  host.editor().undo(); host.commit();
+  // single voice through the submenu
+  var n1 = host.document().tracks.length, u2 = undoN();
+  plus().fire('click'); item(/Drum voice/).fire('click');
+  var voices = mountEl.find(function (x) { return hasClass(x, 'se-menuitem'); });
+  ok(voices.length === sb.Drums.types().length && /Cowbell|cb808/.test(voices.map(function (v) { return v.textContent; }).join()), 'Drum voice... lists every Drums type (' + voices.length + ')');
+  item(/^cy808/).fire('click');
+  ok(host.document().tracks.length === n1 + 1 && types()[n1] === 'cy808' && undoN() === u2 + 1, 'a single voice adds one track of that type in one undo entry');
+  plus().fire('click'); item(/Drum voice/).fire('click'); item(/^cy808/).fire('click');
+  ok(host.document().tracks.slice(-1)[0].name === 'cy808_2', 'a second copy of a voice gets a unique track name');
+  return Promise.resolve();
+}
+
+samplerTests().then(programTests).then(drumTests).then(finish, function (e) { console.log('FAIL: ' + e.message); process.exitCode = 1; });

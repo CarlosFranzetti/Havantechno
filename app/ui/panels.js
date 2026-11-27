@@ -1,0 +1,2460 @@
+/* Havantechno app - ui/panels.js
+ * Global `Panels`: hardware-style instrument panels for the floating device windows (Patch Crew, P4).
+ * A panel is one SVG drawn after the original machine (looks, not marks: no maker's logo or model badge; Havantechno's
+ * wordmark and a plain HVT model name), whose controls are live: they write the same parameters as the faces.
+ *
+ *   Panels.define(key, def)                 def: {label, size: {w, h} (viewBox units), win: {w} (default window width, px),
+ *                                                 match(device, host) -> bool, build(P) -> {update?(), dispose?()}?}
+ *   Panels.for(device, host) -> key|null    which panel, if any, a device belongs to (instrument devices only)
+ *   Panels.render(device, host, opts) -> {el, update(), resize(w, h), dispose(), key}
+ *   Panels.keys()  Panels.get(key)
+ *
+ * build(P) receives the panel kit: P.host, P.device, P.svg, P.g(parent, attrs), P.el(tag, attrs, parent), P.text(parent,
+ * x, y, str, attrs), P.voice(type) -> {type, dev, path(param), entry(param)} (dev null when no track uses that voice; a
+ * single-device panel uses P.voice(null) = the window's own device), P.knob(parent, o), P.button(parent, o), P.slide(parent, o),
+ * P.onUpdate(fn), P.onDispose(fn), P.listen(node, type, fn), P.addVoice(type), P.steps (see machine panels), P.frame.
+ * P.place(g, dx, dy, s) moves a group of controls drawn in another arrangement's coordinates (readouts follow it).
+ * Layouts: hvt303, hvtd and hvt106 have opts.layout 'landscape' (the default size) and 'portrait'; the HVT-D and HVT-106 carry a
+ * step sequencer (synthSeq below); opts.rec starts its REC on (the solo pages), so the keyboard writes the selected step.
+ * So a single-device panel (303, Model D, Juno) is a define() whose build draws its face and calls P.knob(g, {param: 'cutoff', ...}).
+ *
+ * Controls behave like Widgets (ui/widgets.js): role="slider", aria-valuenow/min/max/valuetext, vertical drag (200 px for the
+ * whole range, Shift x0.1), wheel on the focused control, arrows 1 % (Shift 0.1 %), PageUp/Down 10 %, Home/End, double-click
+ * returns to the song's value (the current section's `set`, else the document's value when the panel was built, else spec.value),
+ * Delete too. One host.hold(path) per gesture (at its first change), then host.setParam(path, v). A spec entry with basis
+ * 'prior' carries a dotted ring. A value readout shows while adjusting or focused. Everything goes through the host the window
+ * was given (the Electron bridge host has no document/editor/commit/transport.play: step keys, add and start/stop are drawn
+ * disabled there). update() runs every frame and only touches the DOM when something changed.
+ */
+(function () {
+  'use strict';
+
+  var root = (typeof window !== 'undefined') ? window : (typeof globalThis !== 'undefined' ? globalThis : this);
+  var NS = 'http://www.w3.org/2000/svg';
+  var DRAG_PX = 200, FINE = 0.1, KEY = 0.01, TIP_MS = 900;
+  var A0 = 135, SWEEP = 270;              // knob travel: degrees clockwise from +x (y down), as Widgets
+  var STEPS = 16, DEFAULT_VEL = 0.85, EMPTY = '................';
+
+  var defs = {}, order = [];
+
+  // ------------------------------------------------------------------ helpers
+  function safe(fn, dflt) { try { var v = fn(); return v === undefined ? dflt : v; } catch (e) { return dflt; } }
+  function has(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
+  function clamp(x, a, b) { return x < a ? a : x > b ? b : x; }
+  function isNum(x) { return typeof x === 'number' && isFinite(x); }
+  function isFn(f) { return typeof f === 'function'; }
+  function doc() { return root.document; }
+  function attrs(e, a) { if (a) for (var k in a) if (has(a, k) && a[k] != null) e.setAttribute(k, String(a[k])); return e; }
+  function sv(tag, a, parent) { var e = attrs(doc().createElementNS(NS, tag), a); if (parent) parent.appendChild(e); return e; }
+  function pt(cx, cy, r, deg) { var a = deg * Math.PI / 180; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; }
+  function f2(x) { return Math.round(x * 100) / 100; }
+  function scaleOf(e) {
+    var min = e && isNum(e.min) ? e.min : 0, max = e && isNum(e.max) ? e.max : 1;
+    var lg = min > 0 && max / min > 50, lmin = lg ? Math.log(min) : 0, ls = lg ? Math.log(max) - lmin : 0, span = max - min;
+    return {
+      min: min, max: max,
+      toPos: function (v) { if (!(span > 0)) return 0; return clamp(lg ? (Math.log(Math.max(v, min)) - lmin) / ls : (v - min) / span, 0, 1); },
+      fromPos: function (p) { p = clamp(p, 0, 1); return lg ? Math.exp(lmin + p * ls) : min + p * span; }
+    };
+  }
+  function fmt(v, unit) {
+    var a = Math.abs(v), t = a >= 100 ? String(Math.round(v)) : a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toFixed(3);
+    if (t.indexOf('.') >= 0) t = t.replace(/0+$/, '').replace(/\.$/, '');
+    if (t === '-0') t = '0';
+    return unit ? t + (unit === '%' ? '' : ' ') + unit : t;
+  }
+
+  // ------------------------------------------------------------------ document helpers (as the System Editor reads them)
+  function findTrack(d, name) { var t = (d && d.tracks) || []; for (var i = 0; i < t.length; i++) if (t[i].name === name) return t[i]; return null; }
+  function variantName(sec, name) { var p = sec && sec.play && sec.play[name]; return p === true ? 'A' : (p || null); }
+  function curIndex(p, secs) {
+    var i = p && p.section;
+    if (typeof i === 'number' && i >= 0 && i < secs.length) return i;
+    if (p && p.sectionName) for (var k = 0; k < secs.length; k++) if (secs[k].name === p.sectionName) return k;
+    return 0;
+  }
+  function canEdit(h) { return !!h && isFn(h.document) && isFn(h.editor) && isFn(h.commit); }
+
+  // ------------------------------------------------------------------ render
+  function render(device, host, opts) {
+    if (!device) throw new Error('Panels.render: no device');
+    opts = opts || {};
+    host = host || {};
+    var key = Panels.for(device, host);
+    if (!key) throw new Error('Panels.render: no panel for ' + device.type);
+    var def = defs[key], layout = (opts.layout && def.layouts && def.layouts[opts.layout]) ? opts.layout : null;
+    var sz = layout ? def.layouts[layout] : def.size, W = sz.w, H = sz.h;
+    var D = doc();
+    var el = D.createElement('div');
+    el.className = 'pn-root';
+    el.setAttribute('data-panel', key);
+    var natW = (def.win && def.win.w) || 960;
+    el.style.width = natW + 'px';
+    el.style.height = Math.round(natW * H / W) + 'px';
+    var svg = sv('svg', { 'class': 'pn-svg', viewBox: '0 0 ' + W + ' ' + H, preserveAspectRatio: 'xMidYMid meet', width: natW, height: Math.round(natW * H / W),
+      role: 'group', 'aria-label': def.label || key });
+    el.appendChild(svg);
+
+    var listeners = [], updaters = [], disposers = [], controls = [];
+    var state = { disposed: false, frame: 0, docRev: 0, devs: null, devRev: 0, focus: null };
+
+    function listen(node, type, fn, o) { var rec = [node, type, fn, o]; node.addEventListener(type, fn, o); listeners.push(rec); return rec; }
+    function unlisten(rec) { var i = listeners.indexOf(rec); if (i >= 0) listeners.splice(i, 1); safe(function () { rec[0].removeEventListener(rec[1], rec[2], rec[3]); }); }
+
+    // ---- devices: refetched on the host's 'document' event (refs change on a rebuild) and every 90 frames
+    var listenAll = listen;
+    function refreshDevices() {
+      var list = safe(function () { return host.devices(); }, []) || [];
+      state.devs = list.filter(function (d) { return d && d.kind === 'instrument'; });
+      state.devRev++;
+    }
+    function onDoc() { state.docRev++; refreshDevices(); }
+    if (isFn(host.on)) { safe(function () { host.on('document', onDoc); }); disposers.push(function () { if (isFn(host.off)) safe(function () { host.off('document', onDoc); }); }); }
+    refreshDevices();
+
+    function voice(type) {
+      var dev = null, i;
+      if (!type || type === device.type) {
+        for (i = 0; i < state.devs.length; i++) if (state.devs[i].id === device.id) { dev = state.devs[i]; break; }
+        if (!dev && (!type || type === device.type)) dev = type ? null : device;
+        if (!dev && type) for (i = 0; i < state.devs.length; i++) if (state.devs[i].type === type) { dev = state.devs[i]; break; }
+      } else {
+        for (i = 0; i < state.devs.length; i++) if (state.devs[i].type === type) { dev = state.devs[i]; break; }
+      }
+      var spec = (dev && dev.spec) || safe(function () { return root.Drums && root.Drums.has && root.Drums.has(type) ? root.Drums.spec(type) : null; }, null) || {};
+      return {
+        type: type || device.type, dev: dev, spec: spec,
+        path: function (p) { return dev ? dev.pathPrefix + '.' + p : null; },
+        entry: function (p) { return spec[p] || null; }
+      };
+    }
+
+    // the song document's value of an instrument param (the double-click home after the section's set)
+    function docValue(dev, p) {
+      if (!dev || !isFn(host.document)) return undefined;
+      var tr = findTrack(safe(function () { return host.document(); }, null), dev.track);
+      var v = tr && tr.params ? tr.params[p] : undefined;
+      return isNum(v) ? v : undefined;
+    }
+    function sectionSet(path) {
+      var secs = safe(function () { return host.sections(); }, null), pos = safe(function () { return host.transport.pos(); }, null);
+      if (!secs || !secs.length) return undefined;
+      var sec = secs[curIndex(pos, secs)];
+      return sec && sec.set && has(sec.set, path) && isNum(sec.set[path]) ? sec.set[path] : undefined;
+    }
+
+    // ---- shared readout callout (drawn last, on top)
+    var tipG = null, tipRect = null, tipText = null, tipTimer = null;
+    function ensureTip() {
+      if (tipG) return;
+      tipG = sv('g', { 'class': 'pn-tip', 'aria-hidden': 'true', display: 'none', 'pointer-events': 'none' }, svg);
+      tipRect = sv('rect', { rx: 4, ry: 4, height: 22 }, tipG);
+      tipText = sv('text', { 'text-anchor': 'middle', y: 15 }, tipG);
+    }
+    function showTip(c, sticky) {
+      ensureTip();
+      if (tipG.parentNode === svg) svg.appendChild(tipG);       // keep on top
+      var t = c.label + '  ' + c.text();
+      tipText.textContent = t;
+      var w = Math.max(60, t.length * 6.6 + 16);
+      var a = anchor(c), x = clamp(a[0], w / 2 + 2, W - w / 2 - 2), y = a[1] - c.r * a[2] - 34;
+      if (y < 2) y = a[1] + c.r * a[2] + 10;
+      tipRect.setAttribute('width', f2(w)); tipRect.setAttribute('x', f2(-w / 2));
+      tipG.setAttribute('transform', 'translate(' + f2(x) + ' ' + f2(y) + ')');
+      tipG.setAttribute('display', 'inline');
+      if (tipTimer) { clearTimeout(tipTimer); tipTimer = null; }
+      if (!sticky) tipTimer = setTimeout(function () { tipTimer = null; if (state.focus !== c && tipG) tipG.setAttribute('display', 'none'); }, TIP_MS);
+    }
+    function hideTip() { if (tipG) tipG.setAttribute('display', 'none'); }
+    // a control inside groups placed with P.place: its position in the panel's viewBox and the scale it is drawn at
+    function anchor(c) {
+      var x = c.x, y = c.y, s = 1;
+      for (var n = c.g && c.g.parentNode; n && n !== svg; n = n.parentNode) if (n._pl) { x = n._pl.dx + n._pl.s * x; y = n._pl.dy + n._pl.s * y; s *= n._pl.s; }
+      return [x, y, s];
+    }
+    function place(g, dx, dy, s) {
+      s = s == null ? 1 : s; g._pl = { dx: dx, dy: dy, s: s };
+      if (dx || dy || s !== 1) g.setAttribute('transform', 'translate(' + f2(dx) + ' ' + f2(dy) + ')' + (s !== 1 ? ' scale(' + s + ')' : ''));
+      return g;
+    }
+    disposers.push(function () { if (tipTimer) clearTimeout(tipTimer); });
+
+    // ---- a slider-role control (knob, trimmer, rotary); o: {x, y, r, label, voice (type|null), param, draw(pos, c), kind,
+    //      value: {get(), set(v), min, max, unit, label} for a non-device value (tempo)}
+    function control(parent, o) {
+      if (missing(o)) return null;
+      var c = { x: o.x, y: o.y, r: o.r || 16, label: o.label || o.param || '', o: o, v: null, pos: 0, sc: null, entry: null, path: null, dev: null,
+                held: false, dragging: false, raw: 0, lastY: 0, pid: null, wheelT: null, rev: -1, home: undefined, disabled: false };
+      var g = sv('g', { 'class': 'pn-ctl pn-' + (o.kind || 'knob'), role: 'slider', tabindex: 0, 'aria-label': c.label, transform: 'translate(' + f2(o.x) + ' ' + f2(o.y) + ')' }, parent);
+      c.g = g;
+      if (o.param || o.dataParam) g.setAttribute('data-param', o.param || o.dataParam);
+      var own = [];
+      function listen(node, type, fn, opt) { own.push(listenAll(node, type, fn, opt)); }
+      if (o.hit) {
+        sv('rect', { 'class': 'pn-hit', x: -o.hit.w / 2, y: -o.hit.h / 2, width: o.hit.w, height: o.hit.h, fill: 'transparent' }, g);
+        sv('rect', { 'class': 'pn-focus', x: -o.hit.w / 2 - 3, y: -o.hit.h / 2 - 3, width: o.hit.w + 6, height: o.hit.h + 6, rx: 4 }, g);
+      } else {
+        sv('circle', { 'class': 'pn-hit', r: c.r + 7, fill: 'transparent' }, g);
+        sv('circle', { 'class': 'pn-focus', r: c.r + 5 }, g);
+      }
+      c.art = sv('g', null, g);
+      c.ring = null;
+
+      function bind() {
+        c.rev = state.devRev;
+        if (o.value) {
+          c.entry = { min: o.value.min, max: o.value.max, unit: o.value.unit || '', value: o.value.get(), basis: o.value.basis };
+          c.path = o.value.path || null; c.dev = null; c.disabled = !o.value.set || !!o.value.disabled;
+        } else {
+          var vo = voice(o.voice || null);
+          c.dev = vo.dev; c.path = vo.path(o.param); c.entry = vo.entry(o.param);
+          c.disabled = !c.dev || !c.entry || !isFn(host.setParam);
+          c.home = c.dev ? docValue(c.dev, o.param) : undefined;
+        }
+        c.sc = scaleOf(c.entry);
+        var prior = !!(c.entry && c.entry.basis === 'prior');
+        if (prior && !c.ring) { c.ring = sv('circle', o.hit ? { 'class': 'pn-prior', r: 4.5, cx: 0, cy: -o.hit.h / 2 - 4, 'data-basis': 'prior' } : { 'class': 'pn-prior', r: c.r + 3, 'data-basis': 'prior' }, g); if (g.firstChild) g.insertBefore(c.ring, c.art); }
+        if (c.ring) c.ring.setAttribute('display', prior ? 'inline' : 'none');
+        g.setAttribute('aria-disabled', c.disabled ? 'true' : 'false');
+        g.setAttribute('tabindex', c.disabled ? '-1' : '0');
+        if (c.entry) { g.setAttribute('aria-valuemin', c.sc.min); g.setAttribute('aria-valuemax', c.sc.max); }
+        c.v = null;
+        read();
+      }
+      function current() {
+        if (o.value) return safe(function () { return o.value.get(); }, undefined);
+        if (!c.path) return c.entry ? c.entry.value : undefined;
+        var v = safe(function () { return host.getParam(c.path); }, undefined);
+        return isNum(v) ? v : (c.entry ? c.entry.value : undefined);
+      }
+      function paint() {
+        c.pos = c.sc.toPos(c.v);
+        o.draw(c.art, c.pos, c);
+        g.setAttribute('aria-valuenow', f2(c.v * 1000) / 1000);
+        g.setAttribute('aria-valuetext', c.text());
+      }
+      function read() {
+        var v = current();
+        if (!isNum(v) || v === c.v) return;
+        c.v = v; paint();
+      }
+      c.text = function () { return isNum(c.v) ? (o.format ? o.format(c.v) : fmt(c.v, c.entry && c.entry.unit)) : ''; };
+      function write(v) {
+        if (c.disabled) return;
+        v = clamp(v, c.sc.min, c.sc.max);
+        if (o.step) v = clamp(c.sc.min + Math.round((v - c.sc.min) / o.step) * o.step, c.sc.min, c.sc.max);
+        if (v === c.v) return;
+        if (!c.held) {
+          c.held = true;
+          if (o.value) { if (o.value.hold) safe(function () { o.value.hold(); }); }
+          else if (isFn(host.hold)) safe(function () { host.hold(c.path); });
+        }
+        c.v = v; paint();
+        if (o.value) safe(function () { o.value.set(v); });
+        else safe(function () { host.setParam(c.path, v); });
+        showTip(c, state.focus === c || c.dragging);
+      }
+      function setPos(p) { write(c.sc.fromPos(clamp(p, 0, 1))); }
+      function homeValue() {
+        if (o.value) return o.value.home != null ? o.value.home : undefined;
+        var s = sectionSet(c.path);
+        if (isNum(s)) return s;
+        if (isNum(c.home)) return c.home;
+        return c.entry ? c.entry.value : undefined;
+      }
+      function goHome() { var hv = homeValue(); if (isNum(hv)) { c.held = false; write(hv); c.held = false; } }
+
+      listen(g, 'pointerdown', function (e) {
+        if (c.disabled || (e.button != null && e.button !== 0)) return;
+        safe(function () { g.focus(); });
+        c.dragging = true; c.held = false; c.lastY = e.clientY; c.raw = c.pos; c.pid = e.pointerId;
+        safe(function () { if (g.setPointerCapture && c.pid != null) g.setPointerCapture(c.pid); });
+        showTip(c, true);
+        if (e.preventDefault) e.preventDefault();
+      });
+      listen(g, 'pointermove', function (e) {
+        if (!c.dragging) return;
+        var dy = c.lastY - e.clientY; c.lastY = e.clientY;
+        if (!dy) return;
+        c.raw = clamp(c.raw + dy / DRAG_PX * (e.shiftKey ? FINE : 1), 0, 1);
+        setPos(c.raw);
+      });
+      function up() {
+        if (!c.dragging) return;
+        c.dragging = false; c.held = false;
+        safe(function () { if (g.releasePointerCapture && c.pid != null) g.releasePointerCapture(c.pid); });
+        c.pid = null;
+        showTip(c, state.focus === c);
+      }
+      listen(g, 'pointerup', up); listen(g, 'pointercancel', up);
+      listen(g, 'dblclick', function () { if (!c.disabled) goHome(); });
+      listen(g, 'wheel', function (e) {
+        if (c.disabled || D.activeElement !== g) return;
+        var dy = e.deltaY || 0; if (!dy) return;
+        if (e.deltaMode === 1) dy *= 33;
+        if (e.preventDefault) e.preventDefault();
+        if (c.wheelT) clearTimeout(c.wheelT); else c.held = false;
+        c.wheelT = setTimeout(function () { c.wheelT = null; c.held = false; }, 300);
+        if (o.step) write(c.v + (dy < 0 ? o.step : -o.step));
+        else setPos(c.pos + clamp(-dy / 100, -3, 3) * KEY * (e.shiftKey ? FINE : 1));
+      }, { passive: false });
+      listen(g, 'keydown', function (e) {
+        if (c.disabled) return;
+        var k = e.key, used = true;
+        if (o.step && (k === 'ArrowUp' || k === 'ArrowRight')) write(c.v + o.step);
+        else if (o.step && (k === 'ArrowDown' || k === 'ArrowLeft')) write(c.v - o.step);
+        else if (k === 'ArrowUp' || k === 'ArrowRight') setPos(c.pos + (e.shiftKey ? KEY * FINE : KEY));
+        else if (k === 'ArrowDown' || k === 'ArrowLeft') setPos(c.pos - (e.shiftKey ? KEY * FINE : KEY));
+        else if (k === 'PageUp') setPos(c.pos + 0.1);
+        else if (k === 'PageDown') setPos(c.pos - 0.1);
+        else if (k === 'Home') write(c.sc.min);
+        else if (k === 'End') write(c.sc.max);
+        else if (k === 'Delete' || k === 'Backspace') goHome();
+        else used = false;
+        if (used && e.preventDefault) e.preventDefault();
+      });
+      listen(g, 'keyup', function () { c.held = false; });
+      listen(g, 'focus', function () { state.focus = c; if (!c.disabled) showTip(c, true); });
+      listen(g, 'blur', function () { c.held = false; if (state.focus === c) state.focus = null; hideTip(); });
+      disposers.push(function () { if (c.wheelT) clearTimeout(c.wheelT); });
+      c.destroy = function () {
+        own.forEach(unlisten); own.length = 0;
+        var i = controls.indexOf(c); if (i >= 0) controls.splice(i, 1);
+        if (state.focus === c) { state.focus = null; hideTip(); }
+        if (g.parentNode) g.parentNode.removeChild(g);
+      };
+
+      c.update = function () {
+        if (c.rev !== state.devRev) bind();
+        else if (!c.dragging) read();
+      };
+      bind();
+      controls.push(c);
+      return c;
+    }
+
+    // a single-device panel draws a control only for spec rows that exist (a renamed param then fails panels-check
+    // instead of leaving a dead knob); machine panels keep absent voices' controls (dimmed, with an add button)
+    function missing(o) { return !o.value && o.param && !o.voice && !voice(null).entry(o.param); }
+
+    // ---- knob art
+    function knob(parent, o) {
+      if (missing(o)) return null;
+      var st = o.style || {}, r = o.r || 16, sw = st.sweep || SWEEP, a0 = 270 - sw / 2;
+      o.r = r;
+      o.draw = o.draw || function (art, pos, c) {
+        if (!c.built) {
+          c.built = true;
+          var ticks = st.ticks == null ? 11 : st.ticks, i;
+          if (ticks) {
+            var tg = sv('g', { 'class': 'pn-ticks', stroke: st.tick || '#d8d8d0', 'stroke-width': st.tickW || 1.4, 'stroke-linecap': 'round' }, art);
+            for (i = 0; i < ticks; i++) {
+              var a = a0 + sw * i / (ticks - 1), p0 = pt(0, 0, r + 4, a), p1 = pt(0, 0, r + ((i === 0 || i === ticks - 1 || i === (ticks - 1) / 2) ? 9 : 7), a);
+              sv('line', { x1: f2(p0[0]), y1: f2(p0[1]), x2: f2(p1[0]), y2: f2(p1[1]) }, tg);
+            }
+          }
+          sv('circle', { r: r + 1.5, fill: 'rgba(0,0,0,.45)', cy: 1.5 }, art);                                   // shadow
+          if (o.numbers) o.numbers.forEach(function (t, i) {
+            var q = pt(0, 0, r + (st.numR || 17), a0 + sw * i / (o.numbers.length - 1));
+            P.text(art, q[0], q[1] + 3, t, { fill: st.tick || '#d8d8d0', 'font-size': st.numSize || 8 });
+          });
+          sv('circle', { r: r, fill: st.skirt || '#1b1b1b', stroke: st.edge || '#000', 'stroke-width': 1 }, art);  // skirt
+          if (st.flutes) for (var fi = 0; fi < st.flutes; fi++) {
+            var fa = 360 * fi / st.flutes, f0 = pt(0, 0, r * (st.fluteIn || 0.74), fa), f1 = pt(0, 0, r - 1, fa);
+            sv('line', { x1: f2(f0[0]), y1: f2(f0[1]), x2: f2(f1[0]), y2: f2(f1[1]), stroke: st.flute || 'rgba(255,255,255,.12)', 'stroke-width': 1.6 }, art);
+          }
+          if (st.cap) sv('circle', { r: r * (st.capR || 0.72), fill: st.cap, stroke: st.capEdge || 'rgba(0,0,0,.35)', 'stroke-width': 1 }, art);
+          if (st.capShine) sv('circle', { r: r * (st.capR || 0.72) * 0.6, cx: -r * 0.08, cy: -r * 0.1, fill: st.capShine }, art);
+          if (st.shine !== false) sv('ellipse', { rx: r * 0.42, ry: r * 0.22, cx: -r * 0.2, cy: -r * 0.42, fill: 'rgba(255,255,255,.16)' }, art);
+          c.rot = sv('g', null, art);
+          if (st.wedge) {                 // a wedge pointer knob (range and waveform selectors): pointing along +x, rotated
+            sv('path', { d: 'M' + f2(r * 1.18) + ' 0 L' + f2(-r * 0.55) + ' ' + f2(-r * 0.62) + ' Q' + f2(-r * 0.9) + ' 0 ' + f2(-r * 0.55) + ' ' + f2(r * 0.62) + ' Z', fill: st.wedge, stroke: '#000', 'stroke-width': 1 }, c.rot);
+            sv('line', { x1: 0, y1: 0, x2: f2(r * 1.05), y2: 0, stroke: st.pointer || '#efe6c8', 'stroke-width': st.pointerW || 2.4, 'stroke-linecap': 'round' }, c.rot);
+          } else if (st.dot) sv('circle', { cx: f2(r * (st.dotR || 0.62)), cy: 0, r: st.dotSize || 2.2, fill: st.pointer || '#fff' }, c.rot);
+          else sv('line', { x1: f2(st.slot ? -r * 0.8 : r * 0.12), y1: 0, x2: f2(r * (st.slot ? 0.8 : 0.92)), y2: 0, stroke: st.pointer || '#f4f1e8', 'stroke-width': st.pointerW || 2.4, 'stroke-linecap': 'round' }, c.rot);
+        }
+        c.rot.setAttribute('transform', 'rotate(' + f2(a0 + sw * pos) + ')');
+      };
+      var c = control(parent, o);
+      if (o.caption) {
+        var cy = o.captionY != null ? o.captionY : -(r + 15);
+        P.text(c.g, 0, cy, o.caption, { 'class': 'pn-cap', fill: st.label || '#e9e6dc', 'font-size': o.captionSize || 10.5 });
+      }
+      return c;
+    }
+
+    // ---- button: role=button (or switch with aria-pressed); o: {x, y, w, h, rx, label, aria, onClick(e), fill, ink}
+    function button(parent, o) {
+      var g = sv('g', { 'class': 'pn-btn ' + (o.cls || ''), role: o.role || 'button', tabindex: 0, 'aria-label': o.aria || o.label || '', transform: 'translate(' + f2(o.x) + ' ' + f2(o.y) + ')' }, parent);
+      var b = { g: g, disabled: false };
+      g.setAttribute('aria-disabled', 'false');
+      b.rect = sv('rect', { x: 0, y: 0, width: o.w, height: o.h, rx: o.rx == null ? 3 : o.rx, fill: o.fill || '#ddd', stroke: o.stroke || 'rgba(0,0,0,.5)', 'stroke-width': 1 }, g);
+      sv('rect', { 'class': 'pn-focus', x: -3, y: -3, width: o.w + 6, height: o.h + 6, rx: (o.rx == null ? 3 : o.rx) + 2, fill: 'none' }, g);
+      if (o.label) b.txt = P.text(g, o.w / 2, o.h / 2 + (o.size || 10) * 0.36, o.label, { fill: o.ink || '#111', 'font-size': o.size || 10, 'font-weight': 700 });
+      function act(e) { if (!b.disabled && o.onClick) o.onClick(e || {}); }
+      listen(g, 'click', function (e) { act(e); });
+      listen(g, 'keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { if (e.preventDefault) e.preventDefault(); act(e); } });
+      listen(g, 'pointerdown', function (e) { if (e.stopPropagation) e.stopPropagation(); });
+      b.setDisabled = function (d) {
+        d = !!d; if (d === b.disabled) return; b.disabled = d;
+        g.setAttribute('aria-disabled', d ? 'true' : 'false'); g.setAttribute('tabindex', d ? '-1' : '0');
+        g.setAttribute('opacity', d ? '0.4' : '1');
+      };
+      return b;
+    }
+
+    // ---- two-position slide switch (vertical); o: {x, y, aria, labels: [up, down], get() -> 0|1, set(i)}
+    function slide(parent, o) {
+      var g = sv('g', { 'class': 'pn-slide', role: 'switch', tabindex: 0, 'aria-label': o.aria || '', transform: 'translate(' + f2(o.x) + ' ' + f2(o.y) + ')' }, parent);
+      sv('rect', { 'class': 'pn-focus', x: -12, y: -17, width: 24, height: 34, rx: 4, fill: 'none' }, g);
+      sv('rect', { x: -6, y: -14, width: 12, height: 28, rx: 2, fill: '#0b0b0b', stroke: '#555', 'stroke-width': 1 }, g);
+      var thumb = sv('rect', { x: -5, width: 10, height: 13, rx: 1.5, fill: o.thumb || '#cfcac0', stroke: '#222', 'stroke-width': 0.8 }, g);
+      sv('rect', { x: -12, y: -17, width: 24, height: 34, fill: 'transparent' }, g);
+      var s = { g: g, last: -1 };
+      s.update = function () {
+        var i = o.get() ? 1 : 0;
+        if (i === s.last) return;
+        s.last = i;
+        thumb.setAttribute('y', i ? 0 : -13);
+        g.setAttribute('aria-checked', i ? 'true' : 'false');
+        g.setAttribute('aria-valuetext', o.labels ? o.labels[i] : String(i));
+      };
+      function flip() { o.set(o.get() ? 0 : 1); s.update(); }
+      listen(g, 'click', flip);
+      listen(g, 'keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { if (e.preventDefault) e.preventDefault(); flip(); } });
+      s.update();
+      updaters.push(s.update);
+      return s;
+    }
+
+    // ---- single-device helpers: read and write one param of a voice (null = the window's own device)
+    function pval(type, p) {
+      var vo = voice(type), path = vo.path(p), v;
+      if (path) v = safe(function () { return host.getParam(path); }, undefined);
+      if (v === undefined || v === null) { var e = vo.entry(p); v = e ? e.value : undefined; }
+      return v;
+    }
+    function pwrite(type, p, v, holdIt) {
+      var path = voice(type).path(p);
+      if (!path || !isFn(host.setParam)) return false;
+      if (holdIt && isFn(host.hold)) safe(function () { host.hold(path); });
+      safe(function () { host.setParam(path, v); });
+      return true;
+    }
+    function optionsOf(type, p, fallback) {
+      var e = voice(type).entry(p);
+      if (e && e.options && e.options.length) return e.options.slice();
+      return fallback ? fallback.slice() : (e ? [e.value] : []);
+    }
+    function same(a, b) { return a === b || String(a) === String(b); }
+
+    // ---- a stepped selector over a string (or listed) param: a knob whose positions are the options.
+    //      o: {x, y, r, voice, param, options (fallback), labels {value: text}, style, caption, sweep}
+    function choice(parent, o) {
+      if (missing(o)) return null;
+      var opts = optionsOf(o.voice || null, o.param, o.options), n = Math.max(1, opts.length);
+      var vo = voice(o.voice || null), path = vo.path(o.param), e = vo.entry(o.param);
+      function idx(v) { for (var i = 0; i < opts.length; i++) if (same(opts[i], v)) return i; return 0; }
+      function lab(i) { var v = opts[clamp(Math.round(i), 0, n - 1)]; return (o.labels && o.labels[v] != null) ? o.labels[v] : String(v); }
+      var song = vo.dev ? docValue(vo.dev, o.param) : undefined;
+      var kn = knob(parent, { x: o.x, y: o.y, r: o.r, label: o.label, dataParam: o.param, caption: o.caption, captionY: o.captionY, captionSize: o.captionSize, kind: 'choice', step: 1,
+        style: Object.assign({ sweep: o.sweep || Math.min(300, 40 * (n - 1)), ticks: n }, o.style || {}), format: lab,
+        value: { min: 0, max: n - 1, basis: e && e.basis, disabled: !path || !e,
+          get: function () { return idx(pval(o.voice || null, o.param)); },
+          set: function (v) { pwrite(o.voice || null, o.param, opts[clamp(Math.round(v), 0, n - 1)], false); },
+          hold: function () { if (path && isFn(host.hold)) safe(function () { host.hold(path); }); },
+          home: idx(song !== undefined ? song : (e ? e.value : opts[0])) } });
+      if (o.legends !== false) {
+        var sw = (o.style && o.style.sweep) || o.sweep || Math.min(300, 40 * (n - 1)), a0 = 270 - sw / 2, rr = o.r + (o.legendR || 17);
+        opts.forEach(function (v, i) {
+          var a = n > 1 ? a0 + sw * i / (n - 1) : 270, q = pt(o.x, o.y, rr, a);
+          P.text(parent, q[0], q[1] + 3.5, lab(i), { 'font-size': o.legendSize || 9, fill: (o.style && o.style.label) || '#eee', 'font-weight': 600 });
+        });
+      }
+      return kn;
+    }
+
+    // ---- an on/off switch over a 0..1 flag or a boolean param; o: {x, y, w, h, voice, param, label, draw(art, on, b)}
+    function toggle(parent, o) {
+      if (missing(o)) return null;
+      var g = sv('g', { 'class': 'pn-sw ' + (o.cls || ''), role: 'switch', tabindex: 0, 'aria-label': o.label || o.param, transform: 'translate(' + f2(o.x) + ' ' + f2(o.y) + ')' }, parent);
+      var w = o.w || 22, h = o.h || 34, t = { g: g, on: null, art: sv('g', null, g) };
+      g.setAttribute('data-param', o.param);
+      sv('rect', { 'class': 'pn-focus', x: -w / 2 - 4, y: -h / 2 - 4, width: w + 8, height: h + 8, rx: 4 }, g);
+      sv('rect', { x: -w / 2 - 4, y: -h / 2 - 4, width: w + 8, height: h + 8, fill: 'transparent' }, g);
+      var two = o.values || null;            // a string param with two settings: [off, on]
+      if (!two) { var e0 = voice(o.voice || null).entry(o.param); if (e0 && typeof e0.value === 'string') two = optionsOf(o.voice || null, o.param, ['off', 'on']).slice(0, 2); }
+      function isOn(v) { if (two) return same(v, two[1]); return v === true || (isNum(v) && v >= 0.5) || v === 'on'; }
+      function flip() {
+        var vo = voice(o.voice || null), e = vo.entry(o.param);
+        if (!vo.dev || !e) return;
+        var on = !isOn(pval(o.voice || null, o.param));
+        pwrite(o.voice || null, o.param, two ? two[on ? 1 : 0] : typeof e.value === 'boolean' ? on : (on ? 1 : 0), true);
+        t.update();
+      }
+      listen(g, 'click', flip);
+      listen(g, 'keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { if (ev.preventDefault) ev.preventDefault(); flip(); } });
+      t.update = function () {
+        var vo = voice(o.voice || null), e = vo.entry(o.param), on = isOn(pval(o.voice || null, o.param)), dis = !vo.dev || !e;
+        if (on === t.on && dis === t.dis) return;
+        t.on = on; t.dis = dis;
+        g.setAttribute('aria-checked', on ? 'true' : 'false');
+        g.setAttribute('aria-disabled', dis ? 'true' : 'false');
+        g.setAttribute('tabindex', dis ? '-1' : '0');
+        g.setAttribute('opacity', dis ? '0.35' : '1');
+        while (t.art.firstChild) t.art.removeChild(t.art.firstChild);
+        o.draw(t.art, on, { w: w, h: h });
+      };
+      t.update();
+      updaters.push(t.update);
+      return t;
+    }
+
+    // ---- one button per option of a param (chorus, range, modes); o: {x, y, w, h, gap, vertical, voice, param, options (fallback),
+    //      labels, fill, ink, led, ledOff, caption}
+    function radio(parent, o) {
+      if (missing(o)) return null;
+      var opts = optionsOf(o.voice || null, o.param, o.options), btns = [], last = null;
+      var grp = sv('g', { 'class': 'pn-radio', role: 'radiogroup', 'aria-label': o.label || o.param, 'data-param': o.param }, parent);
+      opts.forEach(function (v, i) {
+        var bx = o.vertical ? o.x : o.x + i * (o.w + (o.gap == null ? 6 : o.gap)), by = o.vertical ? o.y + i * (o.h + (o.gap == null ? 6 : o.gap)) : o.y;
+        var lbl = (o.labels && o.labels[v] != null) ? o.labels[v] : String(v);
+        var b = button(grp, { x: bx, y: by, w: o.w, h: o.h, rx: o.rx == null ? 2 : o.rx, label: lbl, size: o.size || 10, fill: o.fill || '#cfcfcb', ink: o.ink || '#151515',
+          role: 'radio', aria: (o.label || o.param) + ' ' + lbl, onClick: function () { pwrite(o.voice || null, o.param, v, true); last = null; upd(); } });
+        b.led = sv('circle', { cx: o.w / 2, cy: o.ledY == null ? -6 : o.ledY, r: 3.2, fill: o.ledOff || '#3a1510' }, b.g);
+        btns.push(b);
+      });
+      function upd() {
+        var cur = pval(o.voice || null, o.param), vo = voice(o.voice || null), dis = !vo.dev || !vo.entry(o.param), sig = String(cur) + dis;
+        if (sig === last) return;
+        last = sig;
+        btns.forEach(function (b, i) {
+          var on = same(opts[i], cur);
+          b.g.setAttribute('aria-checked', on ? 'true' : 'false');
+          b.led.setAttribute('fill', on ? (o.led || '#ff3b22') : (o.ledOff || '#3a1510'));
+          b.setDisabled(dis);
+        });
+      }
+      upd();
+      updaters.push(upd);
+      return { g: grp, buttons: btns, update: upd };
+    }
+
+    // ---- vertical fader; o: {x, y (centre), len, voice, param, label, caption, cap colour, step}
+    function fader(parent, o) {
+      if (missing(o)) return null;
+      var len = o.len || 120, half = len / 2;
+      o.r = half; o.hit = { w: 30, h: len + 20 }; o.kind = 'fader';
+      o.draw = function (art, pos, c) {
+        if (!c.built) {
+          c.built = true;
+          for (var i = 0; i <= 10; i++) { var ty = half - len * i / 10; sv('line', { x1: -13, x2: i % 5 ? -9 : -15, y1: f2(ty), y2: f2(ty), stroke: o.tick || '#9a9a9a', 'stroke-width': 1 }, art); sv('line', { x1: 9, x2: i % 5 ? 13 : 15, y1: f2(ty), y2: f2(ty), stroke: o.tick || '#9a9a9a', 'stroke-width': 1 }, art); }
+          sv('rect', { x: -2.5, y: -half - 4, width: 5, height: len + 8, rx: 2, fill: '#050505', stroke: '#2a2a2a' }, art);
+          c.thumb = sv('g', null, art);
+          sv('rect', { x: -9, y: -7, width: 18, height: 14, rx: 2, fill: o.cap || '#bdbdb8', stroke: '#111', 'stroke-width': 1 }, c.thumb);
+          sv('line', { x1: -9, x2: 9, y1: 0, y2: 0, stroke: o.index || '#111', 'stroke-width': 2 }, c.thumb);
+        }
+        c.thumb.setAttribute('transform', 'translate(0 ' + f2(half - len * pos) + ')');
+      };
+      var c = control(parent, o);
+      if (o.caption) P.text(c.g, 0, half + 22, o.caption, { fill: o.labelInk || '#e8e8e8', 'font-size': o.captionSize || 10, 'font-weight': 700 });
+      return c;
+    }
+
+    // ---- tempo and transport for any panel
+    function tempoValue(range) {
+      return { min: range[0], max: range[1], unit: 'BPM', path: 'bpm',
+        get: function () { var b = safe(function () { return host.getParam('bpm'); }, undefined); if (!isNum(b)) b = safe(function () { return host.bpm(); }, 120); return b; },
+        set: isFn(host.setParam) ? function (v) { host.setParam('bpm', Math.round(v * 10) / 10); } : null,
+        hold: isFn(host.hold) ? function () { host.hold('bpm'); } : null,
+        home: safe(function () { var d = host.document(); return d && isNum(d.bpm) ? d.bpm : undefined; }, undefined) };
+    }
+    function transportToggle() {
+      var tr = host.transport || {};
+      if (isFn(tr.toggle)) safe(function () { tr.toggle(); });
+      else if (tr.playing && isFn(tr.stop)) safe(function () { tr.stop(); });
+      else if (isFn(tr.play)) safe(function () { tr.play(); });
+    }
+    function canTransport() { var tr = host.transport || {}; return isFn(tr.toggle) || isFn(tr.play); }
+    function playStep() {
+      if (!safe(function () { return host.transport.playing; }, false)) return -1;
+      var p = safe(function () { return host.transport.pos(); }, null);
+      return p && isNum(p.step) ? p.step % STEPS : -1;
+    }
+
+    // ---- add a track for a voice type, the way the System Editor's kit menu does (one undo entry)
+    function addVoice(type) {
+      if (!canEdit(host)) return null;
+      var ed = safe(function () { return host.editor(); }, null);
+      if (!ed || !isFn(ed.addTrack)) return null;
+      var made = null;
+      var run = function (e) {
+        var name = type, n = 2;
+        while (e.track(name) || name === 'send' || name === 'master') name = type + '_' + (n++);
+        if (e.addTrack({ name: name, type: type, inst: type, family: 'drums', gain: 0.8, variants: { A: EMPTY } })) made = name;
+        return made;
+      };
+      if (isFn(ed.group)) ed.group(run); else run(ed);
+      if (made) { safe(function () { host.commit(); }); refreshDevices(); }
+      return made;
+    }
+
+    // ---- steps of a voice in the section being viewed or played (System Editor semantics)
+    function stepView(type) {
+      var vo = voice(type), dev = vo.dev;
+      if (!dev || !isFn(host.document)) return null;
+      var d = safe(function () { return host.document(); }, null);
+      if (!d || !d.sections || !d.sections.length) return null;
+      var p = safe(function () { return host.transport.pos(); }, null) || { section: 0, barInSection: 0 };
+      var si = curIndex(p, d.sections), sec = d.sections[si], tr = findTrack(d, dev.track);
+      if (!tr) return null;
+      var vn = variantName(sec, tr.name), v = vn && tr.variants ? tr.variants[vn] : null, cells = [], i, bar = 0;
+      if (v) {
+        bar = (p.barInSection || 0) % Math.max(1, v.bars || 1);
+        for (i = 0; i < STEPS; i++) cells.push(v.cells[bar * STEPS + i] || null);
+      } else for (i = 0; i < STEPS; i++) cells.push(null);
+      return { dev: dev, track: tr.name, section: sec.name, si: si, variant: vn, bar: bar, bars: v ? v.bars : 0, cells: cells, tr: tr };
+    }
+    function editStep(type, i, accent) {
+      return editCell(type, i, function (cell) {
+        if (accent) return (cell && cell.acc) ? { acc: null, vel: DEFAULT_VEL } : { acc: true, vel: 1 };
+        return cell ? null : { vel: DEFAULT_VEL };
+      });
+    }
+    // patchFn(cell) -> patch (null clears the step, undefined does nothing); one ed.group = one undo entry, then host.commit
+    function editCell(type, i, patchFn) {
+      if (!canEdit(host)) return false;
+      var vw = stepView(type); if (!vw) return false;
+      var ed = safe(function () { return host.editor(); }, null); if (!ed) return false;
+      var start = null, cell = vw.cells[i], bar = vw.bar;
+      if (!vw.variant || !vw.tr.variants[vw.variant]) {
+        var ks = vw.tr.variants ? Object.keys(vw.tr.variants).sort() : [];
+        if (!ks.length) return false;
+        start = has(vw.tr.variants, 'A') ? 'A' : ks[0];
+        var v0 = vw.tr.variants[start]; cell = v0.cells[i] || null; bar = 0;
+      }
+      var patch = patchFn(cell);
+      if (patch === undefined) return false;
+      var run = function (e) {
+        if (start) e.setPlay(vw.section, vw.track, start);
+        return e.setStepInSection(vw.section, vw.track, bar * STEPS + i, patch);
+      };
+      if (isFn(ed.group)) ed.group(run); else run(ed);
+      safe(function () { host.commit(); });
+      return true;
+    }
+
+    // several cells of the viewed bar in one edit: listFn(cells16) -> [[index, patch], ...] (empty or undefined: nothing);
+    // one ed.group = one undo entry, then host.commit
+    function editCells(type, listFn) {
+      if (!canEdit(host)) return false;
+      var vw = stepView(type); if (!vw) return false;
+      var ed = safe(function () { return host.editor(); }, null); if (!ed) return false;
+      var start = null, cells = vw.cells, bar = vw.bar;
+      if (!vw.variant || !vw.tr.variants[vw.variant]) {
+        var ks = vw.tr.variants ? Object.keys(vw.tr.variants).sort() : [];
+        if (!ks.length) return false;
+        start = has(vw.tr.variants, 'A') ? 'A' : ks[0];
+        cells = vw.tr.variants[start].cells.slice(0, STEPS).map(function (c) { return c || null; }); bar = 0;
+      }
+      var list = listFn(cells);
+      if (!list || !list.length) return false;
+      var run = function (e) {
+        if (start) e.setPlay(vw.section, vw.track, start);
+        list.forEach(function (it) { e.setStepInSection(vw.section, vw.track, bar * STEPS + it[0], it[1]); });
+        return true;
+      };
+      if (isFn(ed.group)) ed.group(run); else run(ed);
+      safe(function () { host.commit(); });
+      return true;
+    }
+
+    var P = {
+      host: host, device: device, svg: svg, W: W, H: H, key: key, opts: opts, state: state, layout: layout,
+      el: function (tag, a, parent) { return sv(tag, a, parent); },
+      g: function (parent, a) { return sv('g', a, parent || svg); },
+      text: function (parent, x, y, str, a) {
+        var t = sv('text', { x: f2(x), y: f2(y), 'text-anchor': 'middle' }, parent || svg);
+        attrs(t, a); t.textContent = str; return t;
+      },
+      voice: voice, knob: knob, control: control, button: button, slide: slide, addVoice: addVoice,
+      choice: choice, toggle: toggle, radio: radio, fader: fader, pval: pval, pwrite: pwrite, options: optionsOf,
+      tempoValue: tempoValue, transportToggle: transportToggle, canTransport: canTransport, playStep: playStep,
+      stepView: stepView, editStep: editStep, editCell: editCell, editCells: editCells, canEdit: function () { return canEdit(host); },
+      listen: listen, onUpdate: function (fn) { updaters.push(fn); }, onDispose: function (fn) { disposers.push(fn); },
+      refresh: refreshDevices, place: place
+    };
+    var built = def.build(P) || {};
+
+    function update() {
+      if (state.disposed) return;
+      state.frame++;
+      if (state.frame % 90 === 0) refreshDevices();
+      var i;
+      for (i = 0; i < controls.length; i++) controls[i].update();
+      for (i = 0; i < updaters.length; i++) { var u = updaters[i]; safe(function () { u(state.frame); }); }
+      if (built.update) safe(function () { built.update(state.frame); });
+    }
+    function resize(w, h) {
+      if (state.disposed) return;
+      w = Math.max(60, w | 0); h = Math.max(40, h | 0);
+      var s = Math.min(w / W, h / H), pw = Math.floor(W * s), ph = Math.floor(H * s);
+      el.style.width = '100%'; el.style.height = '100%';
+      svg.setAttribute('width', pw); svg.setAttribute('height', ph);
+    }
+    function dispose() {
+      if (state.disposed) return;
+      state.disposed = true;
+      var i;
+      for (i = 0; i < disposers.length; i++) { var d = disposers[i]; safe(function () { d(); }); }
+      if (built.dispose) safe(function () { built.dispose(); });
+      for (i = 0; i < listeners.length; i++) { var l = listeners[i]; safe(function () { l[0].removeEventListener(l[1], l[2], l[3]); }); }
+      listeners.length = 0; controls.length = 0; updaters.length = 0;
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }
+    update();
+    return { el: el, update: update, resize: resize, dispose: dispose, key: key, kit: P, listenerCount: function () { return listeners.length; }, controls: controls };
+  }
+
+  // ------------------------------------------------------------------ registry
+  var Panels = {
+    define: function (key, def) {
+      if (!def || !isFn(def.build) || !def.size) throw new Error('Panels.define: def needs build and size');
+      if (!has(defs, key)) order.push(key);
+      defs[key] = def;
+      return Panels;
+    },
+    get: function (key) { return defs[key] || null; },
+    keys: function () { return order.slice(); },
+    for: function (device, host) {
+      if (!device) return null;
+      for (var i = 0; i < order.length; i++) {
+        var d = defs[order[i]];
+        if (safe(function () { return !!d.match(device, host); }, false)) return order[i];
+      }
+      return null;
+    },
+    render: render,
+    util: { findTrack: findTrack, variantName: variantName, curIndex: curIndex, fmt: fmt, scale: scaleOf, A0: A0, SWEEP: SWEEP, pt: pt }
+  };
+
+  // ==================================================================== drum machine panels (HVT-808, HVT-909)
+  var V808 = ['bd808', 'sd808', 'cp808', 'ch808', 'oh808', 'cy808', 'cb808', 'lt808', 'mt808', 'ht808', 'lc808', 'mc808', 'hc808', 'rs808', 'cl808', 'ma808'];
+  var V909 = ['bd909', 'sd909', 'lt909', 'mt909', 'ht909', 'rs909', 'cp909', 'ch909', 'oh909', 'cr909', 'rd909'];
+  var VNAME = { bd: 'Bass Drum', sd: 'Snare Drum', lt: 'Low Tom', mt: 'Mid Tom', ht: 'Hi Tom', lc: 'Low Conga', mc: 'Mid Conga', hc: 'Hi Conga',
+    rs: 'Rim Shot', cl: 'CLaves', cp: 'Hand ClaP', ma: 'MAracas', cb: 'Cow Bell', cy: 'CYmbal', oh: 'Open Hihat', ch: 'Closed Hihat', cr: 'Crash', rd: 'Ride', AC: 'ACcent' };
+  // short legends for the engine-only trimmers
+  var TRIM = { drive: 'DRIVE', tune: 'TUNE', shift: 'SHIFT', shiftTime: 'SHIFT T', droop: 'DROOP', click: 'CLICK', tone: 'TONE', ratio: 'RATIO',
+    noiseDecay: 'N.DECAY', q: 'Q', bursts: 'BURSTS', spacing: 'SPACING', burstDecay: 'B.DECAY', tail: 'TAIL', spread: 'SPREAD', hp: 'HPF',
+    fast: 'FAST', sweep: 'SWEEP', noise: 'NOISE', decay: 'DECAY', start: 'START', end: 'END', hold: 'HOLD', attack: 'ATTACK', clickDecay: 'CLK DEC',
+    clickLp: 'CLK LPF', snappy: 'SNAPPY', base: 'BASE', bodyDecay: 'BODY DEC', glide: 'GLIDE', glideTime: 'GLIDE T', hpf: 'HPF', depth: 'DEPTH',
+    pitchDecay: 'P.DECAY', crush: 'CRUSH', level: 'LEVEL' };
+  function abbr(t) { return t.slice(0, 2).toUpperCase(); }
+  function vname(t) { return VNAME[t.slice(0, 2)] || t; }
+
+  // 808-style legend: capitals large, the rest small capitals
+  function capsText(P, parent, x, y, str, a) {
+    var t = P.text(parent, x, y, '', a);
+    t.textContent = '';
+    var run = '', big = null, i;
+    function flush() { if (!run) return; var s = sv('tspan', { 'font-size': big ? 13 : 8.5 }, t); s.textContent = run.toUpperCase(); run = ''; }
+    for (i = 0; i < str.length; i++) {
+      var ch = str.charAt(i), b = ch !== ' ' && ch === ch.toUpperCase() && ch !== ch.toLowerCase();
+      if (b !== big && run) flush();
+      big = b; run += ch;
+    }
+    flush();
+    return t;
+  }
+
+  // ---- machine functions (Showroom Crew W3): pattern slots with A and B variations, play modes, accent row, mute, clear, copy.
+  // Pattern bank on the song document: slot k (1..8) variation A is variant letter LET[2(k-1)] of every kit track, variation B
+  // is LET[2(k-1)+1] (slot 1 = A/B, slot 2 = C/D ... slot 8 = O/P). A machine page's document has two one-bar sections named
+  // 'A' and 'B' (in that order): section A plays every kit track's slot-A variant and section B its slot-B variant, so a slot
+  // change is setPlay on both sections. Play modes are the transport: A = loop('A'), B = loop('B'), A then B = loop(null)
+  // (the song loops). In any other song (the main app) the bank works on the section being viewed or played: a slot or an
+  // A / B press makes that section play the slot's variant on every kit track; A then B needs the two sections and is off.
+  // The accent row is cell.acc on the hits (the engine has no separate accent track): AC selected, a key sets or clears the
+  // accent of every hit on that step; a new hit on a lit accent step is accented. Every edit is one ed.group = one undo entry.
+  var LET = 'ABCDEFGHIJKLMNOP', SLOTS = 8, AC = 'AC';
+  var MODES = ['A', 'B', 'AB'], MODE_LABEL = { A: 'A', B: 'B', AB: 'A▸B' };
+
+  // shared machine logic: selection, step keys, running light, transport, trims, add, pattern bank
+  function machine(P, cfg) {
+    var host = P.host, st = { sel: null, cellsSig: '', lastStep: -2, playing: null, bpm: null, mode: null, pending: null };
+    var present = function (t) { return t === AC ? kit().length > 0 : !!P.voice(t).dev; };
+    st.sel = (cfg.voices.indexOf(P.device.type) >= 0) ? P.device.type : cfg.voices[0];
+    var api = { st: st, onSelect: [], AC: AC };
+    P.machine = api;                                   // pages reach it as panel.kit.machine
+    api.select = function (t) {
+      if ((cfg.voices.indexOf(t) < 0 && t !== AC) || st.sel === t) return;
+      st.sel = t; st.cellsSig = ''; buildTrims();
+      api.onSelect.forEach(function (f) { f(t); });
+    };
+    api.present = present;
+
+    // ---- the document as the machine sees it
+    function D() { return safe(function () { return host.document(); }, null); }
+    function kit() {                                   // the kit's tracks, in document order: [{name, type}]
+      var d = D(), out = [];
+      if (!d || !d.tracks) return out;
+      d.tracks.forEach(function (t) { if (cfg.voices.indexOf(t.type) >= 0) out.push({ name: t.name, type: t.type }); });
+      return out;
+    }
+    function trackOf(type) { var vo = P.voice(type); return vo.dev ? vo.dev.track : null; }
+    function bank() {                                  // the machine page's two sections, else null
+      var d = D(), s = d && d.sections;
+      return s && s.length === 2 && s[0].name === 'A' && s[1].name === 'B' ? s : null;
+    }
+    function pos() { return safe(function () { return host.transport.pos(); }, null) || { section: 0, barInSection: 0, step: 0 }; }
+    function playingNow() { return !!safe(function () { return host.transport.playing; }, false); }
+    function curSection() { var d = D(); if (!d || !d.sections || !d.sections.length) return null; return d.sections[curIndex(pos(), d.sections)]; }
+    function letterIndex(v) { return typeof v === 'string' && v.length === 1 ? LET.indexOf(v) : -1; }
+    api.bank = function () { return !!bank(); };
+    api.kit = kit;
+    // the slot (0..7) the machine shows: the variant the first kit track plays in section A (song: in the current section)
+    api.slot = function () {
+      var k = kit(); if (!k.length) return -1;
+      var sec = bank() ? bank()[0] : curSection(), sel = trackOf(st.sel) || k[0].name, li = letterIndex(variantName(sec, sel));
+      return li >= 0 && li < SLOTS * 2 ? Math.floor(li / 2) : -1;
+    };
+    api.mode = function () {
+      if (bank()) {
+        if (!st.mode) { var ls = safe(function () { return host.transport.loopSection; }, null); st.mode = ls === 'A' || ls === 'B' ? ls : 'AB'; }
+        return st.mode;
+      }
+      var li = letterIndex(variantName(curSection(), trackOf(st.sel) || (kit()[0] || {}).name));
+      return li >= 0 && li % 2 ? 'B' : 'A';
+    };
+    // the variation the keys edit: the mode's, or in A then B the one under the transport's position
+    api.editVar = function () {
+      var m = api.mode();
+      if (m !== 'AB') return m;
+      return pos().sectionName === 'B' ? 'B' : 'A';
+    };
+    function editLetter() { var s = api.slot(); return LET.charAt(Math.max(0, s) * 2 + (api.editVar() === 'B' ? 1 : 0)); }
+
+    // cells of one voice in what the keys edit: {track, variant, cells[16], bar, section} or null
+    function view(type) {
+      if (type === AC) return null;
+      if (!bank()) {
+        var vw = P.stepView(type);
+        return vw ? { track: vw.track, variant: vw.variant, cells: vw.cells, bar: vw.bar, bars: vw.bars, section: vw.section, si: vw.si } : null;
+      }
+      var name = trackOf(type), d = D(), tr = name && findTrack(d, name);
+      if (!tr) return null;
+      var vn = editLetter(), v = tr.variants && tr.variants[vn], cells = [], i;
+      for (i = 0; i < STEPS; i++) cells.push(v ? (v.cells[i] || null) : null);
+      return { track: name, variant: vn, cells: cells, bar: 0, bars: 1, section: null, si: -1 };
+    }
+    function views() { return kit().map(function (k) { return view(k.type); }).filter(function (v) { return v && v.variant; }); }
+    function accentAt(i, vs) { vs = vs || views(); for (var k = 0; k < vs.length; k++) { var c = vs[k].cells[i]; if (c && c.acc) return true; } return false; }
+    api.view = view;
+    api.accentRow = function () { var vs = views(), out = []; for (var i = 0; i < STEPS; i++) out.push(accentAt(i, vs) ? { acc: true, vel: 1 } : null); return out; };
+
+    // one undo entry for a list of [view, index, patch] writes (patch null clears; {replace: cell} sets a whole cell)
+    function write(list) {
+      if (!P.canEdit() || !list.length) return false;
+      var ed = safe(function () { return host.editor(); }, null); if (!ed) return false;
+      var run = function (e) {
+        list.forEach(function (it) {
+          var vw = it[0], idx = vw.bar * STEPS + it[1], patch = it[2];
+          var one = function (p) {
+            if (vw.section) e.setStepInSection(vw.section, vw.track, idx, p);
+            else e.setStep(vw.track, vw.variant, idx, p);
+          };
+          if (patch && patch.replace !== undefined) { one(null); if (patch.replace) one(clone(patch.replace)); }
+          else one(patch);
+        });
+        return true;
+      };
+      if (isFn(ed.group)) ed.group(run); else run(ed);
+      safe(function () { host.commit(); });
+      st.cellsSig = '';
+      return true;
+    }
+    function clone(o) { return JSON.parse(JSON.stringify(o)); }
+
+    // ---- trims of the selected voice: every spec param the columns do not carry (portrait: a grid of every param)
+    var trimG = null, trimLabel = null, trimCtl = [];
+    function buildTrims() {
+      if (!cfg.trimLayer) return;
+      trimCtl.forEach(function (c) { c.destroy(); }); trimCtl = [];
+      if (trimG && trimG.parentNode) trimG.parentNode.removeChild(trimG);
+      trimG = P.g(cfg.trimLayer, { 'class': 'pn-trims' });
+      var acc = st.sel === AC, vo = acc ? { spec: {}, dev: null } : P.voice(st.sel), spec = vo.spec || {}, shown = acc ? [] : cfg.columnParams(st.sel), list = [], k;
+      for (k in spec) if (has(spec, k) && isNum(spec[k].min) && shown.indexOf(k) < 0) list.push(k);
+      if (trimLabel) trimLabel.textContent = acc ? 'ACCENT · the keys set the accent of every hit on a step' : ((cfg.trimTitle || 'VOICE TRIM') + ' · ' + abbr(st.sel) + (vo.dev ? '' : ' (no track)'));
+      var tb = cfg.trimBox, n = list.length, per = tb.perRow || n, step = tb.perRow ? tb.w / tb.perRow : Math.min(tb.step, n > 1 ? tb.w / n : tb.step);
+      list.forEach(function (p, i) {
+        var col = tb.perRow ? i % per : i, row = tb.perRow ? Math.floor(i / per) : 0;
+        var c = P.knob(trimG, { x: tb.x + step * (col + 0.5), y: tb.y + row * (tb.rowH || 0), r: tb.r || 11, voice: st.sel, param: p, label: abbr(st.sel) + ' ' + (TRIM[p] || p), kind: 'trim',
+          style: tb.style || { skirt: '#9a9a96', edge: '#3a3a38', cap: null, ticks: 0, slot: true, pointer: '#2a2a28', pointerW: 2.2, shine: true },
+          caption: TRIM[p] || p, captionY: tb.captionY || 26, captionSize: tb.captionSize || 9.5 });
+        c.g.setAttribute('class', c.g.getAttribute('class') + ' pn-trim');
+        c.capEl = c.g.lastChild; c.capEl.setAttribute('fill', cfg.trimInk);
+        trimCtl.push(c);
+        if (!vo.dev) c.g.setAttribute('opacity', '0.4');
+      });
+    }
+    api.trimTitle = function (parent, x, y, a) { trimLabel = P.text(parent, x, y, '', a); };
+    api.buildTrimsInto = function (layer) { cfg.trimLayer = layer; buildTrims(); };
+
+    // ---- step keys
+    var keys = [];
+    api.key = function (k) { keys.push(k); };
+    function cellsSig(vw, cells) { return (!vw ? 'none' : vw.si + ':' + vw.variant + ':' + vw.bar) + ':' + (cells || []).map(function (c) { return !c ? '.' : c.acc ? 'X' : 'x'; }).join(''); }
+    api.stepInfo = null;
+    api.clickKey = function (i, e) {
+      if (!P.canEdit() || !present(st.sel)) return;
+      var shift = !!(e && e.shiftKey);
+      if (st.sel === AC) {                                   // the accent row: every hit on step i
+        var vs = views(), on = !accentAt(i, vs), list = [];
+        vs.forEach(function (vw) { var c = vw.cells[i]; if (c && !!c.acc !== on) list.push([vw, i, on ? { acc: true, vel: 1 } : { acc: null, vel: DEFAULT_VEL }]); });
+        write(list);
+        return;
+      }
+      var vw = view(st.sel);
+      if (!bank() && (!vw || !vw.variant)) {                 // song: the section does not play the voice yet (makes it play)
+        P.editStep(st.sel, i, shift); st.cellsSig = ''; return;
+      }
+      if (!vw) return;
+      var cell = vw.cells[i], patch;
+      if (shift) patch = (cell && cell.acc) ? { acc: null, vel: DEFAULT_VEL } : { acc: true, vel: 1 };
+      else patch = cell ? null : (accentAt(i) ? { acc: true, vel: 1 } : { vel: DEFAULT_VEL });
+      write([[vw, i, patch]]);
+    };
+    // clear the selected voice (AC: every accent) in what the keys edit
+    api.clearVoice = function () {
+      var list = [];
+      if (st.sel === AC) views().forEach(function (vw) { vw.cells.forEach(function (c, i) { if (c && c.acc) list.push([vw, i, { acc: null, vel: DEFAULT_VEL }]); }); });
+      else { var vw = view(st.sel); if (vw && vw.variant) vw.cells.forEach(function (c, i) { if (c) list.push([vw, i, null]); }); }
+      return write(list);
+    };
+    // clear every kit voice in what the keys edit (the variation being edited)
+    api.clearPattern = function () {
+      var list = [];
+      views().forEach(function (vw) { vw.cells.forEach(function (c, i) { if (c) list.push([vw, i, null]); }); });
+      return write(list);
+    };
+    // copy the slot's A onto its B, every kit voice (page bank only)
+    api.copyAB = function () {
+      if (!bank() || !P.canEdit()) return false;
+      var s = Math.max(0, api.slot()), a = LET.charAt(s * 2), b = LET.charAt(s * 2 + 1), d = D(), list = [];
+      kit().forEach(function (k) {
+        var tr = findTrack(d, k.name), va = tr.variants[a], vb = tr.variants[b], i;
+        for (i = 0; i < STEPS; i++) {
+          var ca = va ? (va.cells[i] || null) : null, cb = vb ? (vb.cells[i] || null) : null;
+          if (JSON.stringify(ca) !== JSON.stringify(cb)) list.push([{ track: k.name, variant: b, bar: 0, section: null }, i, { replace: ca }]);
+        }
+      });
+      return write(list);
+    };
+    api.canCopy = function () { return !!bank() && P.canEdit(); };
+    // pattern slot k (0..7): every kit track plays the slot's variants (made empty when missing): one undo entry
+    api.selectSlot = function (k) {
+      if (!P.canEdit() || k < 0 || k >= SLOTS) return false;
+      var ed = safe(function () { return host.editor(); }, null), b = bank(), cur = curSection(); if (!ed || (!b && !cur)) return false;
+      var vi = api.mode() === 'B' ? 1 : 0, ks = kit(); if (!ks.length) return false;
+      var run = function (e) {
+        ks.forEach(function (t) {
+          var tr = e.track(t.name); if (!tr) return;
+          [0, 1].forEach(function (j) { var L = LET.charAt(k * 2 + j); if (!tr.variants[L] && isFn(e.setVariantBars)) e.setVariantBars(t.name, L, 1, 'empty'); });
+          if (b) { e.setPlay('A', t.name, LET.charAt(k * 2)); e.setPlay('B', t.name, LET.charAt(k * 2 + 1)); }
+          else e.setPlay(cur.name, t.name, LET.charAt(k * 2 + vi));
+        });
+        return true;
+      };
+      if (isFn(ed.group)) ed.group(run); else run(ed);
+      safe(function () { host.commit(); });
+      st.cellsSig = '';
+      return true;
+    };
+    // play mode: A, B or A then B ('AB'). Page bank: the transport's loop (switched at the section's end while playing).
+    // Song: A and B make the current section play the slot's A or B variants (one undo entry); AB is not available.
+    api.canMode = function (m) { return m === 'AB' ? !!bank() : (bank() ? true : P.canEdit()); };
+    api.setMode = function (m) {
+      if (MODES.indexOf(m) < 0 || !api.canMode(m)) return false;
+      if (!bank()) {
+        var cur = curSection(), s = Math.max(0, api.slot()), L = LET.charAt(s * 2 + (m === 'B' ? 1 : 0)), ed = host.editor(), ks = kit();
+        var run = function (e) {
+          ks.forEach(function (t) { var tr = e.track(t.name); if (tr && !tr.variants[L] && isFn(e.setVariantBars)) e.setVariantBars(t.name, L, 1, 'empty'); e.setPlay(cur.name, t.name, L); });
+          return true;
+        };
+        if (isFn(ed.group)) ed.group(run); else run(ed);
+        safe(function () { host.commit(); });
+        st.cellsSig = '';
+        return true;
+      }
+      st.mode = m; st.pending = null; st.cellsSig = '';
+      applyMode();
+      return true;
+    };
+    function applyMode() {
+      var tr = host.transport || {}, m = api.mode();
+      if (!isFn(tr.loop)) return;
+      if (!playingNow()) {
+        safe(function () { tr.loop(m === 'AB' ? null : m); });
+        if (isFn(tr.jump)) safe(function () { tr.jump(m === 'B' ? 'B' : 'A'); });
+        return;
+      }
+      if (m === 'AB') { safe(function () { tr.loop(null); }); return; }
+      if (pos().sectionName === m) safe(function () { tr.loop(m); });
+      else { safe(function () { tr.loop(null); }); st.pending = m; }        // finish this bar, then stay in the other
+    }
+
+    // ---- mute (the engine's track mute: not in the document, no undo entry)
+    function tracksOf(type) { return kit().filter(function (k) { return k.type === type; }).map(function (k) { return k.name; }); }
+    api.muted = function (type) { var n = tracksOf(type); return n.length > 0 && n.every(function (t) { return !!safe(function () { return host.getParam(t + '.mute'); }, false); }); };
+    api.toggleMute = function (type) {
+      if (type === AC || !isFn(host.mute)) return false;
+      var on = !api.muted(type);
+      tracksOf(type).forEach(function (t) { safe(function () { host.mute(t, on); }); });
+      return true;
+    };
+    // shuffle: the document's swing (0..1, odd steps late by swing * a third of a step), six positions like the hardware's
+    api.swing = function () {
+      return { min: 0, max: 1, unit: '', path: 'swing',
+        get: function () { var s = safe(function () { return host.getParam('swing'); }, undefined); return isNum(s) ? s : 0; },
+        set: isFn(host.setParam) ? function (v) { host.setParam('swing', Math.round(v * 100) / 100); } : null,
+        hold: isFn(host.hold) ? function () { host.hold('swing'); } : null,
+        home: safe(function () { var d = host.document(); return d && isNum(d.swing) ? d.swing : 0; }, 0) };
+    };
+
+    api.update = function () {
+      var acc = st.sel === AC, fresh = (P.state.frame % 4 === 0 || st.cellsSig === '');
+      var vw = fresh ? view(st.sel) : st.vw, cells = fresh ? (acc ? api.accentRow() : (vw ? vw.cells : null)) : st.cells;
+      st.vw = vw; st.cells = cells;
+      var b = !!bank(), slot = api.slot(), mode = api.mode(), ev = api.editVar();
+      var sig = cellsSig(vw, cells) + '|' + st.sel + '|' + P.canEdit() + '|' + present(st.sel) + '|' + b + slot + mode + ev;
+      if (sig !== st.cellsSig) {
+        st.cellsSig = sig;
+        var editable = P.canEdit() && present(st.sel);
+        keys.forEach(function (k, i) { k.set(cells ? cells[i] : null, editable, acc); });
+        if (api.stepInfo) {
+          var t = abbr(st.sel) + ' · ' + vname(st.sel) + '  —  ';
+          if (!present(st.sel)) t += 'no track: press + to add';
+          else if (b) t += 'pattern ' + (slot + 1) + ' ' + ev + '  ·  play ' + MODE_LABEL[mode] + (acc ? '  ·  accent row' : '');
+          else if (acc) t += 'accent row' + (curSection() ? '  ·  section ' + curSection().name : '');
+          else if (!vw) t += P.canEdit() ? '' : 'step editing is in the main window';
+          else t += 'section ' + vw.section + (vw.variant ? '  ·  pattern ' + (slot >= 0 ? (slot + 1) + ' ' + mode : vw.variant) + (vw.bars > 1 ? '  ·  bar ' + (vw.bar + 1) + '/' + vw.bars : '') : '  ·  not playing here yet');
+          api.stepInfo.textContent = t;
+        }
+        api.onBank.forEach(function (f) { safe(function () { f(); }); });
+      }
+      var playing = playingNow();
+      var step = -1;
+      if (playing) { var p = pos(); step = p && isNum(p.step) ? p.step % STEPS : -1; }
+      if (step !== st.lastStep) { keys.forEach(function (k, i) { k.cursor(i === step); }); st.lastStep = step; }
+      if (playing !== st.playing) { st.playing = playing; if (api.onPlaying) api.onPlaying(playing); }
+      if (st.pending && playing && pos().sectionName === st.pending) { var m2 = st.pending; st.pending = null; safe(function () { host.transport.loop(m2); }); }
+    };
+    api.onBank = [];
+    api.transport = function () {
+      var tr = host.transport || {};
+      if (bank() && !tr.playing) applyMode();
+      if (isFn(tr.toggle)) safe(function () { tr.toggle(); });
+      else if (tr.playing && isFn(tr.stop)) safe(function () { tr.stop(); });
+      else if (isFn(tr.play)) safe(function () { tr.play(); });
+    };
+    api.canTransport = function () { var tr = host.transport || {}; return isFn(tr.toggle) || isFn(tr.play); };
+    api.tempo = function () {
+      return { min: cfg.tempo[0], max: cfg.tempo[1], unit: 'BPM', path: 'bpm',
+        get: function () { var b = safe(function () { return host.getParam('bpm'); }, undefined); if (!isNum(b)) b = safe(function () { return host.bpm(); }, 120); return b; },
+        set: isFn(host.setParam) ? function (v) { host.setParam('bpm', Math.round(v * 10) / 10); } : null,
+        hold: isFn(host.hold) ? function () { host.hold('bpm'); } : null,
+        home: safe(function () { var d = host.document(); return d && isNum(d.bpm) ? d.bpm : undefined; }, undefined) };
+    };
+    return api;
+  }
+
+  // a dimmed-voice "+" button; o: {x, y, type, w}
+  function addButton(P, parent, x, y, type, M, w) {
+    var b = P.button(parent, { x: x - (w || 44) / 2, y: y, w: w || 44, h: 18, rx: 9, label: '+ ' + abbr(type), size: 10, fill: '#ff5fa2', ink: '#16060d', stroke: '#16060d',
+      cls: 'pn-add', aria: 'Add a ' + vname(type) + ' track (' + type + ')',
+      onClick: function () { var n = P.addVoice(type); if (n) M.select(type); } });
+    return b;
+  }
+
+  // the pattern bank's buttons: slots 1..8, A / B / A then B, clear voice, clear pattern, copy A to B.
+  // o: {slots: {x, y, w, h, gap}, modes: {x, y, w, h, gap}, tools: [{x, y, w, h}] (clear voice, clear pattern, copy), size, C: colours}
+  function bankButtons(P, M, parent, o) {
+    var C = o.C, slotB = [], modeB = {}, tools = {};
+    function paintBtn(b, on, dis) {
+      b.rect.setAttribute('fill', on ? C.on : C.btn);
+      if (b.txt) b.txt.setAttribute('fill', on ? C.onInk : C.btnInk);
+      b.g.setAttribute('aria-checked', on ? 'true' : 'false');
+      b.setDisabled(dis);
+    }
+    for (var k = 0; k < SLOTS; k++) (function (k) {
+      var s = o.slots, b = P.button(parent, { x: s.x + k * (s.w + s.gap), y: s.y, w: s.w, h: s.h, rx: 3, label: String(k + 1), size: o.size || 12, fill: C.btn, ink: C.btnInk, stroke: C.edge,
+        role: 'radio', cls: 'pn-slot', aria: 'Pattern ' + (k + 1), onClick: function () { M.selectSlot(k); } });
+      slotB.push(b);
+    })(k);
+    MODES.forEach(function (m, i) {
+      var s = o.modes, b = P.button(parent, { x: s.x + i * (s.w + s.gap), y: s.y, w: s.w, h: s.h, rx: 3, label: MODE_LABEL[m], size: o.size || 12, fill: C.btn, ink: C.btnInk, stroke: C.edge,
+        role: 'radio', cls: 'pn-mode', aria: m === 'AB' ? 'Play A then B' : 'Variation ' + m, onClick: function () { M.setMode(m); } });
+      modeB[m] = b;
+    });
+    [['clearVoice', 'CLR VOICE', 'Clear the selected voice'], ['clearPattern', 'CLR PTN', 'Clear the pattern (this variation, every voice)'], ['copyAB', 'COPY A▸B', 'Copy variation A onto B']].forEach(function (t, i) {
+      var g = o.tools[i]; if (!g) return;
+      tools[t[0]] = P.button(parent, { x: g.x, y: g.y, w: g.w, h: g.h, rx: 3, label: t[1], size: o.toolSize || 11, fill: C.tool || C.btn, ink: C.toolInk || C.btnInk, stroke: C.edge,
+        cls: 'pn-tool', aria: t[2], onClick: function () { M[t[0]](); } });
+    });
+    var last = '';
+    function upd() {
+      var slot = M.slot(), mode = M.mode(), ed = P.canEdit(), sig = slot + mode + ed + M.bank() + M.present(M.st.sel);
+      if (sig === last) return;
+      last = sig;
+      slotB.forEach(function (b, k) { paintBtn(b, k === slot, !ed); });
+      MODES.forEach(function (m) { paintBtn(modeB[m], m === mode && (M.bank() || m !== 'AB'), !M.canMode(m)); });
+      if (tools.clearVoice) tools.clearVoice.setDisabled(!ed || !M.present(M.st.sel));
+      if (tools.clearPattern) tools.clearPattern.setDisabled(!ed);
+      if (tools.copyAB) tools.copyAB.setDisabled(!M.canCopy());
+    }
+    M.onBank.push(upd);
+    P.onUpdate(upd);
+    return { slots: slotB, modes: modeB, tools: tools, update: upd };
+  }
+
+  // a mute button for one voice; o: {x, y, w, h, type() -> voice type, C}
+  function muteButton(P, M, parent, o) {
+    var C = o.C, b = P.button(parent, { x: o.x, y: o.y, w: o.w, h: o.h, rx: 2, label: o.label || 'MUTE', size: o.size || 8.5, fill: C.btn, ink: C.btnInk, stroke: C.edge,
+      cls: 'pn-mute', aria: 'Mute', onClick: function () { M.toggleMute(o.type()); } });
+    var led = P.el('circle', { cx: o.led === false ? -99 : 6, cy: o.h / 2, r: 2.6, fill: C.ledOff }, b.g);
+    var last = '';
+    P.onUpdate(function () {
+      var t = o.type(), on = M.muted(t), pres = t !== AC && M.present(t), sig = t + on + pres;
+      if (sig === last) return;
+      last = sig;
+      b.g.setAttribute('aria-pressed', on ? 'true' : 'false');
+      b.g.setAttribute('aria-label', 'Mute ' + (t === AC ? 'accent' : vname(t)) + (on ? ' (muted)' : ''));
+      b.rect.setAttribute('fill', on ? C.mute : C.btn);
+      if (b.txt) b.txt.setAttribute('fill', on ? C.onInk : C.btnInk);
+      led.setAttribute('fill', on ? C.led : C.ledOff);
+      b.setDisabled(!pres);
+    });
+    return b;
+  }
+
+  // ------------------------------------------------------------------ portrait arrangement (phones), both machines
+  // o: {model, grid: [AC, voices...], C: colours, swing: bool, tempoRange, W, H}
+  function portraitMachine(P, M, o) {
+    var svg = P.svg, C = o.C, W = 560, X0 = 24, IW = 512;
+    P.el('rect', { x: 0, y: 0, width: W, height: P.H, rx: 14, fill: C.bg }, svg);
+    P.text(svg, X0, 42, o.model, { 'text-anchor': 'start', fill: C.ink, 'font-size': 28, 'font-weight': 800, 'font-style': 'italic' });
+    P.text(svg, X0 + IW, 40, 'HAVANTECHNO', { 'text-anchor': 'end', fill: C.brand, 'font-size': 18, 'font-weight': 800, 'letter-spacing': 3 });
+    // instrument grid: tap selects; a red lamp = muted; dim = no track
+    var cols = 6, cw = (IW - (cols - 1) * 4) / cols, ch = 42, gy = 62, cells = [];
+    o.grid.forEach(function (t, i) {
+      var x = X0 + (i % cols) * (cw + 4), y = gy + Math.floor(i / cols) * (ch + 6);
+      var b = P.button(svg, { x: x, y: y, w: cw, h: ch, rx: 4, label: t === AC ? 'AC' : abbr(t), size: 15, fill: C.btn, ink: C.btnInk, stroke: C.edge,
+        role: 'radio', cls: 'pn-inst', aria: 'Select ' + (t === AC ? 'accent' : vname(t)), onClick: function () { M.select(t); } });
+      b.lamp = P.el('circle', { cx: cw - 8, cy: 8, r: 3.4, fill: 'none' }, b.g);
+      cells.push({ t: t, b: b });
+    });
+    var rows = Math.ceil(o.grid.length / cols), Y = gy + rows * (ch + 6) + 6;
+    // mute and add for the selected voice, info line
+    var mute = muteButton(P, M, svg, { x: X0, y: Y, w: 120, h: 40, size: 13, label: 'MUTE', C: C, type: function () { return M.st.sel; } });
+    var addB = P.button(svg, { x: X0 + 132, y: Y, w: 120, h: 40, rx: 4, label: '+ ADD', size: 13, fill: '#ff5fa2', ink: '#16060d', stroke: '#16060d', cls: 'pn-add',
+      aria: 'Add a track for the selected voice', onClick: function () { var t = M.st.sel; if (t !== AC && P.addVoice(t)) M.select(t); } });
+    // knobs of the selected voice: every spec param
+    var KY = Y + 56;
+    var kl = P.g(svg, { 'class': 'pn-trimrow' });
+    M.trimTitle(kl, X0, KY + 8, { 'text-anchor': 'start', fill: C.ink, 'font-size': 13, 'font-weight': 700, 'letter-spacing': 1 });
+    var TY = KY + 252;
+    // tempo, shuffle, start / stop
+    var tempo = P.knob(svg, { x: X0 + 34, y: TY + 44, r: 28, label: 'Tempo', value: M.tempo(), kind: 'tempo', caption: 'TEMPO', captionSize: 12,
+      style: { skirt: C.knob, cap: C.knobTop, capR: 0.7, pointer: C.pointer, pointerW: 3, ticks: 15, tick: C.ink, label: C.ink } });
+    P.el('rect', { x: X0 + 76, y: TY + 22, width: 104, height: 44, rx: 3, fill: '#1a0606', stroke: '#111', 'stroke-width': 2 }, svg);
+    var bpmTxt = P.text(svg, X0 + 128, TY + 54, '', { fill: '#ff3b22', 'font-size': 26, 'font-family': 'ui-monospace,Menlo,Consolas,monospace', 'font-weight': 700, 'class': 'pn-bpm' });
+    if (o.swing) P.knob(svg, { x: X0 + 236, y: TY + 44, r: 24, label: 'Shuffle', value: M.swing(), kind: 'swing', step: 0.2, caption: 'SHUFFLE', captionSize: 12,
+      format: function (v) { return String(Math.round(v * 5) + 1); }, style: { skirt: C.knob, cap: C.knobTop, capR: 0.7, pointer: C.pointer, pointerW: 3, ticks: 6, tick: C.ink, label: C.ink } });
+    var ss = P.button(svg, { x: X0 + 300, y: TY + 12, w: IW - 300, h: 64, rx: 4, label: 'START / STOP', size: 16, fill: C.key0, ink: '#1a1a1a', aria: 'Start or stop the song',
+      onClick: function () { M.transport(); } });
+    var ssLed = P.el('circle', { cx: 16, cy: 16, r: 5, fill: C.ledOff }, ss.g);
+    ss.setDisabled(!M.canTransport());
+    M.onPlaying = function (on) { ssLed.setAttribute('fill', on ? C.led : C.ledOff); };
+    // info line and the sixteen keys in two rows of eight
+    var IY = TY + 92;
+    P.el('rect', { x: X0, y: IY, width: IW, height: 30, rx: 3, fill: C.info }, svg);
+    M.stepInfo = P.text(svg, X0 + 10, IY + 20, '', { 'text-anchor': 'start', fill: C.infoInk, 'font-size': 13, 'font-weight': 600, 'class': 'pn-info' });
+    var KY2 = IY + 42, kw = (IW - 7 * 4) / 8, kh = 78;
+    for (var i = 0; i < STEPS; i++) (function (i) {
+      var r = Math.floor(i / 8), x = X0 + (i % 8) * (kw + 4), y = KY2 + r * (kh + 12);
+      var b = P.button(svg, { x: x, y: y, w: kw, h: kh, rx: 4, fill: C.keyFill(i), cls: 'pn-key', aria: 'Step ' + (i + 1), onClick: function (e) { M.clickKey(i, e); } });
+      b.g.setAttribute('aria-pressed', 'false');
+      var led = P.el('rect', { x: kw / 2 - 8, y: 9, width: 16, height: 8, rx: 1.5, fill: C.ledOff, stroke: 'rgba(0,0,0,.4)', 'stroke-width': 0.6 }, b.g);
+      var acc = P.el('circle', { cx: kw / 2, cy: 28, r: 4, fill: 'none', stroke: '#6a675f', 'stroke-width': 1.2 }, b.g);
+      P.text(b.g, kw / 2, kh - 12, String(i + 1), { fill: '#1a1a1a', 'font-size': 15, 'font-weight': 700, 'pointer-events': 'none' });
+      var cur = P.el('rect', { x: x - 3, y: y - 3, width: kw + 6, height: kh + 6, rx: 6, fill: 'none', stroke: C.cursor, 'stroke-width': 3, display: 'none', 'pointer-events': 'none' }, svg);
+      M.key({
+        set: function (cell, editable, accRow) {
+          led.setAttribute('fill', cell ? (accRow ? C.accLed : C.led) : C.ledOff);
+          acc.setAttribute('fill', cell && cell.acc ? C.led : 'none');
+          b.g.setAttribute('aria-pressed', cell ? 'true' : 'false');
+          b.g.setAttribute('aria-label', 'Step ' + (i + 1) + (accRow ? (cell ? ', accent on' : ', accent off') : (cell ? (cell.acc ? ', on, accent' : ', on') : ', off')));
+          b.setDisabled(!editable);
+        },
+        cursor: function (on) { cur.setAttribute('display', on ? 'inline' : 'none'); }
+      });
+    })(i);
+    // the pattern bank
+    var BY = KY2 + 2 * kh + 12 + 22, sw = (IW - 7 * 4) / 8;
+    P.text(svg, X0, BY - 6, 'PATTERN', { 'text-anchor': 'start', fill: C.ink, 'font-size': 11, 'font-weight': 700, 'letter-spacing': 1 });
+    bankButtons(P, M, svg, { C: C, size: 16, toolSize: 13,
+      slots: { x: X0, y: BY, w: sw, h: 46, gap: 4 },
+      modes: { x: X0, y: BY + 58, w: 72, h: 46, gap: 4 },
+      tools: [{ x: X0 + 3 * 76 + 8, y: BY + 58, w: 128, h: 46 }, { x: X0 + 3 * 76 + 140, y: BY + 58, w: IW - (3 * 76 + 140), h: 46 }, { x: X0, y: BY + 116, w: 160, h: 46 }] });
+    P.text(svg, X0 + 172, BY + 136, 'tap a key: step on / off', { 'text-anchor': 'start', fill: C.dim, 'font-size': 12 });
+    P.text(svg, X0 + 172, BY + 154, 'AC selected: the keys set accents', { 'text-anchor': 'start', fill: C.dim, 'font-size': 12 });
+    M.buildTrimsInto(kl);
+    var sig = '';
+    P.onUpdate(function () {
+      var s = M.st.sel + '|' + o.grid.map(function (t) { return (t === AC || M.present(t) ? 1 : 0) + (t !== AC && M.muted(t) ? 'm' : ''); }).join('') + P.canEdit();
+      if (s !== sig) {
+        sig = s;
+        cells.forEach(function (c) {
+          var on = c.t === M.st.sel, pres = c.t === AC || M.present(c.t);
+          c.b.rect.setAttribute('fill', on ? C.on : C.btn);
+          c.b.txt.setAttribute('fill', on ? C.onInk : (pres ? C.btnInk : C.dim));
+          c.b.g.setAttribute('aria-checked', on ? 'true' : 'false');
+          c.b.lamp.setAttribute('fill', c.t !== AC && M.muted(c.t) ? C.led : 'none');
+        });
+        var absent = M.st.sel !== AC && !M.present(M.st.sel);
+        addB.g.setAttribute('display', absent ? 'inline' : 'none');
+        addB.setDisabled(!absent || !P.canEdit());
+        mute.g.setAttribute('display', M.st.sel === AC ? 'none' : 'inline');
+      }
+      M.update();
+      var b = tempo.v, t = isNum(b) ? String(Math.round(b)) : '--';
+      if (bpmTxt.textContent !== t) bpmTxt.textContent = t;
+    });
+    return {};
+  }
+  // portrait trim grid: six knobs a row (the most a voice has is 11)
+  function portraitTrims(KY, C) {
+    return { x: 24, y: KY + 58, w: 512, perRow: 6, rowH: 92, r: 19, captionY: 36, captionSize: 11,
+      style: { skirt: C.knob, cap: C.knobTop, capR: 0.72, pointer: C.pointer, pointerW: 2.6, ticks: 11, tick: C.ink, edge: '#000' } };
+  }
+  // the portrait's heights: grid rows of 48, then 6 + 56 + 252 + 92 + 42 + two key rows (90 + 78) + 34 + 58 + 46 + 70
+  function portraitH(n) { return 62 + Math.ceil(n / 6) * 48 + 6 + 56 + 252 + 92 + 42 + 90 + 78 + 34 + 58 + 46 + 70 + 12; }
+
+  // ------------------------------------------------------------------ HVT-808
+  var COL808 = [
+    { id: 'AC', voices: [], knobs: [] },
+    { id: 'BD', voices: ['bd808'], knobs: [['LEVEL', 'level'], ['TONE', 'tone'], ['DECAY', 'decay']] },
+    { id: 'SD', voices: ['sd808'], knobs: [['LEVEL', 'level'], ['TONE', 'tone'], ['SNAPPY', 'snappy']] },
+    { id: 'LT', voices: ['lt808', 'lc808'], knobs: [['LEVEL', 'level'], ['TUNING', 'tune']] },
+    { id: 'MT', voices: ['mt808', 'mc808'], knobs: [['LEVEL', 'level'], ['TUNING', 'tune']] },
+    { id: 'HT', voices: ['ht808', 'hc808'], knobs: [['LEVEL', 'level'], ['TUNING', 'tune']] },
+    { id: 'RS', voices: ['rs808', 'cl808'], knobs: [['LEVEL', 'level']] },
+    { id: 'CP', voices: ['cp808', 'ma808'], knobs: [['LEVEL', 'level']] },
+    { id: 'CB', voices: ['cb808'], knobs: [['LEVEL', 'level']] },
+    { id: 'CY', voices: ['cy808'], knobs: [['LEVEL', 'level'], ['TONE', 'tone'], ['DECAY', 'decay']] },
+    { id: 'OH', voices: ['oh808'], knobs: [['LEVEL', 'level'], null, ['DECAY', 'decay']] },
+    { id: 'CH', voices: ['ch808'], knobs: [['LEVEL', 'level']] }
+  ];
+  var C808 = { face: '#1d1d1f', case: '#0c0c0d', line: '#e8e4d8', legend: '#ece8dc', tile: '#d8d4c8', tileInk: '#141414', lower: '#c9c7bf', lowerInk: '#1e1e1e',
+    keys: ['#d8382c', '#ee8a1e', '#efd033', '#ebe5d2'], led: '#ff3b22', ledOff: '#3a1712', capLevel: '#e6672f', capTone: '#ece6d4', capDecay: '#f1c93a' };
+  var GRID808 = [AC, 'bd808', 'sd808', 'lt808', 'mt808', 'ht808', 'rs808', 'cp808', 'cb808', 'cy808', 'oh808', 'ch808', 'lc808', 'mc808', 'hc808', 'cl808', 'ma808'];
+  var GRID909 = [AC].concat(V909);
+  var P808 = { bg: '#1d1d1f', ink: '#ece8dc', brand: '#ff5fa2', btn: '#2c2c2e', btnInk: '#ece8dc', edge: '#000', on: '#ff8a3a', onInk: '#1a0d04', dim: '#8a877e',
+    mute: '#b8281c', led: '#ff3b22', ledOff: '#3a1712', accLed: '#ffd23a', knob: '#141414', knobTop: '#e6672f', pointer: '#111', info: '#efece4', infoInk: '#1e1e1e',
+    key0: '#e8e5dc', cursor: '#ffffff', tool: '#c9c7bf', toolInk: '#1e1e1e', keyFill: function (i) { return C808.keys[Math.floor(i / 4)]; } };
+
+  Panels.define('hvt808', {
+    label: 'HVT-808 rhythm machine', size: { w: 1200, h: 760 }, win: { w: 1080 },
+    layouts: { landscape: { w: 1200, h: 760 }, portrait: { w: 560, h: portraitH(GRID808.length) } },
+    match: function (d) { return d.kind === 'instrument' && V808.indexOf(d.type) >= 0; },
+    build: function (P) {
+      var svg = P.svg, C = C808;
+      if (P.layout === 'portrait') {
+        var Mp = machine(P, { voices: V808, tempo: [40, 300], trimInk: P808.ink, columnParams: function () { return []; }, trimTitle: 'VOICE', trimLayer: null,
+          trimBox: portraitTrims(62 + Math.ceil(GRID808.length / 6) * 48 + 6 + 56, P808) });
+        return portraitMachine(P, Mp, { model: 'HVT-808', grid: GRID808, C: P808, swing: false });
+      }
+      var colX0 = 236, colW = 78, ROW = [112, 200, 288];
+      var colOf = { AC: 0 }, pairSel = {};
+      COL808.forEach(function (col, i) { col.voices.forEach(function (v) { colOf[v] = i; }); });
+      var M = machine(P, {
+        voices: V808, tempo: [40, 300], trimInk: '#e3dfd3',
+        columnParams: function (t) { var col = COL808[colOf[t]]; return col ? col.knobs.filter(Boolean).map(function (k) { return k[1]; }) : []; },
+        trimLayer: null, trimBox: { x: 236, y: 446, w: 640, step: 80 }
+      });
+      // pairs: show the selected voice if it is in the pair, else the one that has a track, else the first
+      COL808.forEach(function (col) {
+        if (col.voices.length < 2) return;
+        var s = col.voices.indexOf(M.st.sel);
+        if (s < 0) s = (!M.present(col.voices[0]) && M.present(col.voices[1])) ? 1 : 0;
+        pairSel[col.id] = s;
+      });
+
+      // ---- case and face
+      P.el('rect', { x: 0, y: 0, width: 1200, height: 760, rx: 14, fill: C.case }, svg);
+      P.el('rect', { x: 8, y: 6, width: 1184, height: 16, rx: 6, fill: '#3a3a3c' }, svg);                 // top rail
+      for (var sx = 60; sx < 1200; sx += 270) P.el('circle', { cx: sx, cy: 14, r: 3.2, fill: '#8a8a8a' }, svg);
+      P.el('rect', { x: 18, y: 30, width: 1164, height: 446, rx: 4, fill: C.face, stroke: '#000', 'stroke-width': 1 }, svg);
+      // wordmark (Havantechno's own) top left over the select; model name in the strip below the voices
+      P.text(svg, 30, 58, 'HAVANTECHNO', { 'text-anchor': 'start', fill: '#ff5fa2', 'font-size': 19, 'font-weight': 800, 'letter-spacing': 3 });
+
+      // ---- left block: instrument select, tempo
+      var lb = P.g(svg, { 'class': 'pn-left' });
+      P.el('rect', { x: 30, y: 80, width: 192, height: 384, rx: 3, fill: 'none', stroke: C.line, 'stroke-width': 1, opacity: 0.6 }, lb);
+      P.text(lb, 126, 98, 'INSTRUMENT SELECT', { fill: C.legend, 'font-size': 10, 'font-weight': 700, 'letter-spacing': 1 });
+      var SEL = ['AC', 'BD', 'SD', 'LT', 'MT', 'HT', 'RS', 'CP', 'CB', 'CY', 'OH', 'CH'];
+      var scx = 126, scy = 178, selLbl = [];
+      var selArc = function (i) { return 140 + i * (260 / (SEL.length - 1)); };
+      var rot = P.g(lb, { 'class': 'pn-ctl pn-rotary', role: 'slider', tabindex: 0, 'aria-label': 'Instrument select', 'aria-valuemin': 0, 'aria-valuemax': SEL.length - 1 });
+      P.el('circle', { 'class': 'pn-focus', cx: scx, cy: scy, r: 34 }, rot);
+      P.el('circle', { cx: scx, cy: scy + 2, r: 29, fill: 'rgba(0,0,0,.5)' }, rot);
+      P.el('circle', { cx: scx, cy: scy, r: 28, fill: '#1a1a1a', stroke: '#000' }, rot);
+      P.el('circle', { cx: scx, cy: scy, r: 20, fill: '#e9e3d1' }, rot);
+      var rptr = P.el('line', { stroke: '#151515', 'stroke-width': 3, 'stroke-linecap': 'round' }, rot);
+      SEL.forEach(function (s, i) {
+        var a = selArc(i), q = pt(scx, scy, 50, a), dot = pt(scx, scy, 34, a);
+        P.el('circle', { cx: f2(dot[0]), cy: f2(dot[1]), r: 1.6, fill: C.legend }, lb);
+        var t = P.text(lb, q[0], q[1] + 4, s, { fill: C.legend, 'font-size': 10.5, 'font-weight': 700, 'class': 'pn-sel', cursor: 'pointer' });
+        P.listen(t, 'click', function () { selCol(i); });
+        selLbl.push(t);
+      });
+      function colVoice(ci) { var col = COL808[ci]; if (!col.voices.length) return AC; return col.voices.length > 1 ? col.voices[pairSel[col.id] || 0] : col.voices[0]; }
+      function selCol(ci) { var v = colVoice(ci); if (v) M.select(v); }
+      function selIndex() { return colOf[M.st.sel] || 0; }
+      function paintSel() {
+        var i = selIndex(), a = selArc(i), q0 = pt(scx, scy, 4, a), q1 = pt(scx, scy, 26, a);
+        rptr.setAttribute('x1', f2(q0[0])); rptr.setAttribute('y1', f2(q0[1])); rptr.setAttribute('x2', f2(q1[0])); rptr.setAttribute('y2', f2(q1[1]));
+        selLbl.forEach(function (t, k) { t.setAttribute('fill', k === i ? '#ff8a3a' : C.legend); });
+        rot.setAttribute('aria-valuenow', i); rot.setAttribute('aria-valuetext', SEL[i] + ' ' + vname(M.st.sel));
+      }
+      P.listen(rot, 'keydown', function (e) {
+        var i = selIndex(), n = i;
+        if (e.key === 'ArrowUp' || e.key === 'ArrowRight') n = i + 1; else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') n = i - 1;
+        else if (e.key === 'Home') n = 0; else if (e.key === 'End') n = SEL.length - 1; else return;
+        if (e.preventDefault) e.preventDefault();
+        selCol(clamp(n, 0, SEL.length - 1));
+      });
+      var rdrag = null;
+      P.listen(rot, 'pointerdown', function (e) { rdrag = { y: e.clientY, i: selIndex() }; safe(function () { rot.focus(); rot.setPointerCapture(e.pointerId); }); });
+      P.listen(rot, 'pointermove', function (e) { if (!rdrag) return; var n = clamp(rdrag.i + Math.round((rdrag.y - e.clientY) / 14), 0, SEL.length - 1); if (n !== selIndex()) selCol(n); });
+      P.listen(rot, 'pointerup', function () { rdrag = null; });
+      P.listen(rot, 'pointercancel', function () { rdrag = null; });
+
+      P.text(lb, 126, 272, 'TEMPO', { fill: C.legend, 'font-size': 11, 'font-weight': 700, 'letter-spacing': 2 });
+      var tempo = P.knob(lb, { x: 126, y: 338, r: 40, label: 'Tempo', value: M.tempo(), kind: 'tempo',
+        style: { skirt: '#151515', cap: '#d9d4c4', capR: 0.62, pointer: '#141414', pointerW: 3.4, ticks: 21, tick: C.legend } });
+      P.el('rect', { x: 86, y: 404, width: 80, height: 26, rx: 3, fill: '#120404', stroke: '#444' }, lb);
+      var bpmTxt = P.text(lb, 126, 423, '', { fill: '#ff3b22', 'font-size': 17, 'font-family': 'ui-monospace,Menlo,Consolas,monospace', 'font-weight': 700, 'class': 'pn-bpm' });
+      P.text(lb, 126, 448, 'BPM', { fill: C.legend, 'font-size': 9, 'letter-spacing': 2 });
+
+      // ---- voice columns
+      var colG = P.g(svg, { 'class': 'pn-cols' });
+      P.el('line', { x1: colX0, y1: 80, x2: colX0 + colW * 12, y2: 80, stroke: C.line, 'stroke-width': 1.2 }, colG);
+      var colState = [];
+      var MC = { btn: '#2c2c2e', btnInk: '#ece8dc', edge: '#000', mute: '#b8281c', onInk: '#ffffff', led: C.led, ledOff: C.ledOff };
+      COL808.forEach(function (col, ci) {
+        var x = colX0 + colW * ci, cx = x + colW / 2, g = P.g(colG, { 'class': 'pn-col', 'data-col': col.id });
+        P.el('line', { x1: x, y1: 80, x2: x, y2: 400, stroke: C.line, 'stroke-width': 1, opacity: 0.7 }, g);
+        if (ci === 11) P.el('line', { x1: x + colW, y1: 80, x2: x + colW, y2: 400, stroke: C.line, 'stroke-width': 1, opacity: 0.7 }, g);
+        var hi = P.el('rect', { x: x + 2, y: 82, width: colW - 4, height: 316, rx: 2, fill: 'rgba(255,138,58,.10)', stroke: '#ff8a3a', 'stroke-width': 1.2, display: 'none' }, g);
+        var cs = { col: col, g: g, hi: hi, groups: [], tiles: [], adds: [] };
+        if (!col.voices.length) {                 // accent: the engine's accent ratios are fixed (drums.js), so no knob
+          P.text(g, cx, 102, 'ACCENT', { fill: C.legend, 'font-size': 10.5, 'font-weight': 700 });
+          P.text(g, cx, 200, 'select AC:', { fill: '#a8a59c', 'font-size': 9.5 });
+          P.text(g, cx, 213, 'keys = accent', { fill: '#a8a59c', 'font-size': 9.5 });
+          var acTile = P.g(g, { 'class': 'pn-tile', cursor: 'pointer' });
+          P.el('rect', { x: x + 6, y: 372, width: colW - 12, height: 24, rx: 2, fill: C.tile }, acTile);
+          capsText(P, acTile, cx, 389, 'ACcent', { fill: C.tileInk });
+          P.listen(acTile, 'click', function () { M.select(AC); });
+          colState.push(cs); return;
+        }
+        // per-column mute (the voice the column shows)
+        muteButton(P, M, g, { x: x + 8, y: 58, w: colW - 16, h: 17, C: MC, type: function () { return colVoice(ci); } });
+        col.voices.forEach(function (v, vi) {
+          var vg = P.g(g, { 'class': 'pn-voice', 'data-voice': v });
+          col.knobs.forEach(function (k, ri) {
+            if (!k) return;
+            var cap = ri === 0 ? C.capLevel : ri === 1 ? C.capTone : C.capDecay;
+            P.knob(vg, { x: cx, y: ROW[ri], r: 17, voice: v, param: k[1], label: col.id + ' ' + k[0].toLowerCase() + ' (' + v + ')', caption: k[0],
+              style: { skirt: '#141414', cap: cap, pointer: '#111', ticks: 11, tick: C.legend, label: C.legend } });
+          });
+          var tile = P.g(g, { 'class': 'pn-tile', cursor: 'pointer' });
+          P.el('rect', { x: x + 6, y: 372, width: colW - 12, height: 24, rx: 2, fill: C.tile }, tile);
+          capsText(P, tile, cx, 389, vname(v), { fill: C.tileInk });
+          P.listen(tile, 'click', function () { M.select(v); });
+          var add = addButton(P, g, cx, 236, v, M, 52);
+          cs.groups.push(vg); cs.tiles.push(tile); cs.adds.push(add);
+        });
+        if (col.voices.length > 1) {
+          P.text(g, cx - 20, 326, abbr(col.voices[0]), { fill: C.legend, 'font-size': 9 });
+          P.text(g, cx - 20, 352, abbr(col.voices[1]), { fill: C.legend, 'font-size': 9 });
+          P.slide(g, { x: cx + 4, y: 339, aria: vname(col.voices[0]) + ' / ' + vname(col.voices[1]) + ' switch', labels: [col.voices[0], col.voices[1]],
+            get: function () { return pairSel[col.id] || 0; }, set: function (i) { pairSel[col.id] = i; M.select(col.voices[i]); cs.sig = ''; } });
+        }
+        colState.push(cs);
+      });
+
+      // ---- model strip and trims
+      P.el('line', { x1: colX0, y1: 400, x2: colX0 + colW * 12, y2: 400, stroke: C.line, 'stroke-width': 1.2 }, svg);
+      P.text(svg, 1166, 462, 'HVT-808', { 'text-anchor': 'end', fill: C.legend, 'font-size': 30, 'font-style': 'italic', 'font-weight': 300, 'letter-spacing': 1 });
+      var trimLayer = P.g(svg, { 'class': 'pn-trimrow' });
+      M.trimTitle(trimLayer, 236, 418, { 'text-anchor': 'start', fill: '#bdb9ae', 'font-size': 10.5, 'font-weight': 700, 'letter-spacing': 1 });
+
+      // ---- lower section
+      var low = P.g(svg, { 'class': 'pn-lower' });
+      P.el('rect', { x: 18, y: 486, width: 1164, height: 258, rx: 4, fill: C.lower, stroke: '#000' }, low);
+      P.el('rect', { x: 18, y: 486, width: 1164, height: 5, fill: '#e6e3da' }, low);
+      // pre-scale style band (decoration) carries the step-view info line
+      P.el('rect', { x: 236, y: 498, width: 936, height: 26, rx: 2, fill: '#efece4', stroke: '#9c998f' }, low);
+      M.stepInfo = P.text(low, 248, 516, '', { 'text-anchor': 'start', fill: C.lowerInk, 'font-size': 12, 'font-weight': 600, 'class': 'pn-info' });
+      P.text(low, 220, 540, 'STEP NO', { 'text-anchor': 'end', fill: C.lowerInk, 'font-size': 9.5, 'font-weight': 700 });
+      var ss = P.button(low, { x: 40, y: 562, w: 150, h: 74, rx: 3, label: 'START / STOP', size: 12, fill: '#e8e5dc', ink: '#1a1a1a', aria: 'Start or stop the song',
+        onClick: function () { M.transport(); } });
+      var ssLed = P.el('circle', { cx: 115, cy: 576, r: 4.5, fill: C.ledOff }, low);
+      ss.setDisabled(!M.canTransport());
+      M.onPlaying = function (on) { ssLed.setAttribute('fill', on ? C.led : C.ledOff); };
+      var kw = 936 / 16;
+      for (var i = 0; i < STEPS; i++) (function (i) {
+        var kx = 236 + kw * i + (kw - 46) / 2, col = C.keys[Math.floor(i / 4)];
+        P.text(low, kx + 23, 540, String(i + 1), { fill: C.lowerInk, 'font-size': 11, 'font-weight': 700 });
+        var acc = P.el('circle', { cx: kx + 23, cy: 552, r: 3.2, fill: 'none', stroke: '#6a675f', 'stroke-width': 1 }, low);
+        var b = P.button(low, { x: kx, y: 562, w: 46, h: 74, rx: 3, fill: col, cls: 'pn-key', aria: 'Step ' + (i + 1),
+          onClick: function (e) { M.clickKey(i, e); } });
+        b.g.setAttribute('aria-pressed', 'false');
+        var led = P.el('rect', { x: 17, y: 10, width: 12, height: 7, rx: 1, fill: C.ledOff, stroke: 'rgba(0,0,0,.4)', 'stroke-width': 0.6 }, b.g);
+        var cur = P.el('rect', { x: kx - 3, y: 559, width: 52, height: 80, rx: 5, fill: 'none', stroke: '#ffffff', 'stroke-width': 2.4, display: 'none', 'pointer-events': 'none' }, low);
+        P.text(low, kx + 23, 654, String(i + 1), { fill: C.lowerInk, 'font-size': 13, 'font-weight': 500 });
+        M.key({
+          set: function (cell, editable, accRow) {
+            led.setAttribute('fill', cell ? (accRow ? '#ffd23a' : C.led) : C.ledOff);
+            acc.setAttribute('fill', cell && cell.acc ? C.led : 'none');
+            b.g.setAttribute('aria-pressed', cell ? 'true' : 'false');
+            b.g.setAttribute('aria-label', 'Step ' + (i + 1) + (accRow ? (cell ? ', accent on' : ', accent off') : (cell ? (cell.acc ? ', on, accent' : ', on') : ', off')) + ' (click toggles, Shift-click accent)');
+            b.setDisabled(!editable);
+          },
+          cursor: function (on) { cur.setAttribute('display', on ? 'inline' : 'none'); }
+        });
+      })(i);
+      // pattern bank: variation (A, B, A then B) at the left, slots 1..8, clear and copy
+      P.text(low, 115, 662, 'VARIATION', { fill: C.lowerInk, 'font-size': 9, 'font-weight': 700, 'letter-spacing': 1 });
+      P.text(low, 224, 688, 'PTN', { 'text-anchor': 'end', fill: C.lowerInk, 'font-size': 9.5, 'font-weight': 700 });
+      bankButtons(P, M, low, { C: { btn: '#e8e5dc', btnInk: '#1a1a1a', edge: '#5c5a54', on: '#ff8a3a', onInk: '#1a0d04', tool: '#2a2a2a', toolInk: '#e8e5dc' }, size: 12, toolSize: 10.5,
+        slots: { x: 236, y: 668, w: 52, h: 34, gap: 6 }, modes: { x: 40, y: 668, w: 46, h: 34, gap: 6 },
+        tools: [{ x: 724, y: 668, w: 140, h: 34 }, { x: 876, y: 668, w: 140, h: 34 }, { x: 1028, y: 668, w: 144, h: 34 }] });
+      P.el('rect', { x: 236, y: 712, width: 936, height: 18, rx: 2, fill: '#2a2a2a' }, low);
+      P.text(low, 248, 725, 'click a key: step on / off   ·   shift-click: accent   ·   AC on the select: the keys set accents   ·   double-click a knob: song value', { 'text-anchor': 'start', fill: '#e8e5dc', 'font-size': 10 });
+
+      M.buildTrimsInto(trimLayer);
+
+      var sig = '';
+      function paintCols() {
+        var s = M.st.sel + '|' + COL808.map(function (col) { return col.voices.map(function (v) { return M.present(v) ? 1 : 0; }).join('') + (pairSel[col.id] || 0); }).join(',') + '|' + P.canEdit();
+        if (s === sig) return;
+        sig = s;
+        colState.forEach(function (cs) {
+          var col = cs.col;
+          if (!col.voices.length) { cs.hi.setAttribute('display', M.st.sel === AC ? 'inline' : 'none'); return; }
+          var showI = col.voices.length > 1 ? (pairSel[col.id] || 0) : 0;
+          col.voices.forEach(function (v, vi) {
+            var vis = vi === showI, pres = M.present(v);
+            cs.groups[vi].setAttribute('display', vis ? 'inline' : 'none');
+            cs.groups[vi].setAttribute('opacity', pres ? '1' : '0.32');
+            cs.tiles[vi].setAttribute('display', vis ? 'inline' : 'none');
+            cs.tiles[vi].setAttribute('opacity', pres ? '1' : '0.45');
+            cs.adds[vi].g.setAttribute('display', vis && !pres ? 'inline' : 'none');
+            cs.adds[vi].setDisabled(!P.canEdit());
+          });
+          cs.hi.setAttribute('display', col.voices.indexOf(M.st.sel) >= 0 ? 'inline' : 'none');
+        });
+        paintSel();
+      }
+      M.onSelect.push(function (t) { var ci = colOf[t], col = COL808[ci]; if (col && col.voices.length > 1) pairSel[col.id] = col.voices.indexOf(t); sig = ''; });
+      P.onUpdate(function () {
+        paintCols();
+        M.update();
+        var b = tempo.v;
+        var t = isNum(b) ? (Math.round(b * 10) / 10).toFixed(1) : '--';
+        if (bpmTxt.textContent !== t) bpmTxt.textContent = t;
+      });
+      return {};
+    }
+  });
+
+  // ------------------------------------------------------------------ HVT-909
+  // groups of knob columns, as on the hardware: [col, row, legend, voice, param]
+  var GRP909 = [
+    { title: 'ACCENT', cols: 1, voices: [], knobs: [] },
+    { title: 'BASS DRUM', cols: 2, voices: ['bd909'], knobs: [[0, 0, 'TUNE', 'bd909', 'tune'], [1, 0, 'LEVEL', 'bd909', 'level'], [0, 1, 'ATTACK', 'bd909', 'attack'], [1, 1, 'DECAY', 'bd909', 'decay']] },
+    { title: 'SNARE DRUM', cols: 2, voices: ['sd909'], knobs: [[0, 0, 'TUNE', 'sd909', 'tune'], [1, 0, 'LEVEL', 'sd909', 'level'], [0, 1, 'TONE', 'sd909', 'tone'], [1, 1, 'SNAPPY', 'sd909', 'snappy']] },
+    { title: 'LOW TOM', cols: 2, voices: ['lt909'], knobs: [[0, 0, 'TUNE', 'lt909', 'tune'], [1, 0, 'LEVEL', 'lt909', 'level'], [0, 1, 'DECAY', 'lt909', 'decay']] },
+    { title: 'MID TOM', cols: 2, voices: ['mt909'], knobs: [[0, 0, 'TUNE', 'mt909', 'tune'], [1, 0, 'LEVEL', 'mt909', 'level'], [0, 1, 'DECAY', 'mt909', 'decay']] },
+    { title: 'HI TOM', cols: 2, voices: ['ht909'], knobs: [[0, 0, 'TUNE', 'ht909', 'tune'], [1, 0, 'LEVEL', 'ht909', 'level'], [0, 1, 'DECAY', 'ht909', 'decay']] },
+    { title: 'RIM SHOT  ·  HAND CLAP', cols: 2, voices: ['rs909', 'cp909'], knobs: [[0, 0, 'RS LEVEL', 'rs909', 'level'], [1, 0, 'CP LEVEL', 'cp909', 'level']] },
+    { title: 'HI HAT', cols: 2, voices: ['ch909', 'oh909'], knobs: [[0, 0, 'CH LEVEL', 'ch909', 'level'], [1, 0, 'OH LEVEL', 'oh909', 'level'], [0, 1, 'CH DECAY', 'ch909', 'decay'], [1, 1, 'OH DECAY', 'oh909', 'decay']] },
+    { title: 'CYMBAL', cols: 2, voices: ['cr909', 'rd909'], knobs: [[0, 0, 'CRASH LVL', 'cr909', 'level'], [1, 0, 'RIDE LVL', 'rd909', 'level'], [0, 1, 'CRASH TUNE', 'cr909', 'tune'], [1, 1, 'RIDE TUNE', 'rd909', 'tune']] }
+  ];
+  var C909 = { face: '#d9d6cc', faceEdge: '#b9b5aa', ink: '#1c1c1c', orange: '#e8641e', lower: '#47474a', lowerEdge: '#2c2c2e', key: '#c9c7c0', keyIvory: '#ece6d4',
+    led: '#ff3b22', ledOff: '#4a1d16', knob: '#1b1b1c', knobTop: '#3a3a3c' };
+  var P909 = { bg: '#d9d6cc', ink: '#1c1c1c', brand: '#d9407e', btn: '#2e2e30', btnInk: '#ece6d4', edge: '#1a1a1a', on: '#e8641e', onInk: '#16060d', dim: '#6a675f',
+    mute: '#b8281c', led: '#ff3b22', ledOff: '#4a1d16', accLed: '#ffd23a', knob: '#1b1b1c', knobTop: '#3a3a3c', pointer: '#f2efe6', info: '#2e2e30', infoInk: '#ece6d4',
+    key0: '#ece6d4', cursor: '#e8641e', tool: '#47474a', toolInk: '#ece6d4', keyFill: function (i) { return i % 4 === 0 ? C909.keyIvory : C909.key; } };
+
+  Panels.define('hvt909', {
+    label: 'HVT-909 rhythm machine', size: { w: 1200, h: 720 }, win: { w: 1080 },
+    layouts: { landscape: { w: 1200, h: 720 }, portrait: { w: 560, h: portraitH(GRID909.length) } },
+    match: function (d) { return d.kind === 'instrument' && V909.indexOf(d.type) >= 0; },
+    build: function (P) {
+      if (P.layout === 'portrait') {
+        var Mp = machine(P, { voices: V909, tempo: [37, 290], trimInk: P909.ink, columnParams: function () { return []; }, trimTitle: 'VOICE', trimLayer: null,
+          trimBox: portraitTrims(62 + Math.ceil(GRID909.length / 6) * 48 + 6 + 56, P909) });
+        return portraitMachine(P, Mp, { model: 'HVT-909', grid: GRID909, C: P909, swing: true });
+      }
+      var svg = P.svg, C = C909, colW = 64, x0 = 52, ROWY = [150, 238];
+      var colParams = {};
+      GRP909.forEach(function (g) { g.knobs.forEach(function (k) { (colParams[k[3]] = colParams[k[3]] || []).push(k[4]); }); });
+      var M = machine(P, { voices: V909, tempo: [37, 290], trimInk: C.ink,
+        columnParams: function (t) { return colParams[t] || []; }, trimBox: { x: 300, y: 352, w: 660, step: 82 } });
+
+      P.el('rect', { x: 0, y: 0, width: 1200, height: 720, rx: 12, fill: '#2a2a2b' }, svg);
+      P.el('rect', { x: 10, y: 10, width: 1180, height: 410, rx: 6, fill: C.face, stroke: C.faceEdge, 'stroke-width': 2 }, svg);
+      // model name top left (plain), wordmark top right
+      P.text(svg, 40, 56, 'HVT-909', { 'text-anchor': 'start', fill: C.ink, 'font-size': 34, 'font-weight': 800, 'letter-spacing': 1, 'font-style': 'italic' });
+      P.el('rect', { x: 210, y: 36, width: 520, height: 6, fill: C.orange }, svg);
+      P.el('rect', { x: 210, y: 46, width: 520, height: 2, fill: C.orange }, svg);
+      P.text(svg, 1160, 54, 'HAVANTECHNO', { 'text-anchor': 'end', fill: '#d9407e', 'font-size': 22, 'font-weight': 800, 'letter-spacing': 4 });
+
+      var gx = x0, grpState = [];
+      var knobStyle = { skirt: C.knob, cap: C.knobTop, capR: 0.78, pointer: '#f2efe6', pointerW: 2.6, ticks: 11, tick: '#3a3a3a', label: C.ink, edge: '#000' };
+      GRP909.forEach(function (grp) {
+        var w = grp.cols * colW, g = P.g(svg, { 'class': 'pn-grp' });
+        P.el('rect', { x: gx + 3, y: 76, width: w - 6, height: 20, fill: 'none', stroke: C.ink, 'stroke-width': 1 }, g);
+        P.text(g, gx + w / 2, 90, grp.title, { fill: C.ink, 'font-size': grp.title.length > 14 ? 8.5 : 10, 'font-weight': 700, 'letter-spacing': 0.5 });
+        var hi = P.el('rect', { x: gx + 2, y: 100, width: w - 4, height: 196, rx: 3, fill: 'rgba(232,100,30,.10)', stroke: C.orange, 'stroke-width': 1.4, display: 'none' }, g);
+        var gs = { grp: grp, hi: hi, vg: {}, adds: {} };
+        if (!grp.voices.length) {
+          P.text(g, gx + w / 2, 196, 'select AC:', { fill: '#5a5850', 'font-size': 9.5 });
+          P.text(g, gx + w / 2, 209, 'keys = accent', { fill: '#5a5850', 'font-size': 9.5 });
+          var acHit = P.el('rect', { x: gx + 3, y: 76, width: w - 6, height: 220, fill: 'transparent', cursor: 'pointer' }, g);
+          P.listen(acHit, 'click', function () { M.select(AC); });
+        }
+        grp.voices.forEach(function (v) {
+          var vg = P.g(g, { 'class': 'pn-voice', 'data-voice': v }), colIdx = 0;
+          grp.knobs.forEach(function (k) {
+            if (k[3] !== v) return;
+            if (k[4] === 'level') colIdx = k[0];
+            P.knob(vg, { x: gx + colW * k[0] + colW / 2, y: ROWY[k[1]], r: 16, voice: v, param: k[4], label: abbr(v) + ' ' + k[2].replace(/^(RS|CP|CH|OH|CRASH|RIDE) /, '').replace(/ LVL$/, ' LEVEL').toLowerCase() + ' (' + v + ')', caption: k[2], captionSize: 9.5, style: knobStyle });
+          });
+          var hit = P.el('rect', { x: gx + colW * colIdx + 4, y: 100, width: grp.voices.length > 1 ? colW - 8 : w - 8, height: 14, fill: 'transparent', cursor: 'pointer' }, g);
+          P.listen(hit, 'click', function () { M.select(v); });
+          gs.vg[v] = vg;
+          gs.adds[v] = addButton(P, g, gx + colW * colIdx + colW / 2, 272, v, M, 48);
+        });
+        grpState.push(gs);
+        gx += w;
+      });
+
+      // middle band: tempo, display, trims, shuffle
+      var mid = P.g(svg, { 'class': 'pn-mid' });
+      P.el('line', { x1: 30, y1: 306, x2: 1170, y2: 306, stroke: C.ink, 'stroke-width': 1 }, mid);
+      P.text(mid, 70, 326, 'TEMPO', { fill: C.ink, 'font-size': 10, 'font-weight': 700 });
+      var tempo = P.knob(mid, { x: 70, y: 370, r: 26, label: 'Tempo', value: M.tempo(), kind: 'tempo', style: { skirt: C.knob, cap: C.knobTop, capR: 0.8, pointer: '#f2efe6', pointerW: 3, ticks: 15, tick: '#3a3a3a' } });
+      P.el('rect', { x: 128, y: 344, width: 120, height: 44, rx: 3, fill: '#1a0606', stroke: '#111', 'stroke-width': 2 }, mid);
+      var bpmTxt = P.text(mid, 188, 376, '', { fill: '#ff3b22', 'font-size': 28, 'font-family': 'ui-monospace,Menlo,Consolas,monospace', 'font-weight': 700, 'class': 'pn-bpm' });
+      P.text(mid, 188, 402, 'BPM', { fill: C.ink, 'font-size': 9, 'letter-spacing': 2 });
+      P.text(mid, 1060, 326, 'SHUFFLE', { fill: C.ink, 'font-size': 10, 'font-weight': 700 });
+      P.knob(mid, { x: 1060, y: 370, r: 24, label: 'Shuffle', value: M.swing(), kind: 'swing', step: 0.2, numbers: ['1', '2', '3', '4', '5', '6'],
+        format: function (v) { return String(Math.round(v * 5) + 1); }, style: { skirt: C.knob, cap: C.knobTop, capR: 0.8, pointer: '#f2efe6', pointerW: 3, ticks: 6, tick: '#3a3a3a', numR: 15 } });
+      var trimLayer = P.g(svg, { 'class': 'pn-trimrow' });
+      M.trimTitle(trimLayer, 300, 326, { 'text-anchor': 'start', fill: C.ink, 'font-size': 9.5, 'font-weight': 700, 'letter-spacing': 1 });
+      M.buildTrimsInto(trimLayer);
+
+      // lower section
+      var low = P.g(svg, { 'class': 'pn-lower' });
+      P.el('rect', { x: 10, y: 428, width: 1180, height: 282, rx: 6, fill: C.lower, stroke: C.lowerEdge, 'stroke-width': 2 }, low);
+      P.el('rect', { x: 200, y: 436, width: 970, height: 26, rx: 2, fill: '#2e2e30' }, low);
+      M.stepInfo = P.text(low, 212, 454, '', { 'text-anchor': 'start', fill: '#ece6d4', 'font-size': 12, 'font-weight': 600, 'class': 'pn-info' });
+      var ss = P.button(low, { x: 30, y: 486, w: 70, h: 62, rx: 3, label: 'START', size: 11, fill: C.keyIvory, ink: '#1a1a1a', aria: 'Start or stop the song', onClick: function () { M.transport(); } });
+      var st2 = P.button(low, { x: 110, y: 486, w: 70, h: 62, rx: 3, label: 'STOP', size: 11, fill: C.key, ink: '#1a1a1a', aria: 'Stop the song',
+        onClick: function () { var tr = P.host.transport || {}; if (isFn(tr.stop)) safe(function () { tr.stop(); }); else if (tr.playing) M.transport(); } });
+      ss.setDisabled(!M.canTransport()); st2.setDisabled(!M.canTransport());
+      var ssLed = P.el('circle', { cx: 65, cy: 476, r: 4.5, fill: C.ledOff }, low);
+      M.onPlaying = function (on) { ssLed.setAttribute('fill', on ? C.led : C.ledOff); };
+      var kw = 970 / 16;
+      for (var i = 0; i < STEPS; i++) (function (i) {
+        var kx = 200 + kw * i + (kw - 48) / 2;
+        var led = P.el('circle', { cx: kx + 24, cy: 476, r: 4.5, fill: C.ledOff, stroke: 'rgba(0,0,0,.5)', 'stroke-width': 0.8 }, low);
+        var acc = P.el('rect', { x: kx + 34, y: 472, width: 8, height: 8, rx: 1, fill: 'none', stroke: '#8a8880', 'stroke-width': 1 }, low);
+        var b = P.button(low, { x: kx, y: 486, w: 48, h: 62, rx: 3, fill: i % 4 === 0 ? C.keyIvory : C.key, cls: 'pn-key', aria: 'Step ' + (i + 1), onClick: function (e) { M.clickKey(i, e); } });
+        b.g.setAttribute('aria-pressed', 'false');
+        var cur = P.el('rect', { x: kx - 3, y: 483, width: 54, height: 68, rx: 5, fill: 'none', stroke: '#ff8a3a', 'stroke-width': 2.6, display: 'none', 'pointer-events': 'none' }, low);
+        P.text(low, kx + 24, 564, String(i + 1), { fill: '#ece6d4', 'font-size': 12, 'font-weight': 600 });
+        M.key({
+          set: function (cell, editable, accRow) {
+            led.setAttribute('fill', cell ? (accRow ? '#ffd23a' : C.led) : C.ledOff);
+            acc.setAttribute('fill', cell && cell.acc ? C.led : 'none');
+            b.g.setAttribute('aria-pressed', cell ? 'true' : 'false');
+            b.g.setAttribute('aria-label', 'Step ' + (i + 1) + (accRow ? (cell ? ', accent on' : ', accent off') : (cell ? (cell.acc ? ', on, accent' : ', on') : ', off')) + ' (click toggles, Shift-click accent)');
+            b.setDisabled(!editable);
+          },
+          cursor: function (on) { cur.setAttribute('display', on ? 'inline' : 'none'); }
+        });
+      })(i);
+      // instrument select: the hardware prints the voices under the step keys (AC first); a mute row under it
+      P.text(low, 190, 591, 'INST', { 'text-anchor': 'end', fill: '#ece6d4', 'font-size': 9.5, 'font-weight': 700 });
+      P.text(low, 190, 620, 'MUTE', { 'text-anchor': 'end', fill: '#ece6d4', 'font-size': 9.5, 'font-weight': 700 });
+      var selBtns = {}, sel9 = GRID909, sw = 970 / sel9.length;
+      var MC = { btn: '#2e2e30', btnInk: '#ece6d4', edge: '#1a1a1a', mute: '#b8281c', onInk: '#ffffff', led: C.led, ledOff: C.ledOff };
+      sel9.forEach(function (v, k) {
+        var b = P.button(low, { x: 200 + sw * k + 4, y: 576, w: sw - 8, h: 22, rx: 2, label: v === AC ? 'AC' : abbr(v), size: 10.5, fill: '#2e2e30', ink: '#ece6d4', stroke: '#1a1a1a',
+          role: 'radio', aria: 'Select ' + (v === AC ? 'accent' : vname(v)), onClick: function () { M.select(v); } });
+        selBtns[v] = b;
+        if (v !== AC) muteButton(P, M, low, { x: 200 + sw * k + 4, y: 606, w: sw - 8, h: 20, C: MC, type: function () { return v; } });
+      });
+      bankButtons(P, M, low, { C: { btn: C.key, btnInk: '#1a1a1a', edge: '#1a1a1a', on: C.orange, onInk: '#16060d', tool: '#2e2e30', toolInk: '#ece6d4' }, size: 12, toolSize: 10.5,
+        slots: { x: 200, y: 636, w: 52, h: 32, gap: 6 }, modes: { x: 30, y: 636, w: 46, h: 32, gap: 6 },
+        tools: [{ x: 680, y: 636, w: 150, h: 32 }, { x: 840, y: 636, w: 150, h: 32 }, { x: 1000, y: 636, w: 170, h: 32 }] });
+      P.text(low, 105, 630, 'VARIATION', { fill: '#ece6d4', 'font-size': 9, 'font-weight': 700, 'letter-spacing': 1 });
+      P.el('rect', { x: 200, y: 680, width: 970, height: 18, rx: 2, fill: '#2e2e30' }, low);
+      P.text(low, 212, 693, 'click a key: step on / off   ·   shift-click: accent   ·   AC: the keys set accents   ·   double-click a knob: song value', { 'text-anchor': 'start', fill: '#ece6d4', 'font-size': 10 });
+
+      var sig = '';
+      function paint() {
+        var s = M.st.sel + '|' + V909.map(function (v) { return M.present(v) ? 1 : 0; }).join('') + '|' + P.canEdit();
+        if (s === sig) return;
+        sig = s;
+        grpState.forEach(function (gs) {
+          gs.hi.setAttribute('display', (gs.grp.voices.length ? gs.grp.voices.indexOf(M.st.sel) >= 0 : M.st.sel === AC) ? 'inline' : 'none');
+          gs.grp.voices.forEach(function (v) {
+            var pres = M.present(v);
+            gs.vg[v].setAttribute('opacity', pres ? '1' : '0.3');
+            gs.adds[v].g.setAttribute('display', pres ? 'none' : 'inline');
+            gs.adds[v].setDisabled(!P.canEdit());
+          });
+        });
+        sel9.forEach(function (v) {
+          var b = selBtns[v], on = v === M.st.sel;
+          b.rect.setAttribute('fill', on ? C.orange : '#2e2e30');
+          b.txt.setAttribute('fill', on ? '#16060d' : (v === AC || M.present(v) ? '#ece6d4' : '#8a8880'));
+          b.g.setAttribute('aria-checked', on ? 'true' : 'false');
+        });
+      }
+      M.onSelect.push(function () { sig = ''; });
+      P.onUpdate(function () {
+        paint();
+        M.update();
+        var b = tempo.v, t = isNum(b) ? String(Math.round(b)) : '--';
+        if (bpmTxt.textContent !== t) bpmTxt.textContent = t;
+      });
+      return {};
+    }
+  });
+
+  // ==================================================================== synth panels (HVT-303, HVT-D, HVT-106)
+  var NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  function noteName(m) { return isNum(m) ? NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1) : '—'; }
+  function rocker(colour) {          // a two-position rocker in a black opening; the pressed half is darker
+    return function (art, on, b) {
+      var w = b.w, h = b.h;
+      sv('rect', { x: -w / 2 - 2, y: -h / 2 - 2, width: w + 4, height: h + 4, rx: 3, fill: '#050505' }, art);
+      sv('rect', { x: -w / 2, y: -h / 2, width: w, height: h, rx: 2, fill: colour, stroke: '#000', 'stroke-width': 0.8 }, art);
+      sv('rect', { x: -w / 2, y: on ? 0 : -h / 2, width: w, height: h / 2, rx: 2, fill: 'rgba(0,0,0,.38)' }, art);
+      sv('line', { x1: -w / 2 + 3, x2: w / 2 - 3, y1: on ? -h / 2 + 4 : h / 2 - 4, y2: on ? -h / 2 + 4 : h / 2 - 4, stroke: 'rgba(255,255,255,.55)', 'stroke-width': 1.4 }, art);
+    };
+  }
+  function lampButton(fill, ink, label, led) {   // a push button with a lamp, lit when on
+    return function (art, on, b) {
+      sv('rect', { x: -b.w / 2, y: -b.h / 2, width: b.w, height: b.h, rx: 2, fill: fill, stroke: '#111' }, art);
+      var t = sv('text', { x: 0, y: 4, 'text-anchor': 'middle', fill: ink, 'font-size': 10, 'font-weight': 700 }, art); t.textContent = label;
+      sv('circle', { cx: 0, cy: -b.h / 2 - 7, r: 3.4, fill: on ? (led || '#ff3b22') : '#3a1510' }, art);
+    };
+  }
+
+  // a keyboard strip that auditions the window's track through host.audition(track, {midi, vel, dur}) when the host has it
+  // (Shift plays a major triad on a poly). Without the hook the keys are drawn inert and aria-hidden. o: {x, y, w, h, lo, hi, dur,
+  // chord, white, black, onNotes(midis, e) (a step sequencer's entry, called on every press even without audition), lit colour}.
+  // Returns {g, shift(semitones) (moves every key, data-midi follows), offset(), mark([midi]) (keys drawn lit)}.
+  function keyboard(P, parent, o) {
+    var host = P.host, aud = typeof host.audition === 'function', live = aud || !!o.onNotes, WHITE = [0, 2, 4, 5, 7, 9, 11], m, wi = 0, nw = 0, blk = [];
+    var off = 0, lit = {}, recs = [];
+    for (m = o.lo; m <= o.hi; m++) if (WHITE.indexOf(m % 12) >= 0) nw++;
+    var ww = o.w / nw, kb = P.g(parent, { 'class': 'pn-keys', role: live ? 'group' : null, 'aria-label': live ? 'Audition keyboard' : null, 'aria-hidden': live ? null : 'true' });
+    function paint(rc) { rc.r.setAttribute('fill', rc.down ? '#f09a5c' : lit[rc.m + off] ? (o.lit || '#e2742a') : rc.fill); }
+    function bind(r, mm, fill) {
+      var rc = { r: r, m: mm, fill: fill, down: false };
+      recs.push(rc);
+      r.setAttribute('data-midi', mm);
+      if (!live) return;
+      r.setAttribute('role', 'button'); r.setAttribute('aria-label', 'Play ' + noteName(mm)); r.setAttribute('cursor', 'pointer');
+      P.listen(r, 'pointerdown', function (e) {
+        var n0 = mm + off, notes = (o.chord && e && e.shiftKey) ? [n0, n0 + 4, n0 + 7] : [n0], okAll = true;
+        if (aud) notes.forEach(function (n) { var ok = safe(function () { return host.audition(P.device.track, { midi: n, vel: 0.85, dur: o.dur || 0.4 }); }, false); okAll = okAll && !!ok; });
+        else okAll = false;
+        P.state.lastAudition = { midi: notes, ok: okAll };
+        rc.down = true; paint(rc);
+        if (o.onNotes) safe(function () { o.onNotes(notes, e || {}); });
+      });
+      var up = function () { rc.down = false; paint(rc); };
+      P.listen(r, 'pointerup', up); P.listen(r, 'pointerleave', up);
+    }
+    for (m = o.lo; m <= o.hi; m++) {
+      if (WHITE.indexOf(m % 12) >= 0) {
+        var r = P.el('rect', { x: f2(o.x + wi * ww), y: o.y, width: f2(ww - 1.5), height: o.h, rx: 2, fill: o.white || '#ece8dc', stroke: '#222' }, kb);
+        bind(r, m, o.white || '#ece8dc'); wi++;
+      } else blk.push([m, o.x + wi * ww - ww * 0.3]);
+    }
+    blk.forEach(function (b) {
+      var r = P.el('rect', { x: f2(b[1]), y: o.y, width: f2(ww * 0.6), height: o.h * 0.62, rx: 2, fill: o.black || '#151515', stroke: '#000' }, kb);
+      bind(r, b[0], o.black || '#151515');
+    });
+    return {
+      g: kb,
+      offset: function () { return off; },
+      shift: function (d) {
+        var n = clamp(off + d, -o.lo + 12, 108 - o.hi);
+        if (n === off) return off;
+        off = n;
+        recs.forEach(function (rc) { rc.r.setAttribute('data-midi', rc.m + off); if (live) rc.r.setAttribute('aria-label', 'Play ' + noteName(rc.m + off)); paint(rc); });
+        return off;
+      },
+      mark: function (list) {
+        var nl = {}, same = true, k;
+        (list || []).forEach(function (n) { nl[n] = true; });
+        for (k in nl) if (!lit[k]) same = false;
+        for (k in lit) if (!nl[k]) same = false;
+        if (same) return;
+        lit = nl; recs.forEach(paint);
+      }
+    };
+  }
+
+  // ------------------------------------------------------------------ HVT-303
+  var C303 = { cheek: '#121212', panel: '#c7cace', panelLo: '#b4b7bc', ink: '#161616', orange: '#e8671a', led: '#ff4a1a', ledOff: '#55301c',
+    key: '#2a2a2c', keyInk: '#ecebe6', white: '#e9e9e4', black: '#1c1c1e', btn: '#3a3a3d' };
+  // Two arrangements of the same controls, after P1's second pass (P1-303-second-pass.md section 3, the procedure card's
+  // front-panel diagram): band 1 = waveform switch, then the six knobs TUNING..ACCENT; band 2 = TEMPO at the far left,
+  // VOLUME at the far right, the model legend between; band 3 = the keys on a black bar: RUN/STOP and CLEAR at the left,
+  // the one-octave key row, then DOWN/UP, ACCENT, SLIDE, the time keys (here TIE and REST) and BACK above WRITE/NEXT at
+  // the far right. Not drawn: the track/pattern-group and mode rotaries, D.C., BAR RESET, FUNCTION, the jacks (this app has
+  // no tracks, groups or modes). Added for a screen: the sixteen step keys and the pattern transpose in band 2.
+  var L303 = {
+    landscape: { w: 1200, h: 640, band2: [206, 300], band3: 300, bar: [30, 456, 1140, 178], word: [56, 40, 15], model: [760, 268, 36],
+      wave: [92, 142], sep1: 162, sep2: 920, knobs: [[240, 142], [360, 142], [480, 142], [600, 142], [720, 142], [840, 142]], slide: [1000, 142],
+      tempo: [86, 253, 30], vol: [1112, 253, 30], trans: { x0: 236, y: 236, w: 56, h: 38, pitch: 62, legend: [359, 226] },
+      info: [40, 312, 1120, 28, 12.5], keys: { x0: 160, pitch: 980 / 16, w: 50, h: 46, rows: [380], per: 16 },
+      notes: { x0: 160, y: 470, wk: 56, h: 150, bw: 34, bh: 92 },
+      btn: { clear: [40, 470, 100, 34], run: [40, 542, 100, 72], tie: [640, 478, 70, 40], rest: [722, 478, 70, 40], back: [1060, 478, 100, 40],
+             down: [640, 556, 70, 46], up: [722, 556, 70, 46], accent: [804, 556, 70, 46], slide: [886, 556, 70, 46], next: [1060, 532, 100, 72] },
+      legends: [['TIME', 716, 472], ['OCTAVE', 716, 550], ['STEP', 1110, 472]], oct: [990, 600], hint: [990, 620] },
+    portrait: { w: 560, h: 1188, band2: [352, 470], band3: 470, bar: [4, 784, 552, 398], word: [24, 40, 14], model: [540, 42, 26],
+      wave: [70, 152], sep1: 0, sep2: 0, knobs: [[210, 152], [350, 152], [490, 152], [70, 292], [210, 292], [350, 292]], slide: [490, 292],
+      tempo: [56, 412, 28], vol: [504, 412, 28], trans: { x0: 166, y: 396, w: 54, h: 44, pitch: 59, legend: [282, 384] },
+      info: [8, 480, 544, 34, 13], keys: { x0: 8, pitch: 68, w: 62, h: 62, rows: [560, 684], per: 8 },
+      notes: { x0: 8, y: 798, wk: 68, h: 170, bw: 42, bh: 104 },
+      btn: { clear: [8, 992, 100, 56], tie: [117, 992, 100, 56], rest: [226, 992, 100, 56], back: [335, 992, 100, 56], next: [444, 992, 108, 56],
+             down: [8, 1082, 100, 56], up: [117, 1082, 100, 56], accent: [226, 1082, 100, 56], slide: [335, 1082, 100, 56], run: [444, 1082, 108, 56] },
+      legends: [], oct: [140, 1166], hint: [380, 1166] }
+  };
+  function tiesOf(cells) {              // cont[i] = index of the note whose len runs through rest step i, else null
+    var cont = [], end = -1, from = -1;
+    for (var i = 0; i < cells.length; i++) {
+      var c = cells[i];
+      if (c && isNum(c.note)) { from = i; end = i + Math.max(1, Math.round(c.len || 1)) - 1; cont.push(null); }
+      else if (!c && i <= end) cont.push(from);
+      else { cont.push(null); if (c) end = -1; }
+    }
+    return cont;
+  }
+  Panels.define('hvt303', {
+    label: 'HVT-303 bass line synthesizer', size: { w: 1200, h: 640 }, win: { w: 1040 },
+    layouts: { landscape: { w: 1200, h: 640 }, portrait: { w: 560, h: 1188 } },
+    match: function (d) { return d.kind === 'instrument' && d.type === 'tb303'; },
+    build: function (P) {
+      var svg = P.svg, C = C303, host = P.host, L = L303[P.layout === 'portrait' ? 'portrait' : 'landscape'], W = L.w, H = L.h, wide = W > 600;
+      var px = wide ? 30 : 4, pw = W - 2 * px;
+      P.el('rect', { x: 0, y: 0, width: W, height: H, rx: 14, fill: C.cheek }, svg);
+      P.el('rect', { x: px, y: 6, width: pw, height: L.band2[0] - 6, fill: C.panel }, svg);                       // band 1
+      P.el('rect', { x: px, y: L.band2[0], width: pw, height: L.band2[1] - L.band2[0], fill: '#b2b5ba' }, svg);   // band 2
+      P.el('rect', { x: px, y: L.band3, width: pw, height: H - L.band3 - 6, fill: C.panelLo }, svg);               // band 3
+      for (var gy = 10; gy < H - 8; gy += 4) P.el('line', { x1: px, x2: W - px, y1: gy, y2: gy, stroke: 'rgba(255,255,255,.06)', 'stroke-width': 1 }, svg);   // brushed metal
+      P.el('line', { x1: px, x2: W - px, y1: L.band2[0], y2: L.band2[0], stroke: '#8d9095', 'stroke-width': 1.2 }, svg);
+      P.el('line', { x1: px, x2: W - px, y1: L.band3, y2: L.band3, stroke: '#8d9095', 'stroke-width': 1.2 }, svg);
+      P.el('rect', { x: L.bar[0], y: L.bar[1], width: L.bar[2], height: L.bar[3], rx: 4, fill: '#161618' }, svg);   // the black bar behind the keys
+      P.text(svg, L.word[0], L.word[1], 'HAVANTECHNO', { 'text-anchor': 'start', fill: '#c8336f', 'font-size': L.word[2], 'font-weight': 800, 'letter-spacing': 4 });
+      P.text(svg, L.model[0], L.model[1], 'HVT-303', { 'text-anchor': wide ? 'middle' : 'end', fill: C.ink, 'font-size': L.model[2], 'font-weight': 800, 'font-style': 'italic' });
+      if (L.sep1) { P.el('line', { x1: L.sep1, x2: L.sep1, y1: 60, y2: 196, stroke: C.ink, 'stroke-width': 1 }, svg); P.el('line', { x1: L.sep2, x2: L.sep2, y1: 60, y2: 196, stroke: C.ink, 'stroke-width': 1 }, svg); }
+
+      // band 1: waveform switch, the six knobs; the engine's slide time as a trimmer (the original has no such knob)
+      var ks = { skirt: '#161616', cap: '#2e2e30', capR: 0.7, pointer: '#f4f4f0', pointerW: 2.8, ticks: 11, tick: C.ink, label: C.ink, edge: '#000', numSize: 8.5 };
+      var N10 = ['0', '2', '4', '6', '8', '10'], wx = L.wave[0], wy = L.wave[1];
+      P.text(svg, wx - 4, wy - 48, 'WAVEFORM', { fill: C.ink, 'font-size': 10.5, 'font-weight': 700 });
+      var waves = P.options(null, 'wave', ['saw', 'square']);
+      P.text(svg, wx - 22, wy - 16, 'SAW', { 'text-anchor': 'end', fill: C.ink, 'font-size': 9.5, 'font-weight': 600 });
+      P.text(svg, wx - 22, wy + 18, 'SQR', { 'text-anchor': 'end', fill: C.ink, 'font-size': 9.5, 'font-weight': 600 });
+      P.toggle(svg, { x: wx, y: wy, w: 14, h: 40, param: 'wave', values: [waves[0], waves[1]], label: 'Waveform saw / square',
+        draw: function (art, on) {
+          sv('rect', { x: -9, y: -24, width: 18, height: 48, rx: 3, fill: '#0b0b0b', stroke: '#555' }, art);
+          sv('rect', { x: -7, y: on ? 2 : -22, width: 14, height: 20, rx: 2, fill: '#d9d9d4', stroke: '#222' }, art);
+        } });
+      var row = [['TUNING', 'tune'], ['CUT OFF FREQ', 'cutoff'], ['RESONANCE', 'resonance'], ['ENV MOD', 'envMod'], ['DECAY', 'decay'], ['ACCENT', 'accent']];
+      row.forEach(function (k, i) {
+        P.knob(svg, { x: L.knobs[i][0], y: L.knobs[i][1], r: 30, param: k[1], label: k[0].charAt(0) + k[0].slice(1).toLowerCase(), caption: k[0], captionY: -58, captionSize: 11, style: ks, numbers: N10 });
+      });
+      P.knob(svg, { x: L.slide[0], y: L.slide[1], r: 16, param: 'slideTime', label: 'Slide time', caption: 'SLIDE TIME', captionY: -40, captionSize: 9.5, kind: 'trim',
+        style: { skirt: '#9a9a96', edge: '#3a3a38', ticks: 0, slot: true, pointer: '#2a2a28', label: C.ink } });
+
+      // band 2: tempo far left, volume far right (as on the card), the pattern transpose between
+      var T = L.tempo;
+      var tempo = P.knob(svg, { x: T[0], y: T[1], r: T[2], label: 'Tempo', value: P.tempoValue([40, 300]), kind: 'tempo', style: Object.assign({}, ks, { numSize: 8 }) });
+      P.text(svg, T[0] + T[2] + 14, T[1] - 6, 'TEMPO', { 'text-anchor': 'start', fill: C.ink, 'font-size': 10.5, 'font-weight': 700 });
+      var bpm = P.text(svg, T[0] + T[2] + 14, T[1] + 12, '', { 'text-anchor': 'start', fill: C.ink, 'font-size': 12, 'font-weight': 700, 'class': 'pn-bpm' });
+      var V = L.vol;
+      P.knob(svg, { x: V[0], y: V[1], r: V[2], param: 'level', label: 'Volume', style: ks });
+      P.text(svg, V[0] - V[2] - 14, V[1] + 4, 'VOLUME', { 'text-anchor': 'end', fill: C.ink, 'font-size': 10.5, 'font-weight': 700 });
+      var TR = L.trans;
+      P.text(svg, TR.legend[0], TR.legend[1], 'TRANSPOSE PATTERN', { fill: C.ink, 'font-size': 10, 'font-weight': 700 });
+      var tbtn = [['−OCT', -12, 'Transpose the whole pattern an octave down'], ['−1', -1, 'Transpose the whole pattern a semitone down'], ['+1', 1, 'Transpose the whole pattern a semitone up'], ['+OCT', 12, 'Transpose the whole pattern an octave up']].map(function (t, j) {
+        return P.button(svg, { x: TR.x0 + j * TR.pitch, y: TR.y, w: TR.w, h: TR.h, rx: 4, label: t[0], size: 11, fill: C.btn, ink: C.keyInk, aria: t[2], cls: 'pn-trans', onClick: function () { transpose(t[1]); } });
+      });
+
+      // band 3: the info line, the sixteen step keys (a screen's addition), then the keys on the black bar
+      var st = { sel: 0, oct: 36, sig: '', vw: null, cur: -2, playing: null, cont: [] };
+      P.el('rect', { x: L.info[0], y: L.info[1], width: L.info[2], height: L.info[3], rx: 2, fill: '#2b2b2d' }, svg);
+      var info = P.text(svg, L.info[0] + 12, L.info[1] + L.info[3] / 2 + L.info[4] * 0.36, '', { 'text-anchor': 'start', fill: '#f0efe9', 'font-size': L.info[4], 'font-weight': 600, 'class': 'pn-info' });
+      var K = L.keys, keys = [];
+      for (var i = 0; i < STEPS; i++) (function (i) {
+        var ky = K.rows[Math.floor(i / K.per)], kx = K.x0 + K.pitch * (i % K.per) + (K.pitch - K.w) / 2, cx = kx + K.w / 2;
+        var nm = P.text(svg, cx, ky - 24, '', { fill: C.ink, 'font-size': 10.5, 'font-weight': 700 });
+        var led = P.el('circle', { cx: cx, cy: ky - 10, r: 4, fill: C.ledOff }, svg);
+        var b = P.button(svg, { x: kx, y: ky, w: K.w, h: K.h, rx: 4, fill: C.key, cls: 'pn-key', label: String(i + 1), size: 12, ink: C.keyInk, aria: 'Step ' + (i + 1),
+          onClick: function (e) {
+            st.sel = i; st.sig = '';
+            if (e && e.shiftKey) cmd('accent'); else if (e && e.altKey) cmd('slide');
+          } });
+        var tie = P.el('rect', { x: kx - (K.pitch - K.w) / 2 - 2, y: ky + K.h / 2 - 3, width: (K.pitch - K.w) + 4, height: 6, rx: 3, fill: C.orange, display: 'none', 'pointer-events': 'none' }, svg);
+        var sel = P.el('rect', { x: kx - 3, y: ky - 3, width: K.w + 6, height: K.h + 6, rx: 6, fill: 'none', stroke: C.orange, 'stroke-width': 2.6, display: 'none', 'pointer-events': 'none' }, svg);
+        var cur = P.el('rect', { x: kx + 4, y: ky + K.h + 4, width: K.w - 8, height: 3, fill: '#ffffff', display: 'none' }, svg);
+        var ma = P.text(svg, cx - 10, ky + K.h + 20, 'A', { fill: '#7a7c80', 'font-size': 10, 'font-weight': 800 });
+        var ms = P.text(svg, cx + 10, ky + K.h + 20, 'S', { fill: '#7a7c80', 'font-size': 10, 'font-weight': 800 });
+        keys.push({ b: b, nm: nm, led: led, sel: sel, cur: cur, ma: ma, ms: ms, tie: tie });
+      })(i);
+
+      var N = L.notes, wk = N.wk, wx0 = N.x0, lowY = N.y, whites = [0, 2, 4, 5, 7, 9, 11, 12], blacks = [[1, 0], [3, 1], [6, 3], [8, 4], [10, 5]];
+      var noteKeys = [];
+      whites.forEach(function (semi, j) {
+        var b = P.button(svg, { x: wx0 + j * wk, y: lowY, w: wk - 4, h: N.h, rx: 3, fill: C.white, aria: 'Note ' + NOTE_NAMES[semi % 12] + (semi === 12 ? ' (octave up)' : ''), cls: 'pn-note',
+          onClick: function () { setNote(semi); } });
+        P.text(b.g, (wk - 4) / 2, N.h - 10, NOTE_NAMES[semi % 12], { fill: C.ink, 'font-size': 11, 'font-weight': 700 });
+        noteKeys.push({ semi: semi, b: b, fill: C.white });
+      });
+      blacks.forEach(function (bk) {
+        var b = P.button(svg, { x: wx0 + (bk[1] + 1) * wk - N.bw / 2 - 2, y: lowY, w: N.bw, h: N.bh, rx: 3, fill: C.black, aria: 'Note ' + NOTE_NAMES[bk[0]], cls: 'pn-note',
+          onClick: function () { setNote(bk[0]); } });
+        noteKeys.push({ semi: bk[0], b: b, fill: '#2a2a2c' });
+      });
+      var FN = { clear: ['CLEAR', 'Clear the whole pattern'], run: ['RUN / STOP', 'Start or stop the song'], tie: ['TIE', 'Tie the selected step to the note before it (press again to untie)'],
+        rest: ['REST', 'Make the selected step a rest'], back: ['BACK', 'Select the previous step'], next: ['NEXT', 'Select the next step'],
+        down: ['DOWN', 'Selected step an octave down'], up: ['UP', 'Selected step an octave up'], accent: ['ACCENT', 'Accent on the selected step'], slide: ['SLIDE', 'Slide from the selected step'] };
+      var fbtn = {};
+      Object.keys(FN).forEach(function (k) {
+        var r = L.btn[k];
+        var b = P.button(svg, { x: r[0], y: r[1], w: r[2], h: r[3], rx: 4, label: FN[k][0], size: 11, fill: k === 'next' || k === 'run' ? '#55575c' : C.btn, ink: C.keyInk, aria: FN[k][1], cls: 'pn-fn',
+          onClick: k === 'run' ? P.transportToggle : function () { cmd(k); } });
+        if (k === 'accent' || k === 'slide' || k === 'tie' || k === 'run') b.led = P.el('circle', { cx: r[0] + r[2] - 10, cy: r[1] + 10, r: 4, fill: C.ledOff }, svg);
+        fbtn[k] = b;
+      });
+      fbtn.run.setDisabled(!P.canTransport());
+      L.legends.forEach(function (lg) { P.text(svg, lg[1], lg[2], lg[0], { fill: '#cfd0d2', 'font-size': 9, 'font-weight': 700, 'letter-spacing': 1 }); });
+      var octTxt = P.text(svg, L.oct[0], L.oct[1], '', { fill: '#e8e8e4', 'font-size': 11, 'font-weight': 700 });
+      P.text(svg, L.hint[0], L.hint[1], wide ? 'click a step, then a note' : 'tap a step, then a note', { fill: '#a8a9ad', 'font-size': 10 });
+
+      function cellAt(i) { return st.vw ? st.vw.cells[i] : null; }
+      function setNote(semi) {
+        var c = cellAt(st.sel), base = c && isNum(c.note) ? Math.floor(c.note / 12) * 12 : st.oct, n = clamp(base + semi, 0, 127), i = st.sel;
+        st.oct = base;
+        P.editCells(null, function (cells) {
+          var cont = tiesOf(cells), out = [];
+          if (cont[i] != null) out.push([cont[i], { len: i - cont[i] > 1 ? i - cont[i] : null }]);      // a note on a tied step ends the tie there
+          out.push([i, cells[i] ? { note: n } : { note: n, vel: DEFAULT_VEL, len: 1 }]);
+          return out;
+        });
+        st.sig = '';
+      }
+      function transpose(d) {
+        P.editCells(null, function (cells) {
+          var out = [];
+          cells.forEach(function (c, i) { if (c && isNum(c.note)) out.push([i, { note: clamp(c.note + d, 0, 127) }]); });
+          return out;
+        });
+        st.oct = clamp(st.oct + d - (d % 12), 0, 120);
+        st.sig = '';
+      }
+      function cmd(k) {
+        var c = cellAt(st.sel), i = st.sel;
+        if (k === 'next' || k === 'back') { st.sel = (st.sel + (k === 'next' ? 1 : STEPS - 1)) % STEPS; st.sig = ''; return; }
+        if (k === 'down' || k === 'up') {
+          var d = k === 'up' ? 12 : -12;
+          if (c && isNum(c.note)) P.editCell(null, i, function (cell) { return cell && isNum(cell.note) ? { note: clamp(cell.note + d, 0, 127) } : undefined; });
+          else st.oct = clamp(st.oct + d, 0, 120);
+        } else if (k === 'accent' || k === 'slide') {
+          var f = k === 'accent' ? 'acc' : 'slide';
+          P.editCell(null, i, function (cell) { if (!cell) return undefined; var o = {}; o[f] = cell[f] ? null : true; return o; });
+        } else if (k === 'rest') {
+          P.editCells(null, function (cells) {
+            var cont = tiesOf(cells);
+            if (cont[i] != null) return [[cont[i], { len: i - cont[i] > 1 ? i - cont[i] : null }]];     // a rest inside a tie ends the tie before it
+            return cells[i] ? [[i, null]] : [];
+          });
+        } else if (k === 'tie') {
+          P.editCells(null, function (cells) {
+            var cont = tiesOf(cells);
+            if (cont[i] != null) return [[cont[i], { len: i - cont[i] > 1 ? i - cont[i] : null }]];     // already tied: untie from here
+            if (i === 0) return [];
+            var from = (cells[i - 1] && isNum(cells[i - 1].note)) ? i - 1 : cont[i - 1];
+            if (from == null) return [];
+            var out = [[from, { len: i - from + 1 }]];
+            if (cells[i]) out.push([i, null]);
+            return out;
+          });
+        } else if (k === 'clear') {
+          P.editCells(null, function (cells) { var out = []; cells.forEach(function (c2, j) { if (c2) out.push([j, null]); }); return out; });
+        }
+        st.sig = '';
+      }
+      P.onUpdate(function () {
+        if (P.state.frame % 4 === 0 || st.sig === '') st.vw = P.stepView(null);
+        var vw = st.vw, edit = P.canEdit() && !!vw;
+        var sig = (vw ? vw.si + ':' + vw.variant + ':' + vw.bar + ':' + JSON.stringify(vw.cells) : 'none') + '|' + st.sel + '|' + st.oct + '|' + edit;
+        if (sig !== st.sig) {
+          st.sig = sig;
+          var cells = vw ? vw.cells : [], cont = tiesOf(cells);
+          st.cont = cont;
+          keys.forEach(function (k, i) {
+            var c = cells[i] || null, note = c && isNum(c.note) ? c.note : null, tied = cont[i] != null;
+            k.nm.textContent = c ? noteName(note != null ? note : st.oct) : tied ? 'tie' : 'rest';
+            k.nm.setAttribute('fill', c ? C.ink : tied ? C.orange : '#6c6e72');
+            k.nm.setAttribute('font-weight', c ? '700' : '500');
+            k.led.setAttribute('fill', c ? C.led : tied ? '#a8471a' : C.ledOff);
+            k.tie.setAttribute('display', tied ? 'inline' : 'none');
+            k.sel.setAttribute('display', i === st.sel ? 'inline' : 'none');
+            k.ma.setAttribute('fill', c && c.acc ? C.orange : '#8a8c90');
+            k.ms.setAttribute('fill', c && c.slide ? C.orange : '#8a8c90');
+            k.b.g.setAttribute('aria-pressed', i === st.sel ? 'true' : 'false');
+            k.b.g.setAttribute('aria-label', 'Step ' + (i + 1) + ': ' + (c ? noteName(note) + (c.acc ? ', accent' : '') + (c.slide ? ', slide' : '') + (c.len > 1 ? ', tied over ' + (Math.round(c.len) - 1) : '') : tied ? 'tie from step ' + (cont[i] + 1) : 'rest') + (i === st.sel ? ' (selected)' : ''));
+          });
+          var c = cellAt(st.sel), selNote = c && isNum(c.note) ? c.note : null, selTied = cont[st.sel] != null;
+          noteKeys.forEach(function (nk) {
+            var lit = selNote != null && (selNote % 12) === (nk.semi % 12) && nk.semi !== 12;
+            nk.b.rect.setAttribute('fill', lit ? '#f09a5c' : nk.fill);
+            nk.b.setDisabled(!edit);
+          });
+          fbtn.accent.led.setAttribute('fill', c && c.acc ? C.led : C.ledOff);
+          fbtn.slide.led.setAttribute('fill', c && c.slide ? C.led : C.ledOff);
+          fbtn.tie.led.setAttribute('fill', selTied ? C.led : C.ledOff);
+          ['down', 'up', 'accent', 'slide', 'rest', 'tie', 'clear'].forEach(function (k) { fbtn[k].setDisabled(!edit); });
+          ['back', 'next'].forEach(function (k) { fbtn[k].setDisabled(false); });
+          tbtn.forEach(function (b) { b.setDisabled(!edit); });
+          octTxt.textContent = 'OCTAVE ' + (Math.floor((selNote != null ? selNote : st.oct) / 12) - 1);
+          var t = 'STEP ' + (st.sel + 1) + '  ·  ' + (c ? noteName(selNote) + (c.acc ? '  ·  accent' : '') + (c.slide ? '  ·  slide' : '') + (c.len > 1 ? '  ·  tied over ' + (Math.round(c.len) - 1) : '') : selTied ? 'tie from step ' + (cont[st.sel] + 1) : 'rest') + '   —   ';
+          if (!vw) t += P.canEdit() ? 'no pattern' : 'step editing is in the main window';
+          else t += 'section ' + vw.section + (vw.variant ? '  ·  pattern ' + vw.variant + (vw.bars > 1 ? '  ·  bar ' + (vw.bar + 1) + '/' + vw.bars : '') : '  ·  not playing here yet');
+          info.textContent = t;
+        }
+        var step = P.playStep();
+        if (step !== st.cur) { st.cur = step; keys.forEach(function (k, i) { k.cur.setAttribute('display', i === step ? 'inline' : 'none'); k.led.setAttribute('stroke', i === step ? '#fff' : 'none'); }); }
+        var pl = step >= 0 || !!safe(function () { return host.transport.playing; }, false);
+        if (pl !== st.playing) { st.playing = pl; fbtn.run.led.setAttribute('fill', pl ? C.led : C.ledOff); }
+        var bt = isNum(tempo.v) ? (Math.round(tempo.v * 10) / 10).toFixed(1) + ' BPM' : '';
+        if (bpm.textContent !== bt) bpm.textContent = bt;
+      });
+      return {};
+    }
+  });
+
+  // ------------------------------------------------------------------ step sequencer for the HVT-D (mono) and HVT-106 (poly)
+  // On the panel in the manner of current analogue monos: up to 32 steps (the variant's bars, 1 or 2) shown 16 at a time with a
+  // PAGE key; per step a note (mono) or a chord of up to six notes (poly: cell.notes, cell.note = the lowest), rest, tie (the note
+  // before gets a longer len), accent (vel 1), glide (cell.slide) and ratchet (cell.rep 2..4) on the mono, COPY (chord memory:
+  // the step's chord to the next step) on the poly; transpose, clear, length; REC makes the panel's keyboard write the selected
+  // step (the solo pages pass opts.rec; a DAW window starts with it off). Every edit is one ed.group = one undo entry, then commit.
+  var CHORDS = [[[0, 4, 7], ''], [[0, 3, 7], 'm'], [[0, 4, 7, 10], '7'], [[0, 4, 7, 11], 'maj7'], [[0, 3, 7, 10], 'm7'], [[0, 2, 7], 'sus2'],
+    [[0, 5, 7], 'sus4'], [[0, 3, 6], 'dim'], [[0, 4, 8], 'aug'], [[0, 4, 7, 9], '6'], [[0, 3, 7, 9], 'm6'], [[0, 2, 4, 7, 10], '9'],
+    [[0, 2, 3, 7, 10], 'm9'], [[0, 2, 4, 7, 11], 'maj9'], [[0, 2, 4, 7], 'add9'], [[0, 3, 6, 10], 'm7b5'], [[0, 3, 6, 9], 'dim7'],
+    [[0, 5, 7, 10], '7sus4'], [[0, 2, 3, 7], 'madd9'], [[0, 7], '5']];
+  function chordName(notes) {
+    if (!notes || !notes.length) return '';
+    var ns = notes.slice().sort(function (a, b) { return a - b; }), bass = ((ns[0] % 12) + 12) % 12, pcs = [];
+    ns.forEach(function (n) { var p = ((n % 12) + 12) % 12; if (pcs.indexOf(p) < 0) pcs.push(p); });
+    if (pcs.length === 1) return noteName(ns[0]) + (ns.length > 1 ? ' oct' : '');
+    for (var pass = 0; pass < 2; pass++) for (var i = 0; i < pcs.length; i++) {      // pass 1: the fifth may be left out
+      var r = pcs[i], rel = pcs.map(function (p) { return (p - r + 12) % 12; });
+      if (pass && rel.indexOf(7) < 0) rel.push(7); else if (pass) continue;
+      var set = rel.sort(function (a, b) { return a - b; }).join();
+      for (var k = 0; k < CHORDS.length; k++) if (CHORDS[k][0].join() === set) return NOTE_NAMES[r] + CHORDS[k][1] + (r !== bass ? '/' + NOTE_NAMES[bass] : '');
+    }
+    return noteName(ns[0]) + '+' + (pcs.length - 1);
+  }
+  function notesOf(c) { return !c ? [] : (c.notes && c.notes.length ? c.notes.slice() : isNum(c.note) ? [c.note] : []); }
+  function synthSeq(P, cfg) {
+    var host = P.host, poly = !!cfg.poly, B = cfg.box, C = cfg.colours, svg = P.svg;
+    var st = { sel: 0, page: 0, rec: !!P.opts.rec, sig: '', vw: null, cur: -2, playing: null, oct: cfg.oct || 48, msg: '' };
+    var g = P.g(svg, { 'class': 'pn-seq', 'data-seq': poly ? 'poly' : 'mono' });
+    P.el('rect', { x: B.x, y: B.y, width: B.w, height: B.h, rx: 4, fill: C.bed, stroke: '#000' }, g);
+    P.el('rect', { x: B.x + 6, y: B.y + 6, width: B.w - 12, height: 26, rx: 2, fill: C.info }, g);
+    var info = P.text(g, B.x + 16, B.y + 23, '', { 'text-anchor': 'start', fill: C.infoInk, 'font-size': 12.5, 'font-weight': 600, 'class': 'pn-info' });
+    var per = B.per, rows = 16 / per, pitch = (B.w - 12) / per, kw = Math.min(pitch - 8, 96), kh = B.keyH, rowH = 36 + kh + 22, keys = [];
+    for (var k = 0; k < 16; k++) (function (k) {
+      var ky = B.y + 38 + Math.floor(k / per) * rowH + 30, kx = B.x + 6 + pitch * (k % per) + (pitch - kw) / 2, cx = kx + kw / 2;
+      var nm = P.text(g, cx, ky - 18, '', { fill: C.ink, 'font-size': poly ? 11 : 11.5, 'font-weight': 700 });
+      var led = P.el('circle', { cx: cx, cy: ky - 7, r: 3.6, fill: C.ledOff }, g);
+      var b = P.button(g, { x: kx, y: ky, w: kw, h: kh, rx: 4, fill: k % 4 === 0 ? C.key4 : C.key, cls: 'pn-key pn-seqkey', label: '', size: 12, ink: C.keyInk, aria: 'Step',
+        onClick: function (e) { st.sel = st.page * 16 + k; st.sig = ''; if (e && e.shiftKey && !poly) cmd('accent'); } });
+      var num = P.text(b.g, kw / 2, kh / 2 + 4.5, '', { fill: C.keyInk, 'font-size': 12, 'font-weight': 700 });
+      var tie = P.el('rect', { x: kx - (pitch - kw) / 2 - 2, y: ky + kh / 2 - 3, width: (pitch - kw) + 4, height: 6, rx: 3, fill: C.hot, display: 'none', 'pointer-events': 'none' }, g);
+      var sel = P.el('rect', { x: kx - 3, y: ky - 3, width: kw + 6, height: kh + 6, rx: 6, fill: 'none', stroke: C.hot, 'stroke-width': 2.6, display: 'none', 'pointer-events': 'none' }, g);
+      var cur = P.el('rect', { x: kx + 4, y: ky + kh + 3, width: kw - 8, height: 3, fill: '#ffffff', display: 'none' }, g);
+      var fl = P.text(g, cx, ky + kh + 17, '', { fill: C.flag, 'font-size': 9.5, 'font-weight': 800, 'letter-spacing': 1 });
+      keys.push({ b: b, nm: nm, led: led, sel: sel, cur: cur, tie: tie, fl: fl, num: num });
+    })(k);
+    // function keys: [cmd, label, aria]
+    var FN = poly
+      ? [['rec', 'REC', 'Record: the keyboard writes the selected step'], ['back', 'BACK', 'Select the previous step'], ['next', 'NEXT', 'Select the next step'],
+         ['rest', 'REST', 'Make the selected step a rest'], ['tie', 'TIE', 'Tie the selected step to the chord before it (press again to untie)'],
+         ['copy', 'COPY ▸', 'Copy the selected chord to the next step'], ['page', 'PAGE', 'Show steps 1 to 16 or 17 to 32'], ['length', 'LENGTH', 'Pattern length 16 or 32 steps'],
+         ['t-12', '−OCT', 'Transpose the whole pattern an octave down'], ['t-1', '−1', 'Transpose the whole pattern a semitone down'], ['t1', '+1', 'Transpose the whole pattern a semitone up'],
+         ['t12', '+OCT', 'Transpose the whole pattern an octave up'], ['clear', 'CLEAR', 'Clear the whole pattern'], ['run', 'RUN / STOP', 'Start or stop the song']]
+      : [['rec', 'REC', 'Record: the keyboard writes the selected step'], ['back', 'BACK', 'Select the previous step'], ['next', 'NEXT', 'Select the next step'],
+         ['rest', 'REST', 'Make the selected step a rest'], ['tie', 'TIE', 'Tie the selected step to the note before it (press again to untie)'],
+         ['accent', 'ACCENT', 'Accent on the selected step'], ['glide', 'GLIDE', 'Glide from the selected step into the next note'], ['ratchet', 'RATCHET', 'Ratchet the selected step: 2, 3, 4 repeats, then off'],
+         ['page', 'PAGE', 'Show steps 1 to 16 or 17 to 32'], ['length', 'LENGTH', 'Pattern length 16 or 32 steps'],
+         ['t-12', '−OCT', 'Transpose the whole pattern an octave down'], ['t-1', '−1', 'Transpose the whole pattern a semitone down'], ['t1', '+1', 'Transpose the whole pattern a semitone up'],
+         ['t12', '+OCT', 'Transpose the whole pattern an octave up'], ['clear', 'CLEAR', 'Clear the whole pattern'], ['run', 'RUN / STOP', 'Start or stop the song']];
+    var cols = B.btnCols, bp = (B.w - 12) / cols, bw = bp - 8, by0 = B.y + 38 + rows * rowH + 4, fb = {};
+    FN.forEach(function (f, i) {
+      var bx = B.x + 6 + bp * (i % cols) + 4, byy = by0 + Math.floor(i / cols) * (B.btnH + 10);
+      var b = P.button(g, { x: bx, y: byy, w: bw, h: B.btnH, rx: 4, label: f[1], size: B.btnSize || 10.5, fill: f[0] === 'run' || f[0] === 'rec' ? C.btnHi : C.btn, ink: C.btnInk || C.keyInk, aria: f[2], cls: 'pn-fn',
+        onClick: f[0] === 'run' ? P.transportToggle : function () { cmd(f[0]); } });
+      if (/^(rec|accent|glide|tie|ratchet|run|page|length)$/.test(f[0])) b.led = P.el('circle', { cx: bx + bw - 8, cy: byy + 8, r: 3.4, fill: C.ledOff }, g);
+      fb[f[0]] = b;
+    });
+    fb.run.setDisabled(!P.canTransport());
+
+    // ---- the document: the whole variant this section plays (1 or 2 bars)
+    function view() {
+      if (!P.canEdit() && !isFn(host.document)) return null;
+      var d = safe(function () { return host.document(); }, null);
+      if (!d || !d.sections || !d.sections.length) return null;
+      var p = safe(function () { return host.transport.pos(); }, null) || { section: 0, barInSection: 0 };
+      var si = curIndex(p, d.sections), sec = d.sections[si], tr = findTrack(d, P.device.track);
+      if (!tr) return null;
+      var vn = variantName(sec, tr.name), v = vn && tr.variants ? tr.variants[vn] : null, cells = [], i;
+      var bars = v ? Math.max(1, Math.min(2, v.bars || 1)) : 1;
+      for (i = 0; i < bars * STEPS; i++) cells.push(v ? (v.cells[i] || null) : null);
+      return { section: sec.name, si: si, track: tr.name, variant: v ? vn : null, bars: bars, cells: cells, tr: tr };
+    }
+    function n() { return st.vw ? st.vw.cells.length : STEPS; }
+    // fn(cells, bars) -> {list: [[index, cell|null, replace?]], bars} | null; one group, one undo entry
+    function edit(fn) {
+      if (!P.canEdit()) return false;
+      var vw = view(); if (!vw) return false;
+      var res = fn(vw.cells.slice(), vw.bars);
+      if (!res || (!(res.list && res.list.length) && !res.bars)) return false;
+      var ed = safe(function () { return host.editor(); }, null); if (!ed) return false;
+      var run = function (e) {
+        var L = vw.variant;
+        if (!L) {
+          var ks = vw.tr.variants ? Object.keys(vw.tr.variants).sort() : [];
+          L = ks.indexOf('A') >= 0 || !ks.length ? 'A' : ks[0];
+          e.setPlay(vw.section, vw.track, L);
+          if (!e.track(vw.track).variants[L]) e.setVariantBars(vw.track, L, 1, 'empty');
+        } else if (isFn(e.variantUsage) && e.variantUsage(vw.track, L).length > 1 && isFn(e.forkVariant)) {
+          var f = e.forkVariant(vw.track, L); if (f) { e.setPlay(vw.section, vw.track, f); L = f; }
+        }
+        if (res.bars && res.bars !== vw.bars && isFn(e.setVariantBars)) e.setVariantBars(vw.track, L, res.bars, res.fill || 'repeat');
+        (res.list || []).forEach(function (it) {
+          if (it[2] || it[1] === null) e.setStep(vw.track, L, it[0], null);
+          if (it[1]) e.setStep(vw.track, L, it[0], it[1]);
+        });
+        return true;
+      };
+      if (isFn(ed.group)) ed.group(run); else run(ed);
+      safe(function () { host.commit(); });
+      st.sig = '';
+      return true;
+    }
+    function untie(cont, i) { return [cont[i], { len: i - cont[i] > 1 ? i - cont[i] : null }]; }
+    function advance() { if (st.rec) st.sel = (st.sel + 1) % n(); }
+    function enter(notes, e) {                  // the keyboard: mono sets the note and moves on; poly toggles chord notes
+      if (!st.rec || !P.canEdit()) return;
+      var i = st.sel;
+      edit(function (cells) {
+        var cont = tiesOf(cells), out = [], c = cells[i];
+        if (cont[i] != null) out.push(untie(cont, i));
+        if (!poly) { out.push([i, c ? { note: notes[0], notes: null } : { note: notes[0], vel: DEFAULT_VEL, len: 1 }]); return { list: out }; }
+        var cur = notesOf(c);
+        if (notes.length > 1) notes.forEach(function (m) { if (cur.indexOf(m) < 0 && cur.length < 6) cur.push(m); });
+        else if (cur.indexOf(notes[0]) >= 0) cur.splice(cur.indexOf(notes[0]), 1);
+        else if (cur.length < 6) cur.push(notes[0]);
+        else { st.msg = 'six notes is the most a step holds'; return null; }
+        cur.sort(function (a, b) { return a - b; });
+        if (!cur.length) out.push([i, null]);
+        else out.push([i, c ? { note: cur[0], notes: cur.length > 1 ? cur : null } : { note: cur[0], notes: cur.length > 1 ? cur : null, vel: DEFAULT_VEL, len: 1 }]);
+        return { list: out };
+      });
+      if (!poly) advance();
+      st.page = Math.floor(st.sel / 16); st.sig = '';
+    }
+    function cmd(k) {
+      var i = st.sel, N = n();
+      if (k === 'next' || k === 'back') { st.sel = (i + (k === 'next' ? 1 : N - 1)) % N; st.page = Math.floor(st.sel / 16); st.sig = ''; return; }
+      if (k === 'rec') { st.rec = !st.rec; st.sig = ''; return; }
+      if (k === 'page') { if (N > 16) { st.page = st.page ? 0 : 1; st.sel = st.page * 16 + (st.sel % 16); } st.sig = ''; return; }
+      if (k === 'length') {
+        edit(function (cells, bars) { return { bars: bars === 2 ? 1 : 2, fill: 'repeat' }; });
+        if (st.sel >= n()) st.sel = st.sel % 16;
+        st.page = Math.floor(st.sel / 16);
+      } else if (k === 'accent') {
+        edit(function (cells) { var c = cells[i]; if (!c) return null; return { list: [[i, c.acc ? { acc: null, vel: DEFAULT_VEL } : { acc: true, vel: 1 }]] }; });
+      } else if (k === 'glide') {
+        edit(function (cells) { var c = cells[i]; if (!c) return null; return { list: [[i, { slide: c.slide ? null : true }]] }; });
+      } else if (k === 'ratchet') {
+        edit(function (cells) { var c = cells[i]; if (!c) return null; var r = c.rep > 1 ? c.rep : 1; return { list: [[i, { rep: r >= 4 ? null : r + 1 }]] }; });
+      } else if (k === 'rest') {
+        edit(function (cells) { var cont = tiesOf(cells); if (cont[i] != null) return { list: [untie(cont, i)] }; return cells[i] ? { list: [[i, null]] } : null; });
+        advance();
+      } else if (k === 'tie') {
+        edit(function (cells) {
+          var cont = tiesOf(cells);
+          if (cont[i] != null) return { list: [untie(cont, i)] };
+          if (i === 0) return null;
+          var from = (cells[i - 1] && isNum(cells[i - 1].note)) ? i - 1 : cont[i - 1];
+          if (from == null) return null;
+          var out = [[from, { len: i - from + 1 }]];
+          if (cells[i]) out.push([i, null]);
+          return { list: out };
+        });
+        advance();
+      } else if (k === 'copy') {
+        var to = (i + 1) % N;
+        edit(function (cells) { var c = cells[i]; return { list: [[to, c ? JSON.parse(JSON.stringify(c)) : null, true]] }; });
+        st.sel = to;
+      } else if (/^t-?\d+$/.test(k)) {
+        var d = +k.slice(1);
+        edit(function (cells) {
+          var out = [];
+          cells.forEach(function (c, j) {
+            if (!c || !isNum(c.note)) return;
+            var p = { note: clamp(c.note + d, 0, 127) };
+            if (c.notes && c.notes.length) p.notes = c.notes.map(function (m) { return clamp(m + d, 0, 127); });
+            out.push([j, p]);
+          });
+          return { list: out };
+        });
+        st.oct = clamp(st.oct + d - (d % 12), 0, 120);
+      } else if (k === 'clear') {
+        edit(function (cells) { var out = []; cells.forEach(function (c, j) { if (c) out.push([j, null]); }); return { list: out }; });
+      }
+      st.page = Math.floor(st.sel / 16);
+      st.sig = '';
+    }
+    var api = { st: st, enter: enter, cmd: cmd, keyboard: null };
+    P.onUpdate(function () {
+      if (P.state.frame % 4 === 0 || st.sig === '') st.vw = view();
+      var vw = st.vw, edit_ = P.canEdit() && !!vw, N = n();
+      if (st.sel >= N) { st.sel = st.sel % 16; st.page = 0; }
+      if (st.page * 16 >= N) st.page = 0;
+      var sig = (vw ? vw.si + ':' + vw.variant + ':' + JSON.stringify(vw.cells) : 'none') + '|' + st.sel + '|' + st.page + '|' + st.rec + '|' + edit_ + '|' + st.msg;
+      if (sig !== st.sig) {
+        st.sig = sig;
+        var cells = vw ? vw.cells : [], cont = tiesOf(cells);
+        keys.forEach(function (kk, k) {
+          var i = st.page * 16 + k, c = cells[i] || null, ns = notesOf(c), tied = cont[i] != null;
+          kk.num.textContent = String(i + 1);
+          kk.nm.textContent = c ? (poly ? chordName(ns) : noteName(ns[0])) : tied ? 'tie' : 'rest';
+          kk.nm.setAttribute('fill', c ? C.ink : tied ? C.hot : C.dim);
+          kk.led.setAttribute('fill', c ? C.led : tied ? C.ledTie : C.ledOff);
+          kk.tie.setAttribute('display', tied ? 'inline' : 'none');
+          kk.sel.setAttribute('display', i === st.sel ? 'inline' : 'none');
+          kk.fl.textContent = !c ? '' : poly ? (ns.length > 1 ? ns.length + ' notes' : '1 note') : ((c.acc ? 'A ' : '') + (c.slide ? 'G ' : '') + (c.rep > 1 ? '×' + c.rep : '')).trim();
+          kk.b.g.setAttribute('aria-pressed', i === st.sel ? 'true' : 'false');
+          var desc = c ? (poly ? chordName(ns) + ' (' + ns.map(noteName).join(' ') + ')' : noteName(ns[0]) + (c.acc ? ', accent' : '') + (c.slide ? ', glide' : '') + (c.rep > 1 ? ', ratchet ' + c.rep : '')) + (c.len > 1 ? ', tied over ' + (Math.round(c.len) - 1) : '') : tied ? 'tie from step ' + (cont[i] + 1) : 'rest';
+          kk.b.g.setAttribute('aria-label', 'Step ' + (i + 1) + ': ' + desc + (i === st.sel ? ' (selected)' : ''));
+        });
+        var c = cells[st.sel] || null, ns = notesOf(c), selTied = cont[st.sel] != null;
+        if (api.keyboard) api.keyboard.mark(ns);
+        var on = function (b, v) { if (b && b.led) b.led.setAttribute('fill', v ? C.led : C.ledOff); };
+        on(fb.rec, st.rec); on(fb.tie, selTied); on(fb.accent, c && c.acc); on(fb.glide, c && c.slide); on(fb.ratchet, c && c.rep > 1);
+        on(fb.page, st.page === 1); on(fb.length, N > 16);
+        if (fb.ratchet) fb.ratchet.txt.textContent = c && c.rep > 1 ? 'RATCHET ×' + c.rep : 'RATCHET';
+        fb.page.txt.textContent = N > 16 ? 'PAGE ' + (st.page + 1) + '/2' : 'PAGE 1/1';
+        fb.length.txt.textContent = 'LENGTH ' + N;
+        Object.keys(fb).forEach(function (kk) { if (kk !== 'run' && kk !== 'back' && kk !== 'next' && kk !== 'rec' && kk !== 'page') fb[kk].setDisabled(!edit_); });
+        fb.rec.setDisabled(!P.canEdit());
+        var t = 'STEP ' + (st.sel + 1) + '/' + N + '  ·  ' + (c ? (poly ? chordName(ns) + '  (' + ns.map(noteName).join(' ') + ')' : noteName(ns[0]) + (c.acc ? '  ·  accent' : '') + (c.slide ? '  ·  glide' : '') + (c.rep > 1 ? '  ·  ratchet ' + c.rep : '')) + (c.len > 1 ? '  ·  tied over ' + (Math.round(c.len) - 1) : '') : selTied ? 'tie from step ' + (cont[st.sel] + 1) : 'rest');
+        if (!vw) t += '   —   ' + (P.canEdit() ? 'no pattern' : 'step editing is in the main window');
+        else t += '   —   ' + (vw.variant ? 'pattern ' + vw.variant : 'not playing here yet') + (st.rec ? '  ·  REC: keys write' + (poly ? ' (tap to add or remove)' : '') : '  ·  keys audition');
+        if (st.msg) { t += '  ·  ' + st.msg; st.msg = ''; }
+        info.textContent = t;
+      }
+      var step = -1, playing = !!safe(function () { return host.transport.playing; }, false);
+      if (playing) {
+        var p = safe(function () { return host.transport.pos(); }, null);
+        if (p && isNum(p.step)) step = ((p.barInSection || 0) % Math.max(1, N / 16)) * 16 + (p.step % 16);
+      }
+      if (step !== st.cur) {
+        st.cur = step;
+        keys.forEach(function (kk, k) { var on = st.page * 16 + k === step; kk.cur.setAttribute('display', on ? 'inline' : 'none'); kk.led.setAttribute('stroke', on ? '#fff' : 'none'); });
+        if (fb.page.led && N > 16 && step >= 0) fb.page.led.setAttribute('fill', Math.floor(step / 16) === 1 ? C.led : C.ledOff);
+      }
+      if (playing !== st.playing) { st.playing = playing; fb.run.led.setAttribute('fill', playing ? C.led : C.ledOff); }
+    });
+    return api;
+  }
+  // octave shift keys for a keyboard strip (portrait arrangements show fewer keys)
+  function octaveKeys(P, parent, x, y, w, h, kb, C, lo, hi) {
+    var bw = Math.min(56, w / 3);
+    P.text(parent, x + w / 2, y + h / 2 - 3, 'KEYS', { fill: C.ink, 'font-size': 9, 'font-weight': 700, 'letter-spacing': 1 });
+    var lbl = P.text(parent, x + w / 2, y + h / 2 + 12, '', { fill: C.ink, 'font-size': 11, 'font-weight': 700 });
+    function paint() { lbl.textContent = noteName(lo + kb.offset()) + '\u2013' + noteName(hi + kb.offset()); }
+    P.button(parent, { x: x, y: y, w: bw, h: h, rx: 4, label: '\u2212OCT', size: 11, fill: '#3a3a3d', ink: '#eee', aria: 'Keyboard an octave down', onClick: function () { kb.shift(-12); paint(); } });
+    P.button(parent, { x: x + w - bw, y: y, w: bw, h: h, rx: 4, label: '+OCT', size: 11, fill: '#3a3a3d', ink: '#eee', aria: 'Keyboard an octave up', onClick: function () { kb.shift(12); paint(); } });
+    paint();
+  }
+
+
+  // ------------------------------------------------------------------ HVT-D
+  var CD = { wood: '#5a3520', woodHi: '#7a4a2c', woodLo: '#3e2414', face: '#141414', ink: '#ecebe4', line: '#bdbbb2', blue: '#3a6fc4', orange: '#e2742a', ivory: '#e9e1c8' };
+  var SEQCOL = { bed: '#121110', info: '#2b2b2d', infoInk: '#f0efe9', ink: '#ecebe4', dim: '#77756e', key: '#2a2a2c', key4: '#3b3b40', keyInk: '#ecebe6', hot: '#e2742a',
+    led: '#ff4a1a', ledOff: '#40261a', ledTie: '#a8471a', flag: '#f0a060', btn: '#2e2e31', btnHi: '#4a4a4f' };
+  // Two arrangements. Landscape: the face as before (five sections in a row), the step sequencer strip, then the keyboard bed.
+  // Portrait: the same five sections placed in three rows (oscillator bank + controllers, modifiers + output, mixer + the wheels
+  // and the keyboard's octave keys), the sequencer (8 keys a row), then a shorter keyboard. Sections are drawn in their landscape
+  // coordinates inside groups placed with P.place, so both arrangements carry the same controls.
+  var LDD = {
+    landscape: { w: 1400, h: 908, rows: [[62, 14, 1276, 452]], place: {},
+      seq: { x: 62, y: 476, w: 1276, h: 200, per: 16, keyH: 46, btnCols: 16, btnH: 36, btnSize: 9.5 }, bed: 206 },
+    portrait: { w: 560, h: 2082, rows: [[4, 10, 552, 452], [4, 466, 552, 452], [4, 922, 552, 452]],
+      place: { osc: [-228, -4], ctrl: [314, -4], mod: [-842, 452], out: [-838, 452], mix: [-592, 908], wheels: [222, 452] },
+      seq: { x: 4, y: 1380, w: 552, h: 490, per: 8, keyH: 56, btnCols: 4, btnH: 44, btnSize: 11 }, bedY: 1876, oct: [290, 1240, 240, 50] }
+  };
+  Panels.define('hvtd', {
+    label: 'HVT-D mono synthesizer', size: { w: 1400, h: 908 }, win: { w: 1120 },
+    layouts: { landscape: { w: 1400, h: 908 }, portrait: { w: 560, h: 2082 } },
+    match: function (d) { return d.kind === 'instrument' && d.type === 'modeld'; },
+    build: function (P) {
+      var svg = P.svg, C = CD, port = P.layout === 'portrait', L = LDD[port ? 'portrait' : 'landscape'], W = L.w, H = L.h, G = svg;
+      function cheek(x) {
+        P.el('rect', { x: x, y: 0, width: 56, height: H, rx: 8, fill: C.wood }, svg);
+        for (var k = 0; k < 9; k++) P.el('path', { d: 'M' + (x + 6 + k * 5.5) + ' 0 Q' + (x + 12 + k * 5) + ' ' + (H / 2) + ' ' + (x + 4 + k * 6) + ' ' + H, stroke: k % 2 ? C.woodHi : C.woodLo, 'stroke-width': 1.4, fill: 'none', opacity: 0.7 }, svg);
+      }
+      if (port) {
+        P.el('rect', { x: 0, y: 0, width: W, height: H, rx: 10, fill: '#0c0a09' }, svg);
+        P.el('rect', { x: 0, y: 0, width: W, height: 4, fill: C.wood }, svg); P.el('rect', { x: 0, y: H - 4, width: W, height: 4, fill: C.wood }, svg);
+      } else { P.el('rect', { x: 40, y: 0, width: 1320, height: H, fill: '#0c0a09' }, svg); cheek(0); cheek(1344); }
+      var defs = P.el('defs', null, svg), pat = P.el('pattern', { id: 'pn-tex-' + Math.floor(Math.random() * 1e9), width: 6, height: 6, patternUnits: 'userSpaceOnUse' }, defs);
+      P.el('rect', { width: 6, height: 6, fill: C.face }, pat);
+      P.el('circle', { cx: 1.5, cy: 1.5, r: 0.7, fill: '#1e1e1e' }, pat); P.el('circle', { cx: 4.5, cy: 4, r: 0.6, fill: '#0a0a0a' }, pat);
+      L.rows.forEach(function (r) {
+        P.el('rect', { x: r[0], y: r[1], width: r[2], height: r[3], rx: 3, fill: 'url(#' + pat.getAttribute('id') + ')', stroke: '#2a2a2a' }, svg);
+        P.el('rect', { x: r[0], y: r[1] + r[3] - 36, width: r[2], height: 36, fill: 'rgba(255,255,255,.03)' }, svg);
+      });
+      function group(name) { var pl = L.place[name] || [0, 0]; G = P.place(P.g(svg, { 'class': 'pn-sec', 'data-sec': name }), pl[0], pl[1]); return G; }
+      var ks = { skirt: '#1a1a1a', cap: '#c3c6ca', capR: 0.5, capShine: 'rgba(255,255,255,.35)', flutes: 18, dot: true, dotR: 0.38, dotSize: 2.1, pointer: '#ffffff', sweep: 300, ticks: 11, tick: C.line, label: C.ink, numSize: 8, numR: 16 };
+      var big = Object.assign({}, ks, { capR: 0.58 }), N10 = ['0', '2', '4', '6', '8', '10'], N5 = ['-5', '-3', '-1', '+1', '+3', '+5'];
+      var wedgeSt = { skirt: '#151515', wedge: '#1d1d1d', pointer: C.ivory, ticks: 6, tick: C.line, label: C.ink, shine: false };
+      var K = function (x, y, p, cap, o) { o = o || {}; return P.knob(G, Object.assign({ x: x, y: y, r: o.r || 22, param: p, label: cap.toLowerCase(), caption: cap, captionY: -(o.r || 22) - 24, captionSize: 9.5, style: o.st || ks, numbers: o.numbers || N10 }, o.extra || {})); };
+      var R = function (x, y, p, cap, colour, values) {
+        var t = P.toggle(G, { x: x, y: y, w: 18, h: 30, param: p, label: cap.toLowerCase(), values: values, draw: rocker(colour) });
+        if (t) P.text(G, x, y + 30, cap, { fill: C.ink, 'font-size': 8.5, 'font-weight': 700 });
+        return t;
+      };
+      function section(x0, x1, title) {
+        P.el('line', { x1: x0 + 8, x2: x1 - 8, y1: 444, y2: 444, stroke: C.line, 'stroke-width': 1 }, G);
+        P.el('line', { x1: x0 + 8, x2: x0 + 8, y1: 436, y2: 444, stroke: C.line, 'stroke-width': 1 }, G);
+        P.el('line', { x1: x1 - 8, x2: x1 - 8, y1: 436, y2: 444, stroke: C.line, 'stroke-width': 1 }, G);
+        P.el('rect', { x: (x0 + x1) / 2 - title.length * 4.6 - 8, y: 436, width: title.length * 9.2 + 16, height: 18, fill: C.face }, G);
+        P.text(G, (x0 + x1) / 2, 448, title, { fill: C.ink, 'font-size': 10.5, 'font-weight': 700, 'letter-spacing': 2 });
+        if (x0 > 62 && !port) P.el('line', { x1: x0, x2: x0, y1: 28, y2: 420, stroke: '#3a3a3a', 'stroke-width': 1 }, G);
+      }
+      // CONTROLLERS
+      group('ctrl'); section(62, 236, 'CONTROLLERS');
+      K(120, 92, 'tune', 'TUNE', { numbers: N5 });
+      K(120, 212, 'glide', 'GLIDE');
+      K(120, 332, 'modMix', 'MOD MIX', { numbers: ['OSC3', '', '', '', '', 'NOISE'] });
+      R(198, 120, 'oscMod', 'OSC MOD', C.orange);
+      R(198, 240, 'filterMod', 'FILT MOD', C.orange);
+      // OSCILLATOR BANK
+      group('osc'); section(236, 600, 'OSCILLATOR BANK');
+      var RL = { lo: 'LO', 32: "32'", 16: "16'", 8: "8'", 4: "4'", 2: "2'" };
+      var WL = { tri: 'TRI', shark: 'SHK', revsaw: 'RSAW', saw: 'SAW', square: 'SQR', wide: 'WIDE', narrow: 'NAR' };
+      [1, 2, 3].forEach(function (n, j) {
+        var y = 96 + j * 118;
+        P.text(G, 248, y - 44, 'OSC ' + n, { 'text-anchor': 'start', fill: C.ink, 'font-size': 9.5, 'font-weight': 700 });
+        P.choice(G, { x: 300, y: y, r: 20, param: 'osc' + n + 'Range', options: ['lo', '32', '16', '8', '4', '2'], labels: RL, label: 'oscillator ' + n + ' range', style: wedgeSt, sweep: 220, legendR: 17, legendSize: 8 });
+        if (n > 1) K(418, y, 'osc' + n + 'Detune', 'FREQUENCY', { r: 25, st: big, numbers: ['-7', '', '', '0', '', '', '+7'], extra: { label: 'oscillator ' + n + ' frequency' } });
+        else R(418, y, 'osc3Keys', 'OSC 3 CTRL', C.blue);
+        P.choice(G, { x: 536, y: y, r: 20, param: 'osc' + n + 'Wave', options: n === 3 ? ['tri', 'revsaw', 'saw', 'square', 'wide', 'narrow'] : ['tri', 'shark', 'saw', 'square', 'wide', 'narrow'], labels: WL, label: 'oscillator ' + n + ' waveform', style: wedgeSt, sweep: 220, legendR: 17, legendSize: 8 });
+      });
+      // MIXER
+      group('mix'); section(600, 850, 'MIXER');
+      [['mixOsc1', 'OSC 1'], ['mixFeedback', 'EXT IN'], ['mixOsc2', 'OSC 2'], ['mixNoise', 'NOISE'], ['mixOsc3', 'OSC 3']].forEach(function (m, j) {
+        var y = 62 + j * 78;
+        if (K(680, y + 8, m[0], '', { r: 18, numbers: [], extra: { label: m[1].toLowerCase() + ' level' } })) P.text(G, 725, y + 12, m[1], { 'text-anchor': 'start', fill: C.ink, 'font-size': 9.5, 'font-weight': 700 });
+      });
+      R(806, 296, 'noiseType', 'WHITE/PINK', C.ivory, P.options(null, 'noiseType', ['white', 'pink']).slice(0, 2));
+      // MODIFIERS
+      group('mod'); section(850, 1214, 'MODIFIERS');
+      P.text(G, 1032, 40, 'FILTER', { fill: C.ink, 'font-size': 10, 'font-weight': 700, 'letter-spacing': 1 });
+      K(930, 104, 'cutoff', 'CUTOFF', { r: 26, st: big, numbers: N5 });
+      K(1040, 104, 'emphasis', 'EMPHASIS', { r: 22 });
+      K(1150, 104, 'contour', 'CONTOUR AMT', { r: 22 });
+      R(868, 186, 'keyTrack1', 'KBD 1', C.blue); R(902, 186, 'keyTrack2', 'KBD 2', C.blue);
+      P.text(G, 1032, 196, 'FILTER CONTOUR', { fill: C.ink, 'font-size': 9.5, 'font-weight': 700, 'letter-spacing': 1 });
+      K(960, 252, 'fAttack', 'ATTACK'); K(1060, 252, 'fDecay', 'DECAY'); K(1160, 252, 'fSustain', 'SUSTAIN');
+      P.text(G, 1032, 316, 'LOUDNESS CONTOUR', { fill: C.ink, 'font-size': 9.5, 'font-weight': 700, 'letter-spacing': 1 });
+      K(960, 372, 'attack', 'ATTACK'); K(1060, 372, 'decay', 'DECAY'); K(1160, 372, 'sustain', 'SUSTAIN');
+      // OUTPUT
+      group('out'); section(1214, 1338, 'OUTPUT');
+      K(1276, 104, 'level', 'VOLUME', { r: 26, st: big });
+      P.text(G, 1276, 300, 'HVT-D', { fill: C.ink, 'font-size': 30, 'font-weight': 300, 'letter-spacing': 2 });
+
+      // the step sequencer
+      var SQ = synthSeq(P, { poly: false, box: L.seq, colours: SEQCOL, oct: 48 });
+
+      // keyboard bed: the wheels block (decay and glide rockers, mod wheel = modAmount), the keys
+      var bed = P.place(P.g(svg, { 'class': 'pn-bed' }), 0, port ? 0 : L.bed), kb;
+      if (!port) {
+        G = bed;
+        P.el('rect', { x: 56, y: 476, width: 1288, height: 224, fill: '#0f0d0c' }, G);
+        P.el('rect', { x: 62, y: 478, width: 1276, height: 26, fill: '#1a1715' }, G);
+        P.text(G, 80, 497, 'HAVANTECHNO', { 'text-anchor': 'start', fill: '#ff5fa2', 'font-size': 15, 'font-weight': 800, 'letter-spacing': 3 });
+      } else group('wheels');
+      R(98, 548, 'decaySwitch', 'DECAY', C.ivory); R(150, 548, 'glideOn', 'GLIDE', C.ivory);
+      P.el('rect', { x: 78, y: 596, width: 34, height: 96, rx: 4, fill: '#050505' }, G);
+      P.el('rect', { x: 84, y: 602, width: 22, height: 84, rx: 6, fill: '#2a2a2a' }, G);
+      for (var wl = 0; wl < 8; wl++) P.el('line', { x1: 86, x2: 104, y1: 610 + wl * 10, y2: 610 + wl * 10, stroke: '#444', 'stroke-width': 1.2 }, G);
+      P.text(G, 95, 592, 'PITCH', { fill: '#8a8880', 'font-size': 8 });
+      P.control(G, { x: 152, y: 644, r: 42, hit: { w: 34, h: 96 }, param: 'modAmount', label: 'Mod wheel (modulation amount)', kind: 'wheel',
+        draw: function (art, pos, c) {
+          if (!c.built) {
+            c.built = true;
+            sv('rect', { x: -17, y: -48, width: 34, height: 96, rx: 4, fill: '#050505' }, art);
+            sv('rect', { x: -11, y: -42, width: 22, height: 84, rx: 6, fill: '#2f2f2f' }, art);
+            c.ridges = sv('g', null, art);
+          }
+          while (c.ridges.firstChild) c.ridges.removeChild(c.ridges.firstChild);
+          for (var k = 0; k < 9; k++) { var yy = -40 + ((k * 10 + (1 - pos) * 40) % 80); sv('line', { x1: -9, x2: 9, y1: f2(yy), y2: f2(yy), stroke: '#555', 'stroke-width': 1.2 }, c.ridges); }
+          sv('rect', { x: -11, y: f2(-42 + 84 * (1 - pos) - 2), width: 22, height: 4, fill: '#e8e3d0' }, c.ridges);
+        } });
+      P.text(G, 152, 592, 'MOD', { fill: C.ink, 'font-size': 8, 'font-weight': 700 });
+      var onNotes = P.canEdit() ? function (ns, e) { SQ.enter(ns, e); } : null;
+      if (!port) kb = keyboard(P, bed, { x: 200, y: 512, w: 1130, h: 180, lo: 41, hi: 84, dur: 0.4, onNotes: onNotes });
+      else {
+        var by = L.bedY;
+        P.el('rect', { x: 4, y: by, width: 552, height: 200, rx: 4, fill: '#0f0d0c' }, svg);
+        P.text(svg, 16, by + 20, 'HAVANTECHNO', { 'text-anchor': 'start', fill: '#ff5fa2', 'font-size': 14, 'font-weight': 800, 'letter-spacing': 3 });
+        P.text(svg, 544, by + 20, 'HVT-D', { 'text-anchor': 'end', fill: C.ink, 'font-size': 14, 'font-weight': 300, 'letter-spacing': 2 });
+        kb = keyboard(P, svg, { x: 8, y: by + 32, w: 544, h: 160, lo: 48, hi: 67, dur: 0.4, onNotes: onNotes });
+        octaveKeys(P, svg, L.oct[0], L.oct[1], L.oct[2], L.oct[3], kb, C, 48, 67);
+      }
+      SQ.keyboard = kb;
+      return {};
+    }
+  });
+
+  // ------------------------------------------------------------------ HVT-106
+  var CJ = { body: '#29292b', strip: '#d9d6cc', ink: '#ecebe6', dark: '#151515', blue: '#3b7bd6', orange: '#e8781e', yellow: '#e2c21c', red: '#d63a2c', green: '#3aa35b',
+    teal: '#2aa7a0', purple: '#8f62c8', btn: '#c9c7c0' };
+  var SEQ106 = { bed: '#1c1c1e', info: '#111113', infoInk: '#ecebe6', ink: '#ecebe6', dim: '#7a7a7e', key: '#c9c7c0', key4: '#dedbd2', keyInk: '#151515', hot: '#e8781e',
+    led: '#ff3b22', ledOff: '#3a1510', ledTie: '#a8471a', flag: '#e2c21c', btn: '#3a3a3d', btnHi: '#55575c', btnInk: '#ecebe6' };
+  // Landscape: the fader face, the name strip, the polyphonic step sequencer, the keys. Portrait: the eight sections in three rows
+  // (control + LFO + chorus; DCO + HPF + VCA at 0.94; VCF + ENV), the name strip, the sequencer (8 keys a row), a shorter keyboard.
+  var L106 = {
+    landscape: { w: 1600, h: 800, rows: [[10, 10, 1580, 368]], place: {}, strip: [10, 386, 1580, 74],
+      seq: { x: 10, y: 466, w: 1580, h: 200, per: 16, keyH: 46, btnCols: 14, btnH: 36, btnSize: 10.5 }, bed: [10, 672, 1580, 120] },
+    portrait: { w: 560, h: 1824, rows: [[4, 10, 552, 370], [4, 386, 552, 350], [4, 742, 552, 370]],
+      place: { control: [-2, 0], lfo: [-2, 0], chorus: [-1062, 0], dco: [-349.2, 376.6, 0.94], hpf: [-349.2, 376.6, 0.94], vca: [-603, 376.6, 0.94], vcf: [-842, 732], env: [-952, 732] },
+      strip: [4, 1118, 552, 54], seq: { x: 4, y: 1178, w: 552, h: 436, per: 8, keyH: 56, btnCols: 5, btnH: 44, btnSize: 10.5 }, bed: [4, 1620, 552, 198], oct: [196, 1123, 200, 44] }
+  };
+  Panels.define('hvt106', {
+    label: 'HVT-106 polyphonic synthesizer', size: { w: 1600, h: 800 }, win: { w: 1200 },
+    layouts: { landscape: { w: 1600, h: 800 }, portrait: { w: 560, h: 1824 } },
+    match: function (d) { return d.kind === 'instrument' && d.type === 'juno'; },
+    build: function (P) {
+      var svg = P.svg, C = CJ, port = P.layout === 'portrait', L = L106[port ? 'portrait' : 'landscape'], W = L.w, H = L.h, G = svg;
+      P.el('rect', { x: 0, y: 0, width: W, height: H, rx: 10, fill: '#111' }, svg);
+      L.rows.forEach(function (r) { P.el('rect', { x: r[0], y: r[1], width: r[2], height: r[3], rx: 4, fill: C.body }, svg); });
+      var S = L.strip;
+      P.el('rect', { x: S[0], y: S[1], width: S[2], height: S[3], rx: 4, fill: '#1c1c1e' }, svg);
+      P.text(svg, S[0] + (port ? 12 : 30), S[1] + S[3] / 2 + (port ? 6 : 10), 'HAVANTECHNO', { 'text-anchor': 'start', fill: '#ff5fa2', 'font-size': port ? 16 : 22, 'font-weight': 800, 'letter-spacing': 4 });
+      P.text(svg, S[0] + S[2] - (port ? 12 : 30), S[1] + S[3] / 2 + (port ? 8 : 12), 'HVT-106', { 'text-anchor': 'end', fill: C.ink, 'font-size': port ? 22 : 30, 'font-weight': 300, 'letter-spacing': 2 });
+      if (!port) P.text(svg, 800, S[1] + 46, 'POLYPHONIC SYNTHESIZER', { fill: '#8a8a8a', 'font-size': 11, 'letter-spacing': 6 });
+      function section(x0, x1, title, colour, name) {
+        var pl = L.place[name] || [0, 0];
+        G = P.place(P.g(svg, { 'class': 'pn-sec', 'data-sec': name }), pl[0], pl[1], pl[2]);
+        P.el('rect', { x: x0 + 4, y: 20, width: x1 - x0 - 8, height: 20, fill: C.strip }, G);
+        P.text(G, (x0 + x1) / 2, 35, title, { fill: C.dark, 'font-size': 11, 'font-weight': 800, 'letter-spacing': 2 });
+        P.el('rect', { x: x0 + 4, y: 42, width: x1 - x0 - 8, height: 5, fill: colour }, G);
+      }
+      var FL = 186, FY = 206;
+      function F(x, p, cap, o) { o = o || {}; return P.fader(G, Object.assign({ x: x, y: FY, len: FL, param: p, label: cap.toLowerCase(), caption: cap, captionSize: 9.5, cap: o.cap || '#c4c3bd', labelInk: C.ink, tick: '#8a8a8a' }, o)); }
+      function radio(x, y, p, opts, labels, o) { o = o || {}; return P.radio(G, Object.assign({ x: x, y: y, w: 46, h: 22, gap: 16, vertical: true, param: p, options: opts, labels: labels, size: 9.5, fill: C.btn, ink: C.dark, ledY: -6 }, o)); }
+      function lamp(x, y, p, lbl) {
+        return P.toggle(G, { x: x, y: y, w: 46, h: 22, param: p, label: lbl.toLowerCase(), draw: lampButton(C.btn, C.dark, lbl) });
+      }
+      // performance
+      section(10, 250, 'CONTROL', C.purple, 'control');
+      P.knob(G, { x: 60, y: 110, r: 20, param: 'tune', label: 'tune', caption: 'TUNE', captionY: -34, captionSize: 9.5, style: { skirt: '#111', cap: '#3a3a3c', pointer: '#fff', ticks: 11, tick: '#8a8a8a', label: C.ink } });
+      var bendF = F(130, 'bend', 'BEND'); F(190, 'portamento', 'PORTA');
+      if (bendF) {                     // stored in the song, not used by the engine yet: drawn dimmed, and says so
+        bendF.g.setAttribute('opacity', '0.45'); bendF.g.setAttribute('data-inactive', 'true');
+        var tt = P.el('title', null, bendF.g); tt.textContent = 'Bend range: stored with the song, but the engine does not use it yet';
+        bendF.g.setAttribute('aria-description', 'inactive: stored, not used by the engine yet');
+      }
+      radio(36, 196, 'voiceMode', ['poly', 'unison'], { poly: 'POLY', poly1: 'POLY 1', poly2: 'POLY 2', unison: 'UNI' }, { gap: 18 });
+      // LFO
+      section(250, 380, 'LFO', C.blue, 'lfo');
+      F(285, 'lfoRate', 'RATE'); F(345, 'lfoDelay', 'DELAY');
+      lamp(315, 354, 'lfoAuto', 'AUTO');
+      // DCO
+      section(380, 770, 'DCO', C.orange, 'dco');
+      F(410, 'dcoLfo', 'LFO'); F(460, 'pwm', 'PWM');
+      P.text(G, 520, 90, 'PWM', { fill: C.ink, 'font-size': 9.5, 'font-weight': 700 });
+      radio(497, 112, 'pwmMode', ['lfo', 'manual', 'env'], { lfo: 'LFO', man: 'MAN', manual: 'MAN', env: 'ENV' });
+      P.text(G, 582, 90, 'RANGE', { fill: C.ink, 'font-size': 9.5, 'font-weight': 700 });
+      radio(559, 112, 'range', [16, 8, 4], { 16: "16'", 8: "8'", 4: "4'" });
+      lamp(645, 136, 'pulse', 'PULSE'); lamp(645, 196, 'saw', 'SAW');
+      F(700, 'sub', 'SUB'); F(745, 'noise', 'NOISE');
+      // HPF
+      section(770, 850, 'HPF', C.yellow, 'hpf');
+      F(810, 'hpf', 'FREQ', { step: 1 });
+      // VCF
+      section(850, 1120, 'VCF', C.red, 'vcf');
+      F(880, 'cutoff', 'FREQ'); F(930, 'resonance', 'RES'); F(980, 'envAmt', 'ENV'); F(1030, 'vcfLfo', 'LFO'); F(1080, 'vcfKey', 'KYBD');
+      // VCA
+      section(1120, 1230, 'VCA', C.green, 'vca');
+      radio(1132, 112, 'vcaMode', ['env', 'gate'], { env: 'ENV', gate: 'GATE' });
+      F(1205, 'level', 'LEVEL');
+      // ENV
+      section(1230, 1440, 'ENV', C.teal, 'env');
+      F(1265, 'attack', 'A'); F(1312, 'decay', 'D'); F(1359, 'sustain', 'S'); F(1406, 'release', 'R');
+      // CHORUS
+      section(1440, 1590, 'CHORUS', C.blue, 'chorus');
+      radio(1468, 112, 'chorus', [0, 1, 2], { 0: 'OFF', 1: 'I', 2: 'II' }, { w: 56, h: 26 });
+      if (P.voice(null).entry('chorusNoise')) P.knob(G, { x: 1560, y: 290, r: 13, param: 'chorusNoise', label: 'chorus noise', caption: 'HISS', captionY: -22, captionSize: 8.5, kind: 'trim',
+        style: { skirt: '#9a9a96', edge: '#3a3a38', ticks: 0, slot: true, pointer: '#2a2a28', label: C.ink } });
+
+      // the polyphonic step sequencer, then the keys (tap toggles a note of the selected step's chord while REC is on)
+      var SQ = synthSeq(P, { poly: true, box: L.seq, colours: SEQ106, oct: 48 });
+      var B = L.bed;
+      P.el('rect', { x: B[0], y: B[1], width: B[2], height: B[3], rx: 4, fill: '#0b0b0c' }, svg);
+      var onNotes = P.canEdit() ? function (ns, e) { SQ.enter(ns, e); } : null;
+      var kb = port ? keyboard(P, svg, { x: B[0] + 6, y: B[1] + 8, w: B[2] - 12, h: B[3] - 16, lo: 48, hi: 67, chord: true, dur: 0.6, onNotes: onNotes, lit: '#e8781e' })
+        : keyboard(P, svg, { x: 20, y: B[1] + 8, w: 1560, h: B[3] - 16, lo: 36, hi: 84, chord: true, dur: 0.6, onNotes: onNotes, lit: '#e8781e' });
+      if (port) octaveKeys(P, svg, L.oct[0], L.oct[1], L.oct[2], L.oct[3], kb, { ink: C.ink }, 48, 67);
+      SQ.keyboard = kb;
+      return {};
+    }
+  });
+
+  root.Panels = Panels;
+})();

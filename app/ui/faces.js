@@ -15,6 +15,12 @@
  *   sections: [{title, params: ['cutoff', {p:'wave', widget:'select', label:'wave', options:[...]}], widget:'knob'|'slider'}],
  *   strip: [param names for the strip density], width: {strip, face, window}, height: {strip, face, window},
  *   heroH: {strip, face, window}, labels: {param: 'text'}, options: {param: [choices] | function (device, host) -> [choices]},
+ *   skin: {ink, dim, wash} overrides the family colours for this face (the 808 and 909 looks); a spec entry with basis 'prior'
+ *   (a guessed value, not fitted) gets a small dotted ring on its control,
+ *   panels: [{density: ['window'], build: function ({device, host, density, width}) -> {el, update(), resize(w,h)?, dispose()?}}]
+ *           extra DOM between the hero and the sections (the sampler's zone map, region panel and buttons),
+ *   quick: [param names] shown instead of the sections at face density (like strip), live: true | function (device, host),
+ *   sigExtra: function (device, host) -> string appended to the hero redraw signature,
  *   heroPointer: function (phase 'down'|'move'|'up', {x, y, w, h}, device, host, api) -> state|null  (drag handles on the hero;
  *                api.write(param, v) holds the path once per gesture and writes it)
  * }
@@ -47,8 +53,10 @@
   };
   var FAMILY = {
     kick: 'drums', clap: 'drums', hat_closed: 'drums', hat_open: 'drums', shaker: 'drums', perc: 'drums', sub: 'bass', bass: 'bass',
-    stab: 'keys', lead: 'keys', pad: 'keys', riser: 'fx', impact: 'fx', compressor: 'dynamics', limiter: 'dynamics', sidechain: 'dynamics',
-    delay: 'time', reverb: 'time', chorus: 'time', filter: 'tone', eq3: 'tone', saturator: 'tone', widener: 'utility', channel: 'utility', sampler: 'drums'
+    stab: 'keys', fm: 'keys', lead: 'keys', pad: 'keys', riser: 'fx', impact: 'fx', compressor: 'dynamics', limiter: 'dynamics', sidechain: 'dynamics',
+    delay: 'time', reverb: 'time', chorus: 'time', filter: 'tone', eq3: 'tone', saturator: 'tone', widener: 'utility', decorrelate: 'utility', channel: 'utility', sampler: 'drums',
+    bd808: 'drums', sd808: 'drums', cp808: 'drums', ch808: 'drums', oh808: 'drums', cy808: 'drums', cb808: 'drums', lt808: 'drums', mt808: 'drums', ht808: 'drums', lc808: 'drums', mc808: 'drums', hc808: 'drums', rs808: 'drums', cl808: 'drums', ma808: 'drums',
+    bd909: 'drums', sd909: 'drums', lt909: 'drums', mt909: 'drums', ht909: 'drums', rs909: 'drums', cp909: 'drums', ch909: 'drums', oh909: 'drums', cr909: 'drums', rd909: 'drums'
   };
   var DEFAULT_W = { strip: 176, face: 380, window: 560 };
   var HERO_H = { strip: 40, face: 76, window: 170 };
@@ -57,7 +65,8 @@
     wave: ['sine', 'square', 'sawtooth', 'triangle'],
     mode: ['lowpass', 'highpass', 'bandpass', 'notch', 'peaking', 'lowshelf', 'highshelf', 'allpass'],
     division: [{ value: '', label: 'free' }, '1/32', '1/16', '1/16d', '1/16t', '1/8', '3/16', '1/8d', '1/8t', '1/4', '1/4d', '1/4t', '1/2', '1/1'],
-    algo: ['ir', 'freeverb'], curve: ['lin', 'db']
+    algo: ['ir', 'freeverb'], curve: ['lin', 'db'],
+    filter: ['off', 'lowpass', 'highpass', 'bandpass', 'notch', 'lp24', 'hp24'], lfoWave: ['sine', 'triangle', 'square', 'sawtooth']
   };
 
   // ------------------------------------------------------------------ small helpers
@@ -128,7 +137,12 @@
 
   // ------------------------------------------------------------------ palette for hero code
   function readPalette(R, colors) {
-    var fam = familyOf(R.device), f = FAM[fam] || FAM.utility, dashed = !!(R.device.ref && R.device.ref._bypassed);
+    var fam = familyOf(R.device), f = FAM[fam] || FAM.utility, dashed = !!(R.device.ref && R.device.ref._bypassed), sk = R.layout.skin;
+    if (sk) {
+      f = sk;
+      if (colors && colors.ink) colors = Object.assign({}, colors, { ink: sk.ink, famDim: sk.dim, wash: sk.wash });
+      else return { ink: sk.ink, dim: sk.dim, wash: sk.wash, fg: '#d8d8e6', line: '#2a2a3a', bg: '#15151e', on: '#75f97f', dashed: dashed };
+    }
     if (colors && colors.ink) {            // Widgets.curve passes resolved colours as the fourth draw argument
       return { ink: colors.ink, dim: colors.famDim || f.dim, wash: colors.wash || f.wash, fg: colors.fg || '#d8d8e6', line: colors.line || '#2a2a3a',
                bg: colors.panel || '#15151e', on: colors.on || '#75f97f', dashed: dashed };
@@ -241,9 +255,13 @@
     var cur = safe(function () { return host.getParam(path); }, undefined);
     if (cur === undefined || cur === null) cur = entry.value;
     var c = { p: p, path: path, kind: kind, widget: wname, last: cur, state: null, rampKey: '', w: null, optsSig: null, optsFn: null };
-    var noHold = (p === 'mute' || p === 'solo');      // session state, not arrangement parameters: never held
+    var noHold = (p === 'mute' || p === 'solo' || typeof item.write === 'function');      // session state, not arrangement parameters: never held
     function hold() { if (noHold) return; R.held[path] = true; if (typeof host.hold === 'function') safe(function () { host.hold(path); }); }
-    function write(v) { c.last = v; if (typeof host.setParam === 'function') safe(function () { host.setParam(path, v); }); }
+    function write(v) {
+      c.last = v;
+      if (typeof item.write === 'function') { safe(function () { item.write(v, R.device, R.host); }); return; }
+      if (typeof host.setParam === 'function') safe(function () { host.setParam(path, v); });
+    }
     var label = labelFor(R, p, item), size = R.density;
     var song = (kind === 'num') ? docValue(host, R.device, p) : undefined;     // the song's own value, captured when the control is built
     if (wname === 'toggle') {
@@ -264,6 +282,14 @@
       if (c.w && c.w.setStock) safe(function () { c.w.setStock(entry.value); });
     }
     c.el = c.w && c.w.el;
+    if (c.el && entry.basis === 'prior') {                // a guessed value, not fitted: a small dotted ring, no words
+      var ring = h('span', 'hv-prior');
+      ring.style.cssText = 'position:absolute;top:1px;right:1px;width:7px;height:7px;box-sizing:border-box;border:1.5px dotted var(--fam-ink, currentColor);border-radius:50%;pointer-events:none';
+      setAttr(ring, 'aria-hidden', 'true'); setAttr(ring, 'data-basis', 'prior');
+      if (entry.label) setAttr(ring, 'title', entry.label);
+      if (c.el.style && !c.el.style.position) c.el.style.position = 'relative';
+      add(c.el, ring);
+    }
     R.controls.push(c);
     return c;
   }
@@ -316,6 +342,8 @@
   function tag(R, el, cls) {
     el.className = cls;
     setAttr(el, 'data-fam', familyOf(R.device)); setAttr(el, 'data-type', R.device.type); setAttr(el, 'data-device', R.device.id || '');
+    var sk = R.layout.skin;
+    if (sk && el.style && el.style.setProperty) { el.style.setProperty('--fam-ink', sk.ink); el.style.setProperty('--fam-dim', sk.dim); el.style.setProperty('--fam-wash', sk.wash); }
   }
 
   function renderChip(R) {
@@ -373,7 +401,7 @@
   function bindPointer(R, wrap) {
     var state = null, held = false;
     function api() {
-      return { write: function (param, v) {
+      return { redraw: function () { if (R.hero && R.hero.redraw) R.hero.redraw(); }, write: function (param, v) {
         var path = R.device.pathPrefix + '.' + param;
         if (!held) { held = true; R.held[path] = true; if (typeof R.host.hold === 'function') safe(function () { R.host.hold(path); }); }
         else R.held[path] = true;
@@ -421,15 +449,22 @@
       if (L.heroPointer) bindPointer(R, wrap);
     }
     var i, ctls;
+    R.panels = [];
+    if (!generic && L.panels) for (i = 0; i < L.panels.length; i++) {
+      var pn = L.panels[i];
+      if (pn.density && pn.density.indexOf(d) < 0) continue;
+      var made = safe(function () { return pn.build({ device: R.device, host: R.host, density: d, width: heroSize(R).w }); }, null);
+      if (made && made.el) { R.panels.push(made); add(body, made.el); }
+    }
     if (generic) {
       var all = unplaced(R.device, L);
       ctls = h('div', 'face-controls');
       ctls.style.flexDirection = 'column'; ctls.style.alignItems = 'stretch'; ctls.style.flex = '1 1 100%';
       for (i = 0; i < all.length; i++) add(ctls, makeControl(R, all[i], { p: all[i] }, null, 'slider').el);
       add(body, ctls);
-    } else if (d === 'strip') {
+    } else if (d === 'strip' || (d === 'face' && L.quick)) {
       ctls = h('div', 'face-controls');
-      var names = L.strip || firstParams(L, R.device.spec, 4);
+      var names = (d === 'face' && L.quick) ? L.quick : (L.strip || firstParams(L, R.device.spec, 4));
       for (i = 0; i < names.length; i++) { var itm = itemOf(names[i]), cc = makeControl(R, itm.p, itm, null); if (cc) add(ctls, cc.el); }
       add(body, ctls);
     } else {
@@ -474,9 +509,11 @@
         var rk = m.ramp ? m.ramp.from + '>' + m.ramp.to : '';
         if (rk !== c.rampKey) { c.rampKey = rk; if (m.ramp && c.w && c.w.setRamp) safe(function () { c.w.setRamp(m.ramp.from, m.ramp.to); }); }
       }
+      for (i = 0; i < (R.panels || []).length; i++) { var pa = R.panels[i]; if (pa.update) safe(function () { pa.update(); }); }
       if (R.hero && R.hero.redraw) {
-        var sig = R.layout.live ? null : heroSig(R);
-        if (R.layout.live || sig !== R.sig) { R.sig = sig; R.hero.redraw(); }
+        var live = typeof R.layout.live === 'function' ? !!safe(function () { return R.layout.live(R.device, R.host); }, false) : !!R.layout.live;
+        var sig = live ? null : heroSig(R);
+        if (live || sig !== R.sig) { R.sig = sig; R.hero.redraw(); }
       }
     }
     function resize(w, hh) {
@@ -484,9 +521,11 @@
       w = Math.max(60, w | 0); hh = Math.max(24, hh | 0);
       // (w, hh) is the whole face area (the window body below the title bar), not the hero: the hero takes the width and at most
       // ~45% of the height (42% here, 60..340 px), the sections and the "more" drawer lay out below it and the body scrolls
-      w = Math.max(60, w - (R.density === 'window' ? 32 : R.density === 'strip' ? 18 : 26));
+      var wAll = Math.max(60, w - (R.density === 'window' ? 32 : R.density === 'strip' ? 18 : 26)), hAll = hh;
+      w = wAll;
       hh = Math.round(Math.min(Math.max(hh * 0.42, 60), 340));
       R.heroW = w; R.heroH = hh;
+      for (var pi = 0; pi < (R.panels || []).length; pi++) { var pr = R.panels[pi]; if (pr.resize) safe(function () { pr.resize(wAll, hAll); }); }
       if (R.hero && typeof R.hero.resize === 'function') { R.hero.resize(w, hh); R.sig = null; return; }
       var old = R.hero && R.hero.el, nh = buildHero(R, w, hh);
       if (old && R.heroWrap.replaceChild) R.heroWrap.replaceChild(nh.el, old); else add(R.heroWrap, nh.el);
@@ -495,6 +534,7 @@
     function dispose() {
       if (R.disposed) return;
       R.disposed = true;
+      for (var pj = 0; pj < (R.panels || []).length; pj++) { var pd = R.panels[pj]; if (pd.dispose) safe(function () { pd.dispose(); }); }
       for (var i = 0; i < R.controls.length; i++) { var w = R.controls[i].w; if (w && typeof w.dispose === 'function') safe(function () { w.dispose(); }); }
       if (el.parentNode && el.parentNode.removeChild) el.parentNode.removeChild(el);
       R.controls.length = 0; R.hero = null;
@@ -538,6 +578,7 @@
       }
     }
     for (i = 0; i < (L.strip || []).length; i++) { name = itemOf(L.strip[i]).p; if (!spec || !spec[name]) out.push(type + '.' + name + ': named in strip but not in the spec'); }
+    for (i = 0; i < (L.quick || []).length; i++) { name = itemOf(L.quick[i]).p; if (!spec || !spec[name]) out.push(type + '.' + name + ': named in quick but not in the spec'); }
     for (name in (L.labels || {})) if (spec && !spec[name]) out.push(type + '.' + name + ': label for a param not in the spec');
     if (spec) for (name in spec) if (Object.prototype.hasOwnProperty.call(spec, name)) {
       if (!kindOf(spec[name])) out.push(type + '.' + name + ': spec param cannot be shown (no min/max, not a string or boolean): unreachable');
@@ -551,6 +592,8 @@
     var S = root.Synths, P = root.Processors;
     if (S && S.types) { var ts = S.types(); for (i = 0; i < ts.length; i++) if (!specs[ts[i]]) specs[ts[i]] = S.spec(ts[i]); }
     if (P && P.types) { var tp = P.types(); for (i = 0; i < tp.length; i++) if (!specs[tp[i]]) specs[tp[i]] = P.spec(tp[i]); }
+    var Dr = root.Drums;
+    if (Dr && Dr.types) { var td = Dr.types(); for (i = 0; i < td.length; i++) if (!specs[td[i]]) specs[td[i]] = Dr.spec(td[i]); }
     for (t in defs) {
       if (!Object.prototype.hasOwnProperty.call(defs, t)) continue;
       if (!specs[t] && S && S.spec) specs[t] = S.spec(t);
