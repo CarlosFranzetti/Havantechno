@@ -49,6 +49,8 @@
     decay: P(200, 2000, 400, 'ms', 'source', 'time constant of the filter envelope on normal notes; accented notes use 200 ms (Open303VST.cpp 236, P1)'),
     accent: P(0, 1, 0.6, '', 'source', 'accent gain: up to +1 oct of cutoff sweep and +4 x envelope on the VCA (rosic_Open303.h 372, 380)'),
     slideTime: P(0, 200, 60, 'ms', 'source', 'slide RC on the pitch in semitones, tau = 22 ms x slideTime / 60: the default 60 is the stock 22 ms (100k x 0.22 uF; 60 ms is the audible time, Devil Fish manual)'),
+    // A3 (Selector Crew T2, 2026-11-27)
+    tuneError: P(0, 50, 0, 'ct', 'prior', 'tuning error per key: every MIDI note gets its own fixed offset of sd x z cents, z near-normal and fixed by the instrument\'s seed (|z| <= 3.46, so at sd 5 every key is within 17.3 ct); two seeds give two different keyboards. 0 = equal temperament, the default, so every measured row of the engine stays as it was. No unit has been measured for this project: the size is the owner\'s to set'),
     level: P(0, 1.5, 1, '', 'prior', 'output gain')
   };
   var RANGES = ['lo', '32', '16', '8', '4', '2'];
@@ -169,6 +171,14 @@
     release: P(0, 1, 0.35, '', 'paper', 'as decay; 10 ms when sustain <= 0.02 (Junox juno60Envelope.js 214)'),
     chorus: { min: 0, max: 2, value: 1, options: [0, 1, 2], unit: '', basis: 'paper', label: 'off, I (0.513 Hz), II (0.863 Hz): triangle, lines 1.66 to 5.35 ms in antiphase, dry 0.44 wet 0.56 (Juno60 Chorus README, Junox chorus.js); each line a 256-stage bucket-brigade model with the Juno-60 input and output filters (Holters and Parker, DAFx-18, via BBDDelay)' },
     chorusNoise: P(0, 1, 0.1, '', 'prior', 'BBD hiss, added at every read of each bucket-brigade line and shaped by its output filter, so it is louder on the slow-clocked (long) line and swaps slowly left and right (Youth106 via P3). 0 = off; level linear, 1 = about -39 dB and the default 0.1 about -59 dB re one voice\'s dry RMS (A2, default patch), -81 dBFS: nobody has measured a unit for this project (juno-bench)'),
+    // A3 (Selector Crew T2, 2026-11-27): seeded per-voice variance and slow drift. Each voice v gets deviates z fixed by the
+    // instrument's seed (near-normal, |z| <= 3.46): two renders with one seed are identical, two seeds differ within
+    // 3.46 x the row. The sizes are priors: no unit has been measured for this project.
+    voiceTune: P(0, 5, 0.2, 'ct', 'prior', 'per-voice pitch offset, sd in cents (every voice within 3.46 sd: 0.69 ct at the default). Kept small: the DCOs divide one master clock, so the voices are in tune by design (memory, not read)'),
+    voiceCutoff: P(0, 100, 15, 'ct', 'prior', 'per-voice cutoff offset, sd in cents of cutoff (100 = one semitone; every voice within 3.46 sd: 52 ct at the default). Stands for the spread of the voice filters (memory, not measured)'),
+    voiceEnv: P(0, 20, 2, '%', 'prior', 'per-voice scale of the attack, decay and release times, sd in percent, one deviate per stage and voice (every one within 3.46 sd: 6.9 % at the default)'),
+    driftTune: P(0, 5, 0.3, 'ct', 'prior', 'slow pitch drift, one curve for all six voices (one master clock), sd in cents (within 3.46 sd: 1.04 ct at the default): a new value every 8 s of song time, smooth between'),
+    driftCutoff: P(0, 100, 10, 'ct', 'prior', 'slow cutoff drift, one curve per voice, sd in cents of cutoff (within 3.46 sd: 35 ct at the default), as driftTune'),
     level: P(0, 1.5, 1, '', 'prior', 'output gain')
   };
   LAW.juno = {
@@ -196,8 +206,25 @@
     attack: function (v) { return [['attack', loglerp(J.attack, v)]]; },
     decay: function (v) { return [['decay', loglerp(J.decay, v)]]; },
     release: function (v) { return [['release', loglerp(J.decay, v)]]; },
-    chorus: function (v) { return [['chorus', Math.round(clamp(v, 0, 2))]]; }
+    chorus: function (v) { return [['chorus', Math.round(clamp(v, 0, 2))]]; },
+    voiceEnv: function (v) { return [['voiceEnv', v / 100]]; }
   };
+  MAP.tb303.tuneError = function () { return []; };      // read by the planner (key offsets on the pitch it writes)
+
+  // ------------------------------------------------------------------ seeds (A3)
+  // An instrument's seed: opts._seed when the caller gives one (the request in Selector Crew log-T2: the sequencer passes
+  // a hash of the track name and seq.seed), else a fixed one per type, as before. The same deviates as the processor's gz:
+  // fmix32 is MurmurHash3's finaliser (Austin Appleby, public domain).
+  var SEED = { tb303: 303, juno: 106 };
+  function fmix(h) { h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return h >>> 0; }
+  function gz(seed, a, b) {
+    var h = fmix(((seed ^ Math.imul(a + 1, 0x9e3779b1)) + Math.imul(b + 1, 0x632be5ab)) >>> 0), s = 0;
+    for (var q = 0; q < 4; q++) { h = fmix((h + 0x6d2b79f5) >>> 0); s += h / 2147483648 - 1; }
+    return s / 1.1547005383792515;
+  }
+  function seedOf(type, opts) { var s = opts && opts._seed; return (typeof s === 'number' && isFinite(s)) ? (s >>> 0) || 1 : SEED[type]; }
+  // the 303's key offset in semitones (tuneError cents x the key's deviate)
+  function keyOff(inst, midi) { var e = Number(inst.params.tuneError) || 0; return e > 0 ? e * gz(inst._seed, 303, Math.round(midi)) / 100 : 0; }
   var ENUMS = {
     tb303: { wave: ['saw', 'square'] },
     modeld: { osc1Range: RANGES, osc2Range: RANGES, osc3Range: RANGES, osc1Wave: WAVES, osc2Wave: WAVES, osc3Wave: WAVES3,
@@ -220,7 +247,7 @@
 
   // ------------------------------------------------------------------ instrument base (as drums.js, no drive stage)
   function makeInst(ctx, type, spec, opts, build) {
-    var inst = { type: type, ctx: ctx, out: null, pre: null, _live: [], engine: ctx ? 'fallback' : 'none', _probe: !!(opts && opts._probe) };
+    var inst = { type: type, ctx: ctx, out: null, pre: null, _live: [], engine: ctx ? 'fallback' : 'none', _probe: !!(opts && opts._probe), _seed: seedOf(type, opts), _os: opts && (opts._os === 1 || opts._os === 4) ? opts._os : 0 };
     K.defineParams(inst, spec, function (name, v, o) {
       if (!ctx) return;
       var at = (o && typeof o.at === 'number') ? o.at : ctx.currentTime;
@@ -351,7 +378,7 @@
         var e = plan303(pl, t, ev);
         applyLocks(inst, pl, W, t);
         cancel(W.gate, t);
-        setV(W.pitch, e.midi, t); setV(W.slide, e.legato ? 1 : 0, t); setV(W.acc, e.acc ? 1 : 0, t); setV(W.vel, e.vel, t);
+        setV(W.pitch, e.midi + keyOff(inst, e.midi), t); setV(W.slide, e.legato ? 1 : 0, t); setV(W.acc, e.acc ? 1 : 0, t); setV(W.vel, e.vel, t);
         setV(W.trig, e.trig, t); setV(W.gate, 1, t); setV(W.gate, 0, e.off);
         liveNote(inst, t, e.off + 0.1);
       };
@@ -361,7 +388,7 @@
     // FALLBACK (no worklet): one voice per gate; a slide keeps the voice and glides its oscillator
     inst.trigger = function (t, ev) {
       var e = plan303(pl, t, ev), P = inst.params, v = pl.fv;
-      var f = mtof(e.midi + P.tune / 100), accG = e.acc ? P.accent : 0;
+      var f = mtof(e.midi + keyOff(inst, e.midi) + P.tune / 100), accG = e.acc ? P.accent : 0;
       var res = P.resonance, rr = (1 - Math.exp(-3 * res)) / (1 - Math.exp(-3));
       var c = Math.log(P.cutoff / 313.8152786059267) / Math.log(2394.411986817546 / 313.8152786059267), em = P.envMod;
       var sc = (1 - c) * (3.773996325111173 * em + 0.736965594166206) + c * (4.194548788411135 * em + 0.864344900642434);
@@ -589,13 +616,19 @@
   BUILD.juno = function (inst) {
     var ctx = inst.ctx, pl = planner(), i;
     // opts._probe (tools/juno-bench.js only; not a parameter): one node input, summed into the voice bus before the HPF and chorus
-    var node = root.Worklets ? root.Worklets.node(ctx, PROC.juno, inst._probe ? { numberOfInputs: 1, outputChannelCount: [2], processorOptions: { seed: 106 } } : { outputChannelCount: [2], processorOptions: { seed: 106 } }) : null;
+    // processorOptions: seed 106 for the noise and the hiss (unchanged), vseed (A3) for the variance and the drift,
+    // os (opts._os, the benches only) the oversampling factor of the voice loop
+    var po = { seed: 106, vseed: inst._seed };
+    if (inst._os) po.os = inst._os;
+    var node = root.Worklets ? root.Worklets.node(ctx, PROC.juno, inst._probe ? { numberOfInputs: 1, outputChannelCount: [2], processorOptions: po } : { outputChannelCount: [2], processorOptions: po }) : null;
     inst._plan = pl;
     if (node) {
       var W = buildWorklet(inst, node);
       inst.trigger = function (t, ev) {
         var e = planJ(pl, t, ev, inst.params);
         applyLocks(inst, pl, W, t);
+        // A3: the song position for the drift curve, when the sequencer gives it (ev.songTime, requested in log-T2)
+        if (ev && typeof ev.songTime === 'number' && isFinite(ev.songTime) && W.songOff) setV(W.songOff, ev.songTime - t, t);
         for (var k = 0; k < e.used.length; k++) {
           var u = e.used[k], j = u.slot;
           cancel(W['gate' + j], t);
@@ -620,8 +653,10 @@
         if (slotV.fv && !slotV.fv.done) { try { K.cancel(slotV.fv.g.gain, t); target(slotV.fv.g.gain, 0, t, 0.003); slotV.fv.o.stop(t + 0.03); } catch (x) {} }
         var o = ctx.createOscillator(), b1 = ctx.createBiquadFilter(), b2 = ctx.createBiquadFilter(), g = ctx.createGain();
         try { o.type = P.saw || !P.pulse ? 'sawtooth' : 'square'; } catch (x) {}
-        setV(o.frequency, mtof(u.midi + P.tune / 100) * range, t);
-        var base = clamp(7.8 * Math.pow(2, P.cutoff * 200 / 12 + P.vcfKey * 5 * (u.midi - 60) / 60), 20, 18000);
+        // A3: the static per-voice offsets as on the worklet (the slot is the voice); no drift, no envelope spread here
+        var zT = (Number(P.voiceTune) || 0) * gz(inst._seed, 100 + u.slot, 0) / 100, zC = (Number(P.voiceCutoff) || 0) * gz(inst._seed, 100 + u.slot, 1) / 1200;
+        setV(o.frequency, mtof(u.midi + P.tune / 100 + zT) * range, t);
+        var base = clamp(7.8 * Math.pow(2, P.cutoff * 200 / 12 + P.vcfKey * 5 * (u.midi - 60) / 60 + zC), 20, 18000);
         var peak = clamp(base * Math.pow(2, J.env * P.envAmt), 20, 18000), fs2 = clamp(base * Math.pow(2, J.env * P.envAmt * sus), 20, 18000);
         [b1, b2].forEach(function (b, q) {
           try { b.type = 'lowpass'; } catch (x) {}

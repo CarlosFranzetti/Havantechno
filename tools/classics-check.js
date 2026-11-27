@@ -99,13 +99,14 @@ function loadProcs(sr) {
 var PROCS = loadProcs(44100);
 
 var FROZEN = {
-  tb303: ['tune', 'wave', 'cutoff', 'resonance', 'envMod', 'decay', 'accent', 'slideTime', 'level'],
+  tb303: ['tune', 'wave', 'cutoff', 'resonance', 'envMod', 'decay', 'accent', 'slideTime', 'level', 'tuneError'],   // tuneError: A3 (T2, 2026-11-27)
   modeld: ['tune', 'glide', 'glideOn', 'modMix', 'modAmount', 'oscMod', 'filterMod', 'osc1Range', 'osc1Wave', 'osc2Range', 'osc2Wave', 'osc2Detune',
            'osc3Range', 'osc3Wave', 'osc3Detune', 'osc3Keys', 'mixOsc1', 'mixOsc2', 'mixOsc3', 'mixNoise', 'noiseType', 'mixFeedback',
            'cutoff', 'emphasis', 'contour', 'keyTrack1', 'keyTrack2', 'fAttack', 'fDecay', 'fSustain', 'attack', 'decay', 'sustain',
            'decaySwitch', 'level', 'priority'],
   juno: ['tune', 'bend', 'portamento', 'voiceMode', 'lfoRate', 'lfoDelay', 'lfoAuto', 'dcoLfo', 'pwm', 'pwmMode', 'pulse', 'saw', 'sub', 'noise', 'range',
-         'hpf', 'cutoff', 'resonance', 'envAmt', 'vcfLfo', 'vcfKey', 'vcaMode', 'attack', 'decay', 'sustain', 'release', 'chorus', 'chorusNoise', 'level']
+         'hpf', 'cutoff', 'resonance', 'envAmt', 'vcfLfo', 'vcfKey', 'vcaMode', 'attack', 'decay', 'sustain', 'release', 'chorus', 'chorusNoise', 'level',
+         'voiceTune', 'voiceCutoff', 'voiceEnv', 'driftTune', 'driftCutoff']   // the last five: A3 (T2, 2026-11-27)
 };
 var BASES = { manual: 1, paper: 1, source: 1, prior: 1 };
 

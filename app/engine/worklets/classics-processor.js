@@ -541,8 +541,33 @@ var JU = {
   unisonGain: 0.6,                             // per voice with six voices on one note (P5, prior: the hardware is louder in unison)
   phase: [0, 0.81, 0.29, 0.64, 0.89, 0.86],    // fixed start phases of the free-running DCOs (Youth106: arbitrary offsets); chosen so unison sums near sqrt(6) per harmonic (P5)
   seedNoise: 1e-6,                             // thermal seed so the ladder can self-oscillate (KR-106 idea)
-  outGain: 0.32                                // calibration (P5, measured)
+  outGain: 0.32,                               // calibration (P5, measured)
+  // A2 (Selector Crew T2, 2026-11-27): the voice loop (DCO, sub, mix, ladder, VCA) runs at os x the sample rate and the
+  // six voices' sum is decimated once by Open303's elliptic quarter-band filter (the 303's and the Model D's decimator).
+  // The control values (pitch, cutoff, envelopes, LFO, noise) stay at the base rate and are held across the os
+  // sub-samples. The cutoff cap stays 0.4 x the BASE rate, as before. processorOptions.os (1 or 4) overrides it for the
+  // bench; 1 runs the old loop sample for sample.
+  os: 4,
+  // A3 (T2): seeded per-voice variance and slow drift. Every number is a prior (nothing measured on a unit). The static
+  // offsets are fixed per voice by the seed; the drift is a smooth function of the song time (songOff: song seconds
+  // minus context seconds, written by classics.js from ev.songTime when the sequencer gives it) with a new value every
+  // driftT seconds per voice, interpolated with zero slope at the lattice points (smoothstep).
+  driftT: 8,                                   // s between drift lattice points (prior)
+  driftSmooth: 0.05                            // s, one-pole on the block-rate drift value (a jump of songOff at a loop is not a step)
 };
+// fmix32, the finaliser of MurmurHash3 (Austin Appleby, placed in the public domain): an integer mixer
+function fmix(h) { h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return h >>> 0; }
+// a bounded near-normal number from integers (mean 0, sd 1, |z| <= 3.46): the sum of four hashed uniforms in [-1, 1)
+function gz(seed, a, b) {
+  var h = fmix(((seed ^ Math.imul(a + 1, 0x9e3779b1)) + Math.imul(b + 1, 0x632be5ab)) >>> 0), s = 0;
+  for (var q = 0; q < 4; q++) { h = fmix((h + 0x6d2b79f5) >>> 0); s += h / 2147483648 - 1; }
+  return s / 1.1547005383792515;
+}
+// the drift curve of stream a at time tau (s): lattice values gz(seed, a, m) every driftT seconds, smoothstep between
+function driftAt(seed, a, tau) {
+  var x = tau / JU.driftT, m = Math.floor(x), f = x - m, s = f * f * (3 - 2 * f);
+  return gz(seed, a, m) + (gz(seed, a, m + 1) - gz(seed, a, m)) * s;
+}
 
 // ------------------------------------------------------------------ bucket-brigade delay line (Juno chorus)
 // After Holters and Parker, "A Combined Model for a Bucket Brigade Device and its Input and Output Filters", DAFx-18
@@ -671,13 +696,24 @@ class JunoProcessor extends AudioWorkletProcessor {
     d('vcfLfo', 0, 0, 6); d('vcfKey', 0.5, 0, 1); d('vcaMode', 0, 0, 1);
     d('attack', 0.01, 0.0005, 30); d('decay', 0.98, 0.001, 30); d('sustain', 0.7, 0, 1); d('release', 0.3, 0.001, 30);
     d('chorus', 1, 0, 2); d('chorusNoise', 0.1, 0, 1);
+    // A3: variance and drift (classics.js maps the spec rows; all 0 = the engine before 2026-11-27)
+    d('voiceTune', 0, 0, 100); d('voiceCutoff', 0, 0, 1200); d('voiceEnv', 0, 0, 0.5); d('driftTune', 0, 0, 100); d('driftCutoff', 0, 0, 1200);
+    d('songOff', 0, -1e7, 1e7);
     return out;
   }
   constructor(options) {
     super();
-    var seed = (options && options.processorOptions && options.processorOptions.seed) || 106, i, fs = sampleRate;
+    var po = (options && options.processorOptions) || {}, seed = po.seed || 106, i, j, fs = sampleRate;
     this.alive = true;
     this.port.onmessage = (e) => { if (e.data === 'stop') this.alive = false; };
+    this.seed = (po.vseed || seed) >>> 0;              // the variance and drift seed (the noise keeps `seed`)
+    // A2: oversampling factor of the voice loop and its decimator
+    this.os = po.os === 1 || po.os === 4 ? po.os : JU.os;
+    this.acc = new Float64Array(this.os); this.dec = new Elliptic();
+    // A3: per-voice static deviates (pitch, cutoff, attack, decay, release), fixed by the seed; drift state
+    this.z = [];
+    for (j = 0; j < JU.voices; j++) this.z.push({ t: gz(this.seed, 100 + j, 0), c: gz(this.seed, 100 + j, 1), a: gz(this.seed, 100 + j, 2), d: gz(this.seed, 100 + j, 3), r: gz(this.seed, 100 + j, 4) });
+    this.drC = new Float64Array(JU.voices); this.drP = 0; this.drOn = false; this.frames = 0;
     this.rng = new Lcg(seed);
     this.v = [];
     for (i = 0; i < JU.voices; i++) {
@@ -685,7 +721,7 @@ class JunoProcessor extends AudioWorkletProcessor {
                     env: 0, st: 0, genv: 0, gst: 0, s1: 0, s2: 0, s3: 0, s4: 0, active: false, quiet: 0 });
     }
     this.lfoPh = 0.25; this.lfoEnv = 1; this.lfoT = 1e9;
-    this.nLp = 0; this.nC = 1 - Math.exp(-TWO_PI * JU.noiseLp / fs); this.subC = 1 - Math.exp(-TWO_PI * JU.subLp / fs);
+    this.nLp = 0; this.nC = 1 - Math.exp(-TWO_PI * JU.noiseLp / fs); this.subC = 1 - Math.exp(-TWO_PI * JU.subLp / (fs * this.os));
     this.hp = { x1: 0, y1: 0, lp: 0 };
     this.hpC = [0, 0, Math.exp(-TWO_PI * JU.hpf2 / fs), Math.exp(-TWO_PI * JU.hpf3 / fs)];
     this.shelfC = 1 - Math.exp(-TWO_PI * JU.hpfShelf / fs);
@@ -718,6 +754,27 @@ class JunoProcessor extends AudioWorkletProcessor {
     comp *= JU.mixNorm;
     var cA = this.cC[0].of(Math.max(aT, 0.0005)), cD = this.cC[1].of(Math.max(dT, 0.001)), cR = this.cC[2].of(Math.max(rT, 0.001));
     var gA = this.ga.of(JU.gateA / 3), gR = this.gr.of(JU.gateR / 3);
+    // A3: per-voice offsets for this block (cents of pitch, octaves of cutoff, envelope coefficients); all exactly 0 / the
+    // shared coefficients when the rows are 0, so that case computes what the engine did before
+    var vT = k0(P.voiceTune), vC = k0(P.voiceCutoff), vE = k0(P.voiceEnv), dTu = k0(P.driftTune), dCu = k0(P.driftCutoff), Z = this.z;
+    var offP = this.offP || (this.offP = new Float64Array(NV)), offC = this.offC || (this.offC = new Float64Array(NV)), eco = this.eco || (this.eco = new Float64Array(3 * NV));
+    if (dTu > 0 || dCu > 0) {
+      var tau = (typeof currentFrame === 'number' ? currentFrame : this.frames) / fs + k0(P.songOff), sm = this.drOn ? 1 - Math.exp(-n / (JU.driftSmooth * fs)) : 1;
+      this.drP += sm * (driftAt(this.seed, 7, tau) - this.drP);                  // pitch: one curve for all voices (one master clock)
+      for (j = 0; j < NV; j++) this.drC[j] += sm * (driftAt(this.seed, 8 + j, tau) - this.drC[j]);   // cutoff: one per voice
+      this.drOn = true;
+    }
+    for (j = 0; j < NV; j++) {
+      offP[j] = (vT * Z[j].t + (dTu > 0 ? dTu * this.drP : 0)) / 100;
+      offC[j] = (vC * Z[j].c + (dCu > 0 ? dCu * this.drC[j] : 0)) / 1200;
+      if (vE > 0) {                                      // the same laws as cC: attack exp(-1 / (t fs)), decay and release exp(-3.5 / (t fs))
+        eco[3 * j] = Math.exp(-1 / (Math.max(aT, 0.0005) * Math.max(0.5, 1 + vE * Z[j].a) * fs));
+        eco[3 * j + 1] = Math.exp(-3.5 / (Math.max(dT, 0.001) * Math.max(0.5, 1 + vE * Z[j].d) * fs));
+        eco[3 * j + 2] = Math.exp(-3.5 / (Math.max(rT, 0.001) * Math.max(0.5, 1 + vE * Z[j].r) * fs));
+      }
+    }
+    this.frames += n;
+    var OSJ = this.os, fo = fs * OSJ, acc = this.acc, dec = this.dec, kk;
     var vGain = (uni ? JU.unisonGain : 1) * JU.outGain, maxF = 0.4 * fs, lfoInc = lfoRate / fs;
     var chInc = JU.chorusRate[chorus] / fs || 0, aT_ = [], aG = [], aP = [], aL = [];
     var hiss = JU.hiss * hissS, mid = 0.5 * (JU.chorusMin + JU.chorusMax), span = 0.5 * (JU.chorusMax - JU.chorusMin), NB = JU.bbdStages, bIn = this.bIn, bGd = this.bGd;
@@ -747,15 +804,20 @@ class JunoProcessor extends AudioWorkletProcessor {
       // shared noise, low-passed
       this.nLp += this.nC * (this.rng.next() - this.nLp);
       var noise = this.nLp * 1.7, mix = 0;
+      for (kk = 0; kk < OSJ; kk++) acc[kk] = 0;
+      var nAct = 0;
       for (j = 0; j < NV; j++) {
         var w = V[j];
         if (!w.active) continue;
+        nAct++;
         var tgt = pv(aP[j], i);
         if (w.glide > 0) { if (w.glide !== w.gT) { w.gT = w.glide; w.gC = Math.exp(-1 / (w.glide * fs)); } w.note = tgt + w.gC * (w.note - tgt); } else w.note = tgt;
         // ADSR (Juno-60 shapes): attack RC toward 1/0.632 cut at 1, decay and release RCs with tau = time / 3.5
-        if (w.st === 1) { w.env += (JU.attackTarget - w.env) * (1 - cA); if (w.env >= 1) { w.env = 1; w.st = 2; } }
-        else if (w.st === 2) w.env = sus + (w.env - sus) * cD;
-        else if (w.st === 3) w.env *= cR;
+        var eA = cA, eD = cD, eR = cR;
+        if (vE > 0) { eA = eco[3 * j]; eD = eco[3 * j + 1]; eR = eco[3 * j + 2]; }
+        if (w.st === 1) { w.env += (JU.attackTarget - w.env) * (1 - eA); if (w.env >= 1) { w.env = 1; w.st = 2; } }
+        else if (w.st === 2) w.env = sus + (w.env - sus) * eD;
+        else if (w.st === 3) w.env *= eR;
         var vca;
         if (gateMode) {
           if (w.gst === 1) { w.genv += (1.0001 - w.genv) * (1 - gA); if (w.genv >= 1) { w.genv = 1; w.gst = 2; } }
@@ -763,30 +825,38 @@ class JunoProcessor extends AudioWorkletProcessor {
           vca = w.genv;
         } else vca = w.env;
         if (w.st === 3 && w.env < 1e-5 && (!gateMode || w.genv < 1e-5)) { w.active = false; w.env = 0; w.genv = 0; continue; }
-        // DCO
-        var f = mtof(w.note + tune + vib * lfo) * range, dt = f / fs;
+        // DCO (control values at the base rate; the waveform at os x the rate)
+        var f = mtof(w.note + tune + vib * lfo + offP[j]) * range, dt = f / fo;
         var pw = pwmMode === 1 ? pwmS : (pwmMode === 2 ? pwmS * w.env : pwmS * (lfo + 1) * 0.5);
-        var duty = 0.5 - 0.45 * clamp(pw, 0, 1), ph = w.ph, x = 0;
-        if (gS > 0) x += gS * saw(ph, dt);
-        if (gP > 0) x += gP * pulse(ph, dt, duty);
-        if (gB > 0) { var sq = pulse(w.sph, dt * 0.5, 0.5); w.subLp += this.subC * (sq - w.subLp); x += gB * w.subLp; }
-        x += gN * noise;
-        x = x * comp + JU.seedNoise * noise;
-        w.ph = ph + dt; if (w.ph >= 1) w.ph -= 1;
-        w.sph += dt * 0.5; if (w.sph >= 1) w.sph -= 1;
-        // VCF: cutoff law in octaves (Junox voice.js 180-192), TPT ladder
+        var duty = 0.5 - 0.45 * clamp(pw, 0, 1);
+        // VCF: cutoff law in octaves (Junox voice.js 180-192), TPT ladder (prewarped at the oversampled rate)
         var res = pv(pR, i);
-        var oct = pv(pE, i) * w.env + vLfo * lfo + vKey * 5 * (w.note - 60) / 60 + 0.5 * res / 4.08;
+        var oct = pv(pE, i) * w.env + vLfo * lfo + vKey * 5 * (w.note - 60) / 60 + 0.5 * res / 4.08 + offC[j];
         var fc = clamp(pv(pC, i) * Math.pow(2, oct), 20, maxF);
-        var gg = Math.tan(Math.PI * fc / fs), G = gg / (1 + gg), iG = 1 - G;
-        var S1 = w.s1 * iG, S2 = w.s2 * iG, S3 = w.s3 * iG, S4 = w.s4 * iG;
-        var sig = G * G * G * S1 + G * G * S2 + G * S3 + S4;
-        var u = th((x - res * sig) / (1 + res * G * G * G * G));
-        var v1 = (u - w.s1) * G, y1 = v1 + w.s1; w.s1 = y1 + v1;
-        var v2 = (y1 - w.s2) * G, y2 = v2 + w.s2; w.s2 = y2 + v2;
-        var v3 = (y2 - w.s3) * G, y3 = v3 + w.s3; w.s3 = y3 + v3;
-        var v4 = (y3 - w.s4) * G, y4 = v4 + w.s4; w.s4 = y4 + v4;
-        mix += y4 * vca;
+        var gg = Math.tan(Math.PI * fc / fo), G = gg / (1 + gg), iG = 1 - G, rD = 1 + res * G * G * G * G;
+        for (kk = 0; kk < OSJ; kk++) {
+          var ph = w.ph, x = 0;
+          if (gS > 0) x += gS * saw(ph, dt);
+          if (gP > 0) x += gP * pulse(ph, dt, duty);
+          if (gB > 0) { var sq = pulse(w.sph, dt * 0.5, 0.5); w.subLp += this.subC * (sq - w.subLp); x += gB * w.subLp; }
+          x += gN * noise;
+          x = x * comp + JU.seedNoise * noise;
+          w.ph = ph + dt; if (w.ph >= 1) w.ph -= 1;
+          w.sph += dt * 0.5; if (w.sph >= 1) w.sph -= 1;
+          var S1 = w.s1 * iG, S2 = w.s2 * iG, S3 = w.s3 * iG, S4 = w.s4 * iG;
+          var sig = G * G * G * S1 + G * G * S2 + G * S3 + S4;
+          var u = th((x - res * sig) / rD);
+          var v1 = (u - w.s1) * G, y1 = v1 + w.s1; w.s1 = y1 + v1;
+          var v2 = (y1 - w.s2) * G, y2 = v2 + w.s2; w.s2 = y2 + v2;
+          var v3 = (y2 - w.s3) * G, y3 = v3 + w.s3; w.s3 = y3 + v3;
+          var v4 = (y3 - w.s4) * G, y4 = v4 + w.s4; w.s4 = y4 + v4;
+          acc[kk] += y4 * vca;
+        }
+      }
+      if (OSJ === 1) mix = acc[0];
+      else if (nAct > 0 || this.decLive) {               // the decimator runs while a voice sounds and until its tail is under 1e-12
+        for (kk = 0; kk < OSJ; kk++) mix = dec.run(acc[kk]);
+        this.decLive = nAct > 0 || Math.abs(mix) > 1e-12;
       }
       mix *= vGain;
       if (ext) mix += ext[i];
