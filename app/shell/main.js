@@ -6,6 +6,8 @@
  *   window.open from the main window so that window.opener.HavantechnoBridge works (see app/ui/app.js).
  * - separate(path, {model}) / cancelSeparate: runs tools/separate.py with the system Python (shell/separation.js), progress on
  *   'shell:separateProgress'; stems go to <userData>/separation/<name>-<hash>/.
+ * - pickDirectory({title}) grants a folder for writeFile / copyFile (shell/files.js): the page may write only inside folders
+ *   chosen in a dialog during this run and inside <userData>. appVersion() answers app.getVersion().
  * - IPC: openFile, saveFile, appDataPath, readAppData, writeAppData, openDeviceWindow,
  *   closeDeviceWindow, setDeviceWindowsVisible. Bounds of the main window and of each device window
  *   are remembered in <userData>/window-state.json. */
@@ -14,6 +16,7 @@ var electron = require('electron');
 var path = require('path');
 var fs = require('fs');
 var Separation = require('./separation');
+var Files = require('./files');
 
 var app = electron.app, BrowserWindow = electron.BrowserWindow, ipcMain = electron.ipcMain;
 var dialog = electron.dialog, protocol = electron.protocol, screen = electron.screen, Menu = electron.Menu;
@@ -215,15 +218,25 @@ function appDataFile(name) {
 }
 
 var separator = null;
+function separateScript() {
+  // Unpackaged: tools/separate.py sits beside app/ in the repository. Packaged: electron-builder's extraResources puts it
+  // at <resources>/tools/separate.py (outside app.asar, so Python can read it).
+  var dev = path.resolve(APP_DIR, '..', 'tools', 'separate.py');
+  var packed = process.resourcesPath ? path.join(process.resourcesPath, 'tools', 'separate.py') : '';
+  if (app.isPackaged) return packed;
+  return fs.existsSync(dev) ? dev : packed;
+}
 function getSeparator() {
-  if (!separator) {
-    // tools/separate.py sits beside app/ in the repository; a packaged build would ship it as resources/tools/separate.py
-    var dev = path.resolve(APP_DIR, '..', 'tools', 'separate.py');
-    var packed = process.resourcesPath ? path.join(process.resourcesPath, 'tools', 'separate.py') : '';
-    separator = Separation.createRunner({ userData: app.getPath('userData'), script: fs.existsSync(dev) ? dev : packed });
-  }
+  if (!separator) separator = Separation.createRunner({ userData: app.getPath('userData'), script: separateScript() });
   return separator;
 }
+
+var fileGuard = null;
+function getGuard() {
+  if (!fileGuard) fileGuard = Files.createGuard({ appData: function () { return app.getPath('userData'); } });
+  return fileGuard;
+}
+function refuse(msg) { return Promise.reject(new Error('[bad-path] ' + msg)); }
 
 function registerIpc() {
   // openFile({filters, binary}) -> {name, path, text} | {name, path, bytes} | null
@@ -342,6 +355,27 @@ function registerIpc() {
     });
   });
   ipcMain.handle('shell:cancelSeparate', function (e) { return fromMain(e) ? getSeparator().cancel() : false; });
+  // pickDirectory({title}) -> path | null. A folder dialog; the chosen folder is granted for writeFile and copyFile until the app quits.
+  ipcMain.handle('shell:pickDirectory', async function (e, opts) {
+    if (!fromMain(e)) return refuse('Folders can only be chosen from the main window.');
+    opts = opts && typeof opts === 'object' ? opts : {};
+    var r = await dialog.showOpenDialog(parentFor(e), {
+      properties: ['openDirectory', 'createDirectory'], title: typeof opts.title === 'string' ? opts.title.slice(0, 200) : undefined
+    });
+    if (r.canceled || !r.filePaths.length) return null;
+    await getGuard().grant(r.filePaths[0]);
+    return r.filePaths[0];
+  });
+  // writeFile(path, bytes) -> true; copyFile(src, dst) -> true. Main window only; the rules are in shell/files.js.
+  ipcMain.handle('shell:writeFile', function (e, p, data) {
+    if (!fromMain(e)) return refuse('Files can only be written from the main window.');
+    return getGuard().writeFile(p, data);
+  });
+  ipcMain.handle('shell:copyFile', function (e, src, dst) {
+    if (!fromMain(e)) return refuse('Files can only be copied from the main window.');
+    return getGuard().copyFile(src, dst);
+  });
+  ipcMain.on('shell:appVersion', function (e) { e.returnValue = app.getVersion(); });
   ipcMain.handle('shell:appDataPath', function () { return app.getPath('userData'); });
   // Small named files in the app-data folder (autosave, preferences).
   ipcMain.handle('shell:readAppData', async function (e, name) {

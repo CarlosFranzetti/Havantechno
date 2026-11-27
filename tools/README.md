@@ -305,3 +305,19 @@ O1's (round 4 and round 2, section 5) and used only as reference points.
 correlation (identical and independent noise), tempo (126 BPM click train), kick glide (synthetic 264/51/24 ms),
 sub duck (synthetic 0.8 duck). `node --check tools/render.js` passes. Renders and scores are recorded in
 `docs/research/2026-10-23-build-crew/transcripts/log-A9.md`.
+
+## solo-bundle.js: hosted bundles of the solo pages
+
+`node tools/solo-bundle.js app/solo/303.html [--out tools/out/bundles/303] [--note "engine version"] [--test]`, or `--all` for every `app/solo/*.html`.
+Turns a solo page into `tools/out/bundles/<name>/` (git-ignored build output): the fragment `<name>.html` (no doctype, html, head or body; starts
+with `<title>`, the `claude:viewport-fit-sides` meta, ONE inlined `<style>` with a bare dark `:root` token block, body side padding by safe-area
+`max()`, doubled gutters and body margins removed, colour literals in the page's own CSS turned into tokens, then markup, then scripts with
+relative paths and no `..`), the referenced files copied unchanged under `engine/`, `engine/worklets/` (read from `Worklets.files`), `ui/` and
+the page's own scripts, `files.json` (published path to absolute path in the bundle), and `test.html` (fragment in a skeleton imitating the
+host head). It fails on any absolute URL, `alert`/`confirm`/`prompt`, or CSS `url()`/`@import`; it only warns about code that can start a
+download or sets `style.display`. A static lint always runs on the written fragment. `--test` serves the bundle on a free port, loads
+`test.html` at 1280x800 and as an iPhone 13, taps the start control (`#so-start`, tried first, plus a list; `--start-selector` overrides),
+waits, then reports page errors, console errors, failed or off-host requests, the engine kind (`window.HVT303`, or any `window.HVT*`/`Solo*`
+object with `host()`, such as the `global` a `Solo.boot` page names), sound (nine master-meter reads over two seconds; the first only attaches
+the analyser), horizontal overflow, and saves `shot-*.png` in the bundle. Exit code 1 on any failure. Not covered: audible quality,
+real iOS Safari, and the host's actual wrapper.
