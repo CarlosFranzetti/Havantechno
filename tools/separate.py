@@ -195,7 +195,7 @@ def main():
     ap.add_argument('--stems', default='drums,bass,other', help='MDX-Net stems to compute (default all three)')
     ap.add_argument('--model', choices=['auto', 'mdx', 'htdemucs'], default='auto',
                     help='auto (default): HT-Demucs when the demucs package runs, else MDX-Net (L2 comparison, log-L2.md)')
-    ap.add_argument('--models', default=os.environ.get('HAVANTECHNO_MODELS', os.path.join(os.path.expanduser('~'), '.cache', 'havantechno', 'models')),
+    ap.add_argument('--models', default=os.environ.get('RECUT_MODELS', os.path.join(os.path.expanduser('~'), '.cache', 'recut', 'models')),
                     help='where the ONNX files are cached (never the repository)')
     a = ap.parse_args()
     if a.check:

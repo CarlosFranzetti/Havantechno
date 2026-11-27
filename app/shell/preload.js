@@ -1,4 +1,4 @@
-/* Exposes window.HavantechnoShell to the page (present only in Electron). Sandboxed preload: electron APIs only. */
+/* Exposes window.RecutShell to the page (present only in Electron). Sandboxed preload: electron APIs only. */
 'use strict';
 var electron = require('electron');
 var contextBridge = electron.contextBridge, ipcRenderer = electron.ipcRenderer, webUtils = electron.webUtils;
@@ -43,7 +43,7 @@ function joinPath(dir, name) {
 }
 var appVersionCache = null;
 
-contextBridge.exposeInMainWorld('HavantechnoShell', {
+contextBridge.exposeInMainWorld('RecutShell', {
   isElectron: true,
   platform: process.platform,
   openFile: function (opts) { return ipcRenderer.invoke('shell:openFile', opts || {}); },

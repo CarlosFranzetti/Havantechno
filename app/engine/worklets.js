@@ -1,4 +1,4 @@
-/* Havantechno app engine - worklets.js
+/* Recut app engine - worklets.js
  * Global `Worklets`: AudioWorklet module loading per context, shared by classics.js (tb303, modeld; later juno).
  *
  *   Worklets.load(ctx).then(function (ok) {});   // adds the processor module(s) once per context; ok false = fallback
@@ -17,7 +17,7 @@
   var root = (typeof window !== 'undefined') ? window : (typeof globalThis !== 'undefined' ? globalThis : this);
   var FILES = ['classics-processor.js'];
 
-  // resolve engine/worklets/ from this script's own URL (works over http and Electron's havantechno:// scheme)
+  // resolve engine/worklets/ from this script's own URL (works over http and Electron's recut:// scheme)
   var baseUrl = 'engine/worklets/';
   try {
     var cs = root.document && root.document.currentScript;

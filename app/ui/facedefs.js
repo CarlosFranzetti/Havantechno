@@ -1,4 +1,4 @@
-/* Havantechno app - ui/facedefs.js
+/* Recut app - ui/facedefs.js
  * The 23 face definitions for Faces.define: 13 instruments, 10 processor types (filter, saturator, delay, reverb, eq3,
  * compressor, limiter, sidechain, widener, chorus) and the channel strip. Data plus one hero-graph function each.
  * A definition names parameters only; min, max, unit and default come from device.spec at render time.
@@ -774,7 +774,7 @@
       finish(host.sliceToProgram(bid, {}), 'sliced ' + bid);
     }, has('sliceToProgram'));
     btn('Export SFZ…', function () {
-      host.exportProgram(d.track, { shell: root.HavantechnoShell }).then(function (r) {
+      host.exportProgram(d.track, { shell: root.RecutShell }).then(function (r) {
         report('exported ' + ((r && r.id) || d.track));
         if (r && r.text && !r.path && root.Blob && root.URL && root.URL.createObjectURL && doc.body) {
           var a = doc.createElement('a'); a.href = root.URL.createObjectURL(new root.Blob([r.text], { type: 'text/plain' })); a.download = String(r.id || d.track) + '.sfz'; doc.body.appendChild(a); if (a.click) a.click(); if (a.remove) a.remove();

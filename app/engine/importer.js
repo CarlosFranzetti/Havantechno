@@ -1,4 +1,4 @@
-/* Havantechno app engine - importer.js (D1, Dubplate Crew)
+/* Recut app engine - importer.js (D1, Dubplate Crew)
  * Global `Importer`: reads tempo, drum steps and mono note lines out of audio, and builds track definitions from an
  * analysis (BRIEF "Frozen interface"). Pure JavaScript: runs in Node and in the page, needs no AudioContext.
  *

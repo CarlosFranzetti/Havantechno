@@ -48,7 +48,7 @@ var GOOD = { python: '3.12.0', missing: [], mdxFallbackUsable: true, ffmpeg: '/u
   eq(a, ['-u', '/x/tools/separate.py', '/m/My Track; rm -rf x.wav', '--out', '/o', '--model', 'auto'], 'buildArgs keeps a hostile name as one argument');
   eq(S.checkArgs('/s.py', 'mdx'), ['-u', '/s.py', '--check', '--model', 'mdx'], 'checkArgs');
   eq(S.pythonCandidates({}, 'linux'), ['python3', 'python'], 'candidates linux');
-  eq(S.pythonCandidates({ HAVANTECHNO_PYTHON: '/p/py' }, 'win32'), ['/p/py', 'py', 'python', 'python3'], 'candidates win with override');
+  eq(S.pythonCandidates({ RECUT_PYTHON: '/p/py' }, 'win32'), ['/p/py', 'py', 'python', 'python3'], 'candidates win with override');
   eq(S.installCommand('python3', ['torch', 'demucs']), 'python3 -m pip install torch demucs', 'installCommand');
 
   // --- input validation (the path crosses IPC)

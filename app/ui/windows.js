@@ -1,8 +1,8 @@
 /* Windows: floating device windows (global Windows).
  *
- * Web: draggable, resizable in-page panels inside #windows. Electron (window.HavantechnoShell present):
+ * Web: draggable, resizable in-page panels inside #windows. Electron (window.RecutShell present):
  * Windows.open asks the shell for a real child window; that window loads index.html?device=<id>, and
- * app.js calls Windows.embed(...) there, bound to the opener's host through HavantechnoBridge.
+ * app.js calls Windows.embed(...) there, bound to the opener's host through RecutBridge.
  *
  * API (CONTRACT):
  *   Windows.open(deviceId, host) -> win      Windows.close(id)       Windows.toggleAll()
@@ -31,7 +31,7 @@
 
   var host = null;
   var layer = null;
-  var shell = root.HavantechnoShell || null;
+  var shell = root.RecutShell || null;
   var isChildPage = false;
   try { isChildPage = !!(new URLSearchParams(root.location.search).get('device')); } catch (e) { /* no URLSearchParams */ }
   var useShell = !!shell && !isChildPage;
@@ -164,7 +164,7 @@
   function relink(h, id) {
     var P = root.Project;
     if (!P || typeof P.pickAudio !== 'function' || typeof h.loadAudio !== 'function') return Promise.resolve(null);
-    return P.pickAudio({ shell: root.HavantechnoShell || null }).then(function (src) {
+    return P.pickAudio({ shell: root.RecutShell || null }).then(function (src) {
       if (!src) return null;
       return h.loadAudio(src, { id: id });
     }).catch(function (e) { note(e); return null; });
@@ -275,7 +275,7 @@
         title.textContent = tx;
         if (tail) { var sm = el('small', '', 'on ' + tail); title.appendChild(sm); }
         root_.setAttribute('aria-label', nm + ' ' + fam);
-        if (root.document && c.embedded) doc.title = nm + ' · ' + fam + ' — Havantechno';
+        if (root.document && c.embedded) doc.title = nm + ' · ' + fam + ' — Recut';
       }
       bRelink.hidden = !missingBuffer(h, d);
       // bypass or mute
@@ -757,7 +757,7 @@
         retarget: function (nid) {
           chrome.setDevice(nid); if (rec) rec.id = nid;
           // keep the shell's id for this OS window current (see main.js retargetDeviceWindow)
-          try { if (root.HavantechnoShell && root.HavantechnoShell.retargetDeviceWindow) root.HavantechnoShell.retargetDeviceWindow(nid); } catch (e) { /* ignore */ }
+          try { if (root.RecutShell && root.RecutShell.retargetDeviceWindow) root.RecutShell.retargetDeviceWindow(nid); } catch (e) { /* ignore */ }
         },
         focus: function () { try { root.focus(); } catch (e) { /* ignore */ } },
         close: function () { try { root.close(); } catch (e) { /* ignore */ } },

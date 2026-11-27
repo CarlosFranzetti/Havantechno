@@ -1,4 +1,4 @@
-/* Havantechno app engine - drums.js
+/* Recut app engine - drums.js
  * Global `Drums`: TR-808 and TR-909 voice recreations (Box Crew batch 2, A12).
  *
  *   var inst = Drums.create(ctx, 'bd808', {decay: 0.5});

@@ -2,7 +2,7 @@
 /* Check for app/ui/import-view.js (ImportView, Dubplate Crew D2) in Node with a small fake DOM.
  *   node tools/import-view-check.js
  * Part 1 drives ImportView against a stub host that follows the BRIEF's frozen interface (reference, ab, matchLevel,
- * analysis, applyRecreation; Project.pickAudio / importTrack; HavantechnoShell.separate) and against an empty host
+ * analysis, applyRecreation; Project.pickAudio / importTrack; RecutShell.separate) and against an empty host
  * (every control must disable itself with a reason and never throw). Part 2 mounts the real System Editor on the real
  * Host (app/engine) and checks the reference lane and the "Import track..." entry; where D1's calls are not on the real
  * Host yet, the check adds stub methods to it and says so. Prints "OK: N checks passed" and exits 0, else exits 1.
@@ -361,12 +361,12 @@ function toast(t) { toasts.push(String(t)); }
       ok(li[0].getAttribute('data-state') === 'done' && li[2].getAttribute('data-state') === 'done' && li[3].getAttribute('data-state') === 'run' && /2 of 5/.test(li[3].textContent) && /bass/.test(li[3].textContent), 'progress marks earlier stages done and shows done/total and the note');
       var bar = byClass(dialog(), 'iv-bar')[0];
       ok(+bar.getAttribute('aria-valuenow') > 50 && +bar.getAttribute('aria-valuenow') < 70, 'overall bar advances (' + bar.getAttribute('aria-valuenow') + '%)');
-      sb.Project._defer.res({ doc: {}, saved: { name: 'render.havantechno.json' }, analysis: h.an });
+      sb.Project._defer.res({ doc: {}, saved: { name: 'render.recut.json' }, analysis: h.an });
       return p;
     }).then(function (res) {
       ok(res && res.saved && !dialog(), 'success closes the dialog and resolves the result');
       ok(done.length === 1, 'onDone is called once (the app opens the report there)');
-      ok(toasts.some(function (t) { return /saved as render\.havantechno\.json/.test(t); }), 'toast names the saved project');
+      ok(toasts.some(function (t) { return /saved as render\.recut\.json/.test(t); }), 'toast names the saved project');
     });
   }).then(function () {
     // browser path: stems picked by file name
@@ -467,7 +467,7 @@ function toast(t) { toasts.push(String(t)); }
       p = IV.importTrack(h, { toast: toast, shell: shell });
       return ticks().then(function () { button(/^Separate into stems/).click(); return ticks(); });
     }).then(function () {
-      sb.Project._defer.res({ saved: { name: 'song.havantechno.json', path: '/music/song.havantechno.json' } });
+      sb.Project._defer.res({ saved: { name: 'song.recut.json', path: '/music/song.recut.json' } });
       return p;
     }).then(function (res) {
       ok(res && !dialog(), 'Electron import completes');

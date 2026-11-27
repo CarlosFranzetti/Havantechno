@@ -15,8 +15,8 @@
 var hasCert = !!(process.env.CSC_LINK || process.env.CSC_NAME);
 
 module.exports = {
-  appId: 'io.github.carlosfranzetti.havantechno',
-  productName: 'Havantechno',
+  appId: 'io.github.carlosfranzetti.recut',
+  productName: 'Recut',
   copyright: 'Copyright (c) Havantechno contributors. AGPL-3.0-or-later.',
   asar: true,
   publish: null,
@@ -24,7 +24,7 @@ module.exports = {
   // The app folder (app/) is the root of this list, so the repository's local/ (the owner's ROM images and unlicensed
   // samples, git-ignored) is outside it and cannot be packed; the two exclusions below also keep out any local/ folder
   // copied under app/ and the ROM folder until the owner makes the repository private (G1). The owner's ROMs reach a
-  // packaged app through <userData>/roms/tr909/ (HavantechnoShell.importRoms / readRoms).
+  // packaged app through <userData>/roms/tr909/ (RecutShell.importRoms / readRoms).
   files: ['package.json', 'index.html', 'engine/**/*', 'ui/**/*', 'analysis/**/*', 'solo/**/*', 'shell/**/*', 'assets/**/*',
           '!engine/selfcheck.js', '!**/local/**', '!assets/tr909-rom/**'],
   extraResources: [
@@ -32,7 +32,7 @@ module.exports = {
     { from: '../LICENSE', to: 'LICENSE.txt' },
     { from: '../THIRD_PARTY.md', to: 'THIRD_PARTY.md' }
   ],
-  artifactName: 'Havantechno-${version}-${os}-${arch}.${ext}',
+  artifactName: 'Recut-${version}-${os}-${arch}.${ext}',
   mac: {
     category: 'public.app-category.music',
     target: [{ target: 'dmg', arch: ['arm64', 'x64'] }, { target: 'zip', arch: ['arm64', 'x64'] }],
@@ -42,7 +42,7 @@ module.exports = {
     gatekeeperAssess: false,
     entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.plist',
-    extendInfo: { NSMicrophoneUsageDescription: 'Havantechno asks for audio access only so that it can list your audio output devices by name. It does not record.' }
+    extendInfo: { NSMicrophoneUsageDescription: 'Recut asks for audio access only so that it can list your audio output devices by name. It does not record.' }
   },
   win: { target: [{ target: 'nsis', arch: ['x64'] }] },
   nsis: { oneClick: false, perMachine: false, allowToChangeInstallationDirectory: true },

@@ -1,4 +1,4 @@
-/* Havantechno analysis - features.js
+/* Recut analysis - features.js
  * Global `Analysis.features`: measurements on one element (a solo, a stem or a separated source), given as
  * channel arrays L, R (R may be omitted for mono) at sample rate sr. Methods and their tests: docs/research/
  * 2026-11-09-lab-crew/transcripts/L1-methods.md sections 3 (identity) and 6 (reverb). Needs Analysis.dsp.

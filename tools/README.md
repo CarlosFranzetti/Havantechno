@@ -1,6 +1,6 @@
 # tools/: scoring loop (A9)
 
-Render the Havantechno engine offline, then measure the render and the reference with the same code,
+Render the Recut engine offline, then measure the render and the reference with the same code,
 so that a change in the engine shows up as a number. Two scripts:
 
 - `render.js` renders song sections through the page (Playwright, offline, 44.1 kHz) into `tools/out/`.

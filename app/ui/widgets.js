@@ -1,4 +1,4 @@
-/* Havantechno widgets (A2). Global: Widgets.
+/* Recut widgets (A2). Global: Widgets.
  * Hand-written SVG knobs and sliders, Canvas for meters and curves. No dependencies, no CSS injected:
  * the look lives in ui/theme.css (class names hv-*). Every control is one focusable element with
  * role="slider" (or a native button / select) and works with keyboard, pointer, wheel and touch.

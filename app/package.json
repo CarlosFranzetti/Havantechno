@@ -1,7 +1,7 @@
 {
-  "name": "havantechno",
+  "name": "recut",
   "version": "0.2.0",
-  "description": "Havantechno: a remix DAW (web and Electron, plain JavaScript, no bundler)",
+  "description": "Recut: a remix DAW (web and Electron, plain JavaScript, no bundler)",
   "main": "shell/main.js",
   "license": "AGPL-3.0-or-later",
   "private": true,

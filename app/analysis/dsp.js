@@ -1,4 +1,4 @@
-/* Havantechno analysis - dsp.js
+/* Recut analysis - dsp.js
  * Global `Analysis.dsp`: signal helpers for the element classifier (Lab Crew, L1). Plain ES5, no imports;
  * loads in the browser (window) and in Node (globalThis). Pure functions on Float32Array/Float64Array/arrays;
  * nothing here touches Web Audio. Load order: dsp.js -> features.js -> decide.js.

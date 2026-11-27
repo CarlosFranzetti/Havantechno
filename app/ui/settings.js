@@ -9,7 +9,7 @@
  *   Settings.apply()                           (density and zoom on <html>; called at load and on every change)
  *
  * Storage: localStorage 'hv.settings' (JSON, every access in try/catch) and, in Electron, the app-data file
- * 'settings.json' through HavantechnoShell.readAppData / writeAppData (read once at load: the file wins).
+ * 'settings.json' through RecutShell.readAppData / writeAppData (read once at load: the file wins).
  * The Audio tab feature-detects V1's Host calls (outputDevices, audioOptions, setAudioOptions); a missing call
  * disables its control with a visible reason. Design notes: docs/research/2026-11-26-pressing-crew/transcripts/log-V2.md.
  */
@@ -108,7 +108,7 @@
     }
   }
   var fileTimer = 0;
-  function shell() { return root.HavantechnoShell || null; }
+  function shell() { return root.RecutShell || null; }
   function persist() {
     var text = JSON.stringify(values);
     try { if (root.localStorage) root.localStorage.setItem(LS_KEY, text); } catch (e) { /* storage blocked */ }
@@ -376,7 +376,7 @@
     dl.appendChild(el('dt', null, 'Runs as')); dl.appendChild(el('dd', null, sh ? 'desktop app (Electron)' : 'web page'));
     dl.appendChild(el('dt', null, 'Licence')); dl.appendChild(el('dd', null, 'GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)'));
     dl.appendChild(el('dt', null, 'Source')); dl.appendChild(el('dd', null, 'LICENSE and THIRD_PARTY.md sit at the top of the source folder.'));
-    panel.appendChild(el('h3', 'hvs-h', 'Havantechno'));
+    panel.appendChild(el('h3', 'hvs-h', 'Recut'));
     panel.appendChild(dl);
     function setVer(v) { ver.textContent = v; }
     var got = sh && isFn(sh.appVersion) ? safe(function () { return sh.appVersion(); }, null) : null;

@@ -126,3 +126,17 @@ The owner, 26 November: "I want the next version to have save and load and impor
 - **D25. Plug-ins.** Load VST and AU plug-ins as instruments and as effects. The architecture comes from the Pressing Crew's research (R1) before anything is built.
 
 **Acceptance for 0.2.** Each item has a check that can fail: an export compared with the engine's own render to the sample; stems summed against the mix; a clip landing on the grid; a bundle reopened from a different folder; every view driven in a browser with screenshots looked at; a packaged Linux build started and playing here, and the macOS and Windows builds stated as untested until someone runs them.
+
+## 6d. Decisions taken 2026-11-26 and 2026-11-27 ET
+
+The owner answered the questions put on 26 November:
+
+| # | Decision | Answer |
+|---|----------|--------|
+| 1 | The app's name | **Recut.** Applied on 27 November: the app's title, its files (`<name>.recut.json`, read alongside the older `.havantechno.json`), the desktop bridge (`RecutShell`), the application id and the installer names. **Havantechno** stays as the maker's mark on the instrument panels and pages, with the HVT model names. The repository keeps its name until the owner renames it. |
+| 2 | The owner's computer | A Mac with an Apple chip. |
+| 3 | Builds | An automatic build with installers attached to a draft release. |
+| 4 | Separation models with a non-commercial or missing licence | Optional downloads, labelled as such. |
+| 5 | The 909's sample ROM and sample sets | Included, with a way to load them later; the project is not for commercial release. The ROM images go into the repository once the owner has made it private. |
+| 6 | HVT-D note priority | A switch, lowest note by default. |
+| 7 | HVT-106 chorus | Realistic, switchable. |

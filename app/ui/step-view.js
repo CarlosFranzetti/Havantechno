@@ -1,4 +1,4 @@
-/* Havantechno app - ui/step-view.js
+/* Recut app - ui/step-view.js
  * Global `StepView`: the Step View, the second view of the main frame (Tab switches from the System Editor).
  *
  *   var view = StepView.mount(el, host);   // host = Host.create(); el = the area below the control bar and ruler

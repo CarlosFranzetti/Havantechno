@@ -210,7 +210,7 @@ function near(a, b) { return Math.abs(a - b) < 1e-9; }
   // ==================================================================== export / import
   var ex = P.exportText('tb303', 'tb303/rubber-bass');
   var exo = JSON.parse(ex);
-  ok(exo.app === 'havantechno' && exo.format === 'preset' && exo.version === 1 && exo.type === 'tb303' && exo.name === 'Rubber bass' && exo.params.cutoff === 480, 'exportText: versioned JSON');
+  ok(exo.app === 'recut' && exo.format === 'preset' && exo.version === 1 && exo.type === 'tb303' && exo.name === 'Rubber bass' && exo.params.cutoff === 480, 'exportText: versioned JSON');
   var im = P.importText(ex);
   ok(im.type === 'tb303' && /^tb303\/u-/.test(im.id) && im.id !== 'tb303/rubber-bass', 'importText: a new user preset');
   ok(JSON.stringify(P.get('tb303', im.id).params) === JSON.stringify(P.get('tb303', 'tb303/rubber-bass').params), 'round trip keeps every value');
@@ -220,14 +220,17 @@ function near(a, b) { return Math.abs(a - b) < 1e-9; }
   ok(JSON.stringify(P.patterns.get('juno', pim.id).pattern) === JSON.stringify(P.patterns.get('juno', 'juno/chord-push').pattern), 'a pattern round-trips');
   function rejects(fn, re, label) { var msg = null; try { fn(); } catch (e) { msg = e.message; } ok(msg && re.test(msg), label + ' -> "' + msg + '"'); }
   rejects(function () { P.importText('this is not json'); }, /not valid JSON/, 'garbage is rejected');
-  rejects(function () { P.importText('{"a":1}'); }, /not from Havantechno/, 'foreign JSON is rejected');
-  rejects(function () { P.importText(JSON.stringify({ app: 'havantechno', format: 'preset', version: 7, type: 'tb303', params: {} })); }, /newer version/, 'a newer version is rejected');
-  rejects(function () { P.importText(JSON.stringify({ app: 'havantechno', format: 'preset', version: 1, type: 'theremin', params: { a: 1 } })); }, /Unknown instrument type/, 'an unknown type is rejected');
-  rejects(function () { P.importText(JSON.stringify({ app: 'havantechno', format: 'preset', version: 1, type: 'tb303', params: { zz: 1 } })); }, /no parameter/, 'a preset with nothing usable is rejected');
+  rejects(function () { P.importText('{"a":1}'); }, /not from Recut/, 'foreign JSON is rejected');
+  var oldEx = JSON.parse(ex); oldEx.app = 'havantechno';
+  var oldIm = P.importText(JSON.stringify(oldEx));
+  ok(oldIm.type === 'tb303' && P.get('tb303', oldIm.id).params.cutoff === 480, 'text copied while the app was called Havantechno still imports');
+  rejects(function () { P.importText(JSON.stringify({ app: 'recut', format: 'preset', version: 7, type: 'tb303', params: {} })); }, /newer version/, 'a newer version is rejected');
+  rejects(function () { P.importText(JSON.stringify({ app: 'recut', format: 'preset', version: 1, type: 'theremin', params: { a: 1 } })); }, /Unknown instrument type/, 'an unknown type is rejected');
+  rejects(function () { P.importText(JSON.stringify({ app: 'recut', format: 'preset', version: 1, type: 'tb303', params: { zz: 1 } })); }, /no parameter/, 'a preset with nothing usable is rejected');
   rejects(function () { P.importText(pex); }, /is a pattern/, 'a pattern given to the preset importer says so');
   rejects(function () { P.importText(null); }, /Nothing to import/, 'null is rejected');
-  rejects(function () { P.patterns.importText(JSON.stringify({ app: 'havantechno', format: 'pattern', version: 1, type: 'tb303', pattern: { bars: 0, cells: 3 } })); }, /could not be read/, 'a malformed pattern is rejected');
-  var hostile = JSON.stringify({ app: 'havantechno', format: 'preset', version: 1, type: 'tb303', name: 'x', params: { cutoff: 900, __proto__: { polluted: 1 }, constructor: 'x' } });
+  rejects(function () { P.patterns.importText(JSON.stringify({ app: 'recut', format: 'pattern', version: 1, type: 'tb303', pattern: { bars: 0, cells: 3 } })); }, /could not be read/, 'a malformed pattern is rejected');
+  var hostile = JSON.stringify({ app: 'recut', format: 'preset', version: 1, type: 'tb303', name: 'x', params: { cutoff: 900, __proto__: { polluted: 1 }, constructor: 'x' } });
   var hi = P.importText(hostile);
   ok(!({}).polluted && !('constructor' in P.get('tb303', hi.id).params && P.get('tb303', hi.id).params.constructor === 'x'), 'hostile keys do not pollute and are ignored');
 
@@ -258,19 +261,19 @@ function near(a, b) { return Math.abs(a - b) < 1e-9; }
   var files = {}, writes = 0;
   var shell = { readAppData: function (n) { return Promise.resolve(files[n] || null); }, writeAppData: function (n, t) { writes++; files[n] = t; return Promise.resolve(true); } };
   var lsMig = lsFake(); lsMig.setItem('hv.presets.v1', ls.getItem('hv.presets.v1'));
-  var sb6 = realm({ HavantechnoShell: shell, localStorage: lsMig }, false);
+  var sb6 = realm({ RecutShell: shell, localStorage: lsMig }, false);
   await sb6.Presets.ready();
   ok(sb6.Presets.storage().kind === 'shell', 'Electron: the shell adapter is the default');
   ok(sb6.Presets.get('tb303', id1), 'Electron, first run: the web bank is brought over from localStorage');
   var id6 = sb6.Presets.save('modeld', 'File one', { cutoff: 1 });
   await new Promise(function (r) { setTimeout(r, 20); });
   ok(files['presets.json'] && JSON.parse(files['presets.json']).format === 'presets-store' && writes >= 1, 'Electron: presets.json written');
-  var sb7 = realm({ HavantechnoShell: shell, localStorage: lsFake() }, false);
+  var sb7 = realm({ RecutShell: shell, localStorage: lsFake() }, false);
   ok(!sb7.Presets.get('modeld', id6), 'Electron: before the file is read, the user bank is empty');
   await sb7.Presets.ready();
   ok(sb7.Presets.get('modeld', id6) && sb7.Presets.get('modeld', id6).name === 'File one', 'Electron: a new window reads the file (ready() resolves after it)');
   var shellBad = { readAppData: function () { return Promise.reject(new Error('io')); }, writeAppData: function () { return Promise.reject(new Error('io')); } };
-  var sb8 = realm({ HavantechnoShell: shellBad }, false);
+  var sb8 = realm({ RecutShell: shellBad }, false);
   await sb8.Presets.ready();
   ok(sb8.Presets.save('tb303', 'still', {}) && sb8.Presets.list('tb303').length === l303.length + 1, 'Electron: a failing file still leaves a working bank');
 

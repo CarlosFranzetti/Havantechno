@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Static server for the Havantechno repo root.
+/* Static server for the Recut repo root.
  * Sends Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: require-corp
  * so that SharedArrayBuffer is available. Usage: node tools/serve.js [port]   (PORT env also works)
  * Default port 8000. Prints the app URL. */
@@ -61,6 +61,6 @@ server.on('error', function (e) {
 });
 
 server.listen(PORT, function () {
-  console.log('Havantechno static server, root ' + ROOT);
+  console.log('Recut static server, root ' + ROOT);
   console.log('App: http://localhost:' + PORT + '/app/index.html');
 });

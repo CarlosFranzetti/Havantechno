@@ -1,38 +1,38 @@
-# Building and installing Havantechno
+# Building and installing Recut
 
 Written by V3 (Pressing Crew), 27 November 2026 ET. Version 0.2.0.
 
-Havantechno ships as an Electron app. The installers are unsigned unless the owner supplies signing identities (section 5). **What was run:** the Linux AppImage and deb were built and the AppImage was run in this repository's sandbox (section 7). **What was not run:** any macOS or Windows build, and the GitHub workflow. Statements about macOS and Windows behaviour are marked "from memory" where they were not read in the vendor's current documentation.
+Recut ships as an Electron app. The installers are unsigned unless the owner supplies signing identities (section 5). **What was run:** the Linux AppImage and deb were built and the AppImage was run in this repository's sandbox (section 7). **What was not run:** any macOS or Windows build, and the GitHub workflow. Statements about macOS and Windows behaviour are marked "from memory" where they were not read in the vendor's current documentation.
 
 ## 1. macOS on Apple silicon: installing and first launch of the unsigned dmg
 
-The file is `Havantechno-0.2.0-mac-arm64.dmg` (Intel Macs: `...-mac-x64.dmg`; the `.zip` files hold the same app).
+The file is `Recut-0.2.0-mac-arm64.dmg` (Intel Macs: `...-mac-x64.dmg`; the `.zip` files hold the same app).
 
-**Is the build signed at all?** Not with a developer certificate, but it is built to carry an ad-hoc signature, which an Apple-silicon Mac needs in order to run any code. How this was checked: in the pinned electron-builder (26.18.0) I read `app-builder-lib/out/mac/MacTargetHelper.js`. With no certificate and no `identity` setting it finds no identity and *skips signing* (a warning, unless `forceCodeSigning` is on). With `identity: "-"` it builds an ad-hoc identity and signs with it. So `app/electron-builder.config.js` sets `identity: "-"` whenever neither `CSC_LINK` nor `CSC_NAME` is in the environment, switches the hardened runtime and notarisation off in that case (electron-builder warns that ad-hoc signing and the hardened runtime's library validation do not mix), and leaves everything to electron-builder's normal certificate handling when a certificate is supplied. The signing itself needs Apple's `codesign`, which exists only on a Mac, so it has not been run: after the first workflow run, check on a Mac with `codesign -dv --verbose=2 /Applications/Havantechno.app` (it should print `Signature=adhoc`) and `codesign --verify --deep --strict /Applications/Havantechno.app`.
+**Is the build signed at all?** Not with a developer certificate, but it is built to carry an ad-hoc signature, which an Apple-silicon Mac needs in order to run any code. How this was checked: in the pinned electron-builder (26.18.0) I read `app-builder-lib/out/mac/MacTargetHelper.js`. With no certificate and no `identity` setting it finds no identity and *skips signing* (a warning, unless `forceCodeSigning` is on). With `identity: "-"` it builds an ad-hoc identity and signs with it. So `app/electron-builder.config.js` sets `identity: "-"` whenever neither `CSC_LINK` nor `CSC_NAME` is in the environment, switches the hardened runtime and notarisation off in that case (electron-builder warns that ad-hoc signing and the hardened runtime's library validation do not mix), and leaves everything to electron-builder's normal certificate handling when a certificate is supplied. The signing itself needs Apple's `codesign`, which exists only on a Mac, so it has not been run: after the first workflow run, check on a Mac with `codesign -dv --verbose=2 /Applications/Recut.app` (it should print `Signature=adhoc`) and `codesign --verify --deep --strict /Applications/Recut.app`.
 
 **Steps** (from memory, with the Sequoia route confirmed by two articles quoted in `docs/research/2026-11-26-pressing-crew/transcripts/R2-views-settings-distribution.md` section 5.1; not checked against Apple's page on a Mac):
 
 1. Download the dmg in a browser. Browsers put a quarantine mark on the file; that mark is what makes macOS check the app.
-2. Open the dmg and drag Havantechno into Applications.
-3. Open Havantechno from Applications. macOS stops it. The window says it could not verify that the app is free of malware (Sequoia wording from memory: "“Havantechno” Not Opened"), with Done and Move to Trash. On some versions a damaged ad-hoc signature shows "“Havantechno” is damaged and can't be opened" instead; see step 7. Press **Done**, not Move to Trash.
-4. Open **System Settings, Privacy & Security** and scroll to the **Security** section. It says Havantechno was blocked. Press **Open Anyway**.
+2. Open the dmg and drag Recut into Applications.
+3. Open Recut from Applications. macOS stops it. The window says it could not verify that the app is free of malware (Sequoia wording from memory: "“Recut” Not Opened"), with Done and Move to Trash. On some versions a damaged ad-hoc signature shows "“Recut” is damaged and can't be opened" instead; see step 7. Press **Done**, not Move to Trash.
+4. Open **System Settings, Privacy & Security** and scroll to the **Security** section. It says Recut was blocked. Press **Open Anyway**.
 5. Authenticate with your password or Touch ID, then press **Open** in the dialog that follows.
 6. From then on the app opens like any other; macOS keeps the exception.
-7. If the message says the app is damaged, or Open Anyway does not appear, remove the quarantine mark in Terminal and open the app again: `xattr -dr com.apple.quarantine /Applications/Havantechno.app`. A file fetched with `curl` carries no quarantine mark and needs none of this (from memory).
+7. If the message says the app is damaged, or Open Anyway does not appear, remove the quarantine mark in Terminal and open the app again: `xattr -dr com.apple.quarantine /Applications/Recut.app`. A file fetched with `curl` carries no quarantine mark and needs none of this (from memory).
 8. The old route of right-clicking the app and choosing Open no longer bypasses the block on recent macOS (a snippet in R2, not verified). Use steps 4 and 5.
 
-The first time the page asks for audio device names, macOS may ask for microphone access. Havantechno only lists output devices by name and never records; the usage text in `Info.plist` says so. Allow it, or refuse and the device list shows no names.
+The first time the page asks for audio device names, macOS may ask for microphone access. Recut only lists output devices by name and never records; the usage text in `Info.plist` says so. Allow it, or refuse and the device list shows no names.
 
 ## 2. Windows (x64): installing the unsigned installer
 
-The file is `Havantechno-0.2.0-win-x64.exe` (NSIS, installs per user, lets you pick the folder).
+The file is `Recut-0.2.0-win-x64.exe` (NSIS, installs per user, lets you pick the folder).
 
 From memory (R2 read only a snippet; not checked on Windows or against Microsoft's page): Windows SmartScreen shows "Windows protected your PC". Press **More info**, then **Run anyway**. An unsigned installer from a new publisher gets this every time. Windows 11 with Smart App Control switched on may refuse an unsigned installer with no Run anyway button; turning Smart App Control off is a Windows setting that cannot be undone, so the safe choice there is to wait for a signed build.
 
 ## 3. Linux (x64)
 
-- **AppImage:** `chmod +x Havantechno-0.2.0-linux-x86_64.AppImage`, then run it. It needs FUSE 2 (on Ubuntu 22.04 and later: `sudo apt install libfuse2`, from memory). Without FUSE: `./Havantechno-0.2.0-linux-x86_64.AppImage --appimage-extract-and-run` (run here, section 7).
-- **deb:** `sudo apt install ./Havantechno-0.2.0-linux-amd64.deb`. It installs to `/opt/Havantechno` with a menu entry and the `chrome-sandbox` helper set-uid.
+- **AppImage:** `chmod +x Recut-0.2.0-linux-x86_64.AppImage`, then run it. It needs FUSE 2 (on Ubuntu 22.04 and later: `sudo apt install libfuse2`, from memory). Without FUSE: `./Recut-0.2.0-linux-x86_64.AppImage --appimage-extract-and-run` (run here, section 7).
+- **deb:** `sudo apt install ./Recut-0.2.0-linux-amd64.deb`. It installs to `/opt/Recut` with a menu entry and the `chrome-sandbox` helper set-uid.
 - On Ubuntu 24.04 and later a policy that restricts unprivileged user namespaces can stop the AppImage's sandbox; the symptom is the window not opening and a sandbox error in the terminal. Workaround: add `--no-sandbox` (less safe), or use the deb, whose installer ships an AppArmor profile (from memory; not tried here).
 
 ## 4. Building locally
@@ -48,11 +48,11 @@ npm run dist:win        # NSIS installer, x64          (build on Windows; Wine o
 npm run pack            # an unpacked app in dist/ only, quick check
 ```
 
-Output goes to `app/dist/` (git-ignored, never commit it). Names: `Havantechno-<version>-<mac|win|linux>-<arch>.<ext>`. A Mac builds both macOS architectures (the Intel one on an Apple-silicon Mac works because Electron's x64 binary is downloaded, from memory; first run to confirm). `npm run icon` redraws `app/build/icon.png` (1024 px, original artwork, headless Chromium through Playwright); electron-builder derives the `.icns`, `.ico` and Linux sizes from it.
+Output goes to `app/dist/` (git-ignored, never commit it). Names: `Recut-<version>-<mac|win|linux>-<arch>.<ext>`. A Mac builds both macOS architectures (the Intel one on an Apple-silicon Mac works because Electron's x64 binary is downloaded, from memory; first run to confirm). `npm run icon` redraws `app/build/icon.png` (1024 px, original artwork, headless Chromium through Playwright); electron-builder derives the `.icns`, `.ico` and Linux sizes from it.
 
 What goes into the app: `app/index.html`, `engine/`, `ui/`, `analysis/`, `solo/`, `shell/` and `package.json`, in `app.asar`, minus `engine/selfcheck.js`. Beside it, in the resources folder: `tools/separate.py` (the stem-separation script; Python reads it, so it must not sit inside the asar), `LICENSE.txt` and `THIRD_PARTY.md`. The shell finds `separate.py` at `tools/separate.py` beside `app/` when run from the repository and in `resources/tools/` when packaged (`app.isPackaged`).
 
-The custom scheme `havantechno://app/` and the AudioWorklet module work from inside `app.asar`: Electron's patched `fs` reads the asar, so the scheme handler needed no change and nothing is unpacked. Verified on Linux (section 7). The same code path serves all platforms, but the macOS and Windows packages were not run.
+The custom scheme `recut://app/` and the AudioWorklet module work from inside `app.asar`: Electron's patched `fs` reads the asar, so the scheme handler needed no change and nothing is unpacked. Verified on Linux (section 7). The same code path serves all platforms, but the macOS and Windows packages were not run.
 
 ## 5. The GitHub workflow
 
@@ -60,7 +60,7 @@ File: `.github/workflows/build.yml`. Triggers: **Run workflow** on the Actions t
 
 Per OS (macos-latest, windows-latest, ubuntu-latest; `fail-fast` off so one failing OS does not hide the others): check out, Node 22, `npm ci` in `app/`, the Node checks, the installer build, upload as the workflow artifact `installers-<os>` (kept 14 days). The Node checks are `app/engine/selfcheck.js` and every `tools/*-check.js` except `browser-check.js`, `export-check.js` and `importer-check.js`, which start headless Chromium (run those locally). `drums-score.js` is not a `-check` and is not run (it exits 1 while its rows fail).
 
-On a tag `vX.Y.Z` a last job downloads the three artifacts, writes `SHA256SUMS.txt` and creates a **draft** release named "Havantechno X.Y.Z" with the installers attached. A draft is visible only to people with write access to the repository; nothing is public until you press **Publish release** on the Releases page. The build stops if the tag does not equal `v` plus the `version` in `app/package.json`. Only that last job holds `contents: write`; the rest of the workflow has `contents: read`. Every action is pinned to a full commit SHA with its version in a comment: checkout v7.0.1, setup-node v7.1.0, upload-artifact v7.0.2, download-artifact v8.0.2 (SHAs read with `git ls-remote` on 27 November 2026; they are GitHub's own actions); the release is made with the `gh` CLI on the runner, so no other third-party action is used.
+On a tag `vX.Y.Z` a last job downloads the three artifacts, writes `SHA256SUMS.txt` and creates a **draft** release named "Recut X.Y.Z" with the installers attached. A draft is visible only to people with write access to the repository; nothing is public until you press **Publish release** on the Releases page. The build stops if the tag does not equal `v` plus the `version` in `app/package.json`. Only that last job holds `contents: write`; the rest of the workflow has `contents: read`. Every action is pinned to a full commit SHA with its version in a comment: checkout v7.0.1, setup-node v7.1.0, upload-artifact v7.0.2, download-artifact v8.0.2 (SHAs read with `git ls-remote` on 27 November 2026; they are GitHub's own actions); the release is made with the `gh` CLI on the runner, so no other third-party action is used.
 
 **Downloads:** the draft release's assets (after publishing: the Releases page), and for any run the "Artifacts" section at the bottom of the run's page.
 
@@ -84,11 +84,13 @@ With a certificate present, `electron-builder.config.js` turns the hardened runt
 
 ## 7. What was run in the sandbox (27 November 2026)
 
-- `npm install` of electron-builder 26.18.0 (exact), `electron-builder --linux AppImage deb --x64`: downloads from GitHub releases were allowed; no network refusal. Built: `Havantechno-0.2.0-linux-x86_64.AppImage` 126,120,538 bytes, `Havantechno-0.2.0-linux-amd64.deb` 101,406,592 bytes (control file read with `dpkg-deb -I`).
-- The AppImage under Xvfb with `--appimage-extract-and-run --no-sandbox`: one window titled "Havantechno" at `havantechno://app/index.html`, cross-origin isolated, `classics-processor.js` fetched from inside the asar (status 200, correct type), no page or console errors. Start audio clicked, a `tb303` track added: its engine reports `worklet`, `Host.audition` returns true. The extracted AppImage also ran under Playwright's CDP attach (Playwright's own `_electron` launcher hung on the packaged binary; the cause was not chased).
+This run was made before the app was renamed. The files it built were named `Havantechno-0.2.0-...`, the window was titled "Havantechno" and the scheme was `havantechno://app/`; the lines below use the names a build makes now. Nothing has been built since the rename, so the new names, the new application id (`io.github.carlosfranzetti.recut`) and the new scheme are untested in a packaged app.
+
+- `npm install` of electron-builder 26.18.0 (exact), `electron-builder --linux AppImage deb --x64`: downloads from GitHub releases were allowed; no network refusal. Built: `Recut-0.2.0-linux-x86_64.AppImage` 126,120,538 bytes, `Recut-0.2.0-linux-amd64.deb` 101,406,592 bytes (control file read with `dpkg-deb -I`).
+- The AppImage under Xvfb with `--appimage-extract-and-run --no-sandbox`: one window titled "Recut" at `recut://app/index.html`, cross-origin isolated, `classics-processor.js` fetched from inside the asar (status 200, correct type), no page or console errors. Start audio clicked, a `tb303` track added: its engine reports `worklet`, `Host.audition` returns true. The extracted AppImage also ran under Playwright's CDP attach (Playwright's own `_electron` launcher hung on the packaged binary; the cause was not chased).
 - Shell calls in that run: `appVersion()` "0.2.0", `joinPath`, `writeFile` into the app-data folder true, and readable refusals for a relative path, a folder never chosen, a `..` path, and copying a non-audio file. **`pickDirectory` was not run**: it opens a native dialog that nothing can answer under Xvfb; the guard it feeds is covered by `tools/shell-files-check.js`.
 - Permissions (see `app/shell/main.js`): only the app's own origin is granted `media` (audio only; a video request is refused), `speaker-selection`, `midi` and `midiSysex` (Electron 45 delivers even a plain `requestMIDIAccess()` as `midiSysex`, observed; without it MIDI was refused). Everything else, for every origin, is denied. In the sandbox `getUserMedia({audio})` got past the permission (then failed for lack of a device) and MIDI got past it (then failed with no ALSA); nothing was heard or measured on real hardware.
 
 ## 8. The version number
 
-`app/package.json` `version` is the one source: the installer file names and `HavantechnoShell.appVersion()` come from it, and the workflow refuses a tag that differs. It is now **0.2.0** (was 0.1.0). To release: change `version` in `app/package.json`, run `npm install --package-lock-only` in `app/` so the lock file agrees, commit, then tag `v<version>` and push the tag (the owner's step).
+`app/package.json` `version` is the one source: the installer file names and `RecutShell.appVersion()` come from it, and the workflow refuses a tag that differs. It is now **0.2.0** (was 0.1.0). To release: change `version` in `app/package.json`, run `npm install --package-lock-only` in `app/` so the lock file agrees, commit, then tag `v<version>` and push the tag (the owner's step).

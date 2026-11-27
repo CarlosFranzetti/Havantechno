@@ -87,7 +87,7 @@ const SEL = {
 };
 
 // The Host instance: app.js must expose it on one of these (see app/README.md, "Checks").
-const HOST_EXPR = '(window.HavantechnoHost || (window.HavantechnoApp && window.HavantechnoApp.host) || window.host || null)';
+const HOST_EXPR = '(window.RecutHost || (window.RecutApp && window.RecutApp.host) || window.host || null)';
 
 const report = [];
 let checkCount = 0;
@@ -252,8 +252,8 @@ async function run() {
       else fail('global ' + name + ' missing', 'defined by ' + entry[1] + ' (owner ' + entry[2] + '); not loaded or not published by app/index.html');
     }
     const hostOk = await page.evaluate(`!!${HOST_EXPR}`).catch(() => false);
-    if (hostOk) pass('host handle exposed', 'window.HavantechnoHost or window.HavantechnoApp.host');
-    else fail('host handle not exposed', 'app.js (A6) should set window.HavantechnoApp = {host} or window.HavantechnoHost; transport and step checks are weaker without it');
+    if (hostOk) pass('host handle exposed', 'window.RecutHost or window.RecutApp.host');
+    else fail('host handle not exposed', 'app.js (A6) should set window.RecutApp = {host} or window.RecutHost; transport and step checks are weaker without it');
 
     // 2. Start audio
     const start = await firstVisible(page, SEL.start);
@@ -427,25 +427,25 @@ async function run() {
     await page.waitForTimeout(2500); // autosave is debounced 1.5 s after edits
     const lsAfter = await localStorageSnapshot(page);
     const changedKeys = Object.keys(lsAfter).filter((k) => lsAfter[k] !== lsBefore[k]);
-    const appKeys = changedKeys.filter((k) => /havantechno/.test(lsAfter[k] || ''));
+    const appKeys = changedKeys.filter((k) => /recut/.test(lsAfter[k] || ''));
     let saved = false;
     if (download) {
       const dlPath = await download.path().catch(() => null);
       const dlText = dlPath ? fs.readFileSync(dlPath, 'utf8') : '';
       const name = download.suggestedFilename();
-      if (/havantechno/.test(dlText) && dlText.length > 0) {
+      if (/recut/.test(dlText) && dlText.length > 0) {
         saved = true;
-        pass('save downloads a song file', name + ' (' + dlText.length + ' bytes, contains "havantechno")');
+        pass('save downloads a song file', name + ' (' + dlText.length + ' bytes, contains "recut")');
       } else {
-        fail('save downloads a song file', name + ' downloaded but does not contain "havantechno" (Project.serialize adds app:"havantechno")');
+        fail('save downloads a song file', name + ' downloaded but does not contain "recut" (Project.serialize adds app:"recut")');
       }
     }
     if (appKeys.length) {
       saved = true;
-      pass('autosave written', 'localStorage key ' + appKeys.join(', ') + ' contains "havantechno"');
+      pass('autosave written', 'localStorage key ' + appKeys.join(', ') + ' contains "recut"');
     }
     if (!saved) {
-      fail('save', (save ? 'clicked ' + save.sel : 'Ctrl+S') + ': no download and no localStorage autosave containing "havantechno" (changed keys: ' + (changedKeys.join(', ') || 'none') + ')');
+      fail('save', (save ? 'clicked ' + save.sel : 'Ctrl+S') + ': no download and no localStorage autosave containing "recut" (changed keys: ' + (changedKeys.join(', ') || 'none') + ')');
     }
 
     // 9. Errors

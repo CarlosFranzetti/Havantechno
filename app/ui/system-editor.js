@@ -1,4 +1,4 @@
-/* Havantechno app - ui/system-editor.js
+/* Recut app - ui/system-editor.js
  * Global `SystemEditor`: the voted "Strip Bench" layout (REPORT.md section 3, amended).
  *
  *   var view = SystemEditor.mount(el, host);   // el = the area below the control bar (app.js owns the bar and view switch)
@@ -759,7 +759,7 @@
     // a picker for several files or a folder: Project.pickFiles({directory, multiple, accept}) when A1 adds it, else an <input>
     function pickFiles(o) {
       var P = root.Project;
-      if (P && isFn(P.pickFiles)) return Promise.resolve(P.pickFiles({ shell: root.HavantechnoShell || null, directory: !!o.directory, multiple: true, accept: o.accept }));
+      if (P && isFn(P.pickFiles)) return Promise.resolve(P.pickFiles({ shell: root.RecutShell || null, directory: !!o.directory, multiple: true, accept: o.accept }));
       return new Promise(function (resolve, reject) {
         if (!doc || !doc.createElement) { reject(new Error('no way to open files here')); return; }
         var input = doc.createElement('input'), done = false;
@@ -850,7 +850,7 @@
     function pickSampler() {
       var P = root.Project;
       if (!P || !isFn(P.pickAudio)) { setStatus('No file picker available.'); return Promise.resolve(); }
-      return Promise.resolve().then(function () { return P.pickAudio({ shell: root.HavantechnoShell || null }); }).then(function (src) {
+      return Promise.resolve().then(function () { return P.pickAudio({ shell: root.RecutShell || null }); }).then(function (src) {
         if (src) return addFiles([src]);
       }, function (err) { setStatus('Could not pick a file: ' + ((err && err.message) || err)); });
     }

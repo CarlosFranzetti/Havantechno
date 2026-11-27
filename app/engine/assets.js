@@ -1,4 +1,4 @@
-/* Havantechno app engine - assets.js
+/* Recut app engine - assets.js
  * Global `Assets`: the asset manifest and the one call a page or the Host awaits before starting, so that the 909's
  * recorded voices are in place from the first hit. Pressing Crew, G1.
  *
@@ -16,7 +16,7 @@
  * always logs a console error). One exception, kept from K1's lines: when the manifest itself cannot be read
  * (no fetch, a page without it), the Rob Roy set is still asked for (Sampled909 tolerates absence, as before this file);
  * the ROM images never are. In the Electron shell, when the manifest has no ROMs, the owner's copy in the app's data
- * folder is read through HavantechnoShell.readRoms() (main.js; <userData>/roms/tr909/).
+ * folder is read through RecutShell.readRoms() (main.js; <userData>/roms/tr909/).
  * With a document (or a Sequencer), only what it uses is loaded: the sampled types it has (Sampled909.typesIn), the ROMs
  * when romWanted. Without one (an instrument page), every sampled voice and the ROMs. Never rejects; nothing throws when
  * Sampled909, Drums or fetch is absent. The ROMs are loaded once per page (Drums keeps them for every context); the
@@ -69,7 +69,7 @@
     var D = root.Drums;
     if (!D) return Promise.resolve(null);
     var chipsOf = function (st) { var out = []; if (st && st.chips) for (var c in st.chips) if (st.chips.hasOwnProperty(c) && st.chips[c].loaded) out.push(c); return out; };
-    var shell = root.HavantechnoShell;
+    var shell = root.RecutShell;
     if (m && m['tr909-rom'] === true && typeof D.loadRomsFrom === 'function') {
       romP = Promise.resolve(D.loadRomsFrom(join('tr909-rom/'))).then(function (st) { return { source: 'assets', chips: chipsOf(st), status: st }; }, function () { return null; });
     } else if (shell && typeof shell.readRoms === 'function' && typeof D.loadRom === 'function') {

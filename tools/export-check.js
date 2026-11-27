@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Havantechno - tools/export-check.js (Pressing Crew, V1)
+/* Recut - tools/export-check.js (Pressing Crew, V1)
  * Audio export, audio tracks, bundles and audio options.
  *
  *   node tools/export-check.js            Node checks (no browser): WAV writers read back, clip editing and undo,
@@ -217,8 +217,8 @@ function nodePart() {
           host.document().audio.vox_take_1.src = '/home/me/vox take 1.wav';
           return P.saveBundle({ host: host, shell: shell });
         }).then(function (r) {
-          var doc = P.parse(written['/out/project.havantechno.json']);
-          ok(r.path === '/out/project.havantechno.json' && dirs[0] === '/out/audio' && copied[0][0] === '/home/me/vox take 1.wav' && copied[0][1] === '/out/audio/vox take 1.wav' && doc.audio.vox_take_1.src === 'audio/vox take 1.wav', 'saveBundle: audio/ made, the file copied, the bundle document points at audio/<file>');
+          var doc = P.parse(written['/out/project.recut.json']);
+          ok(r.path === '/out/project.recut.json' && dirs[0] === '/out/audio' && copied[0][0] === '/home/me/vox take 1.wav' && copied[0][1] === '/out/audio/vox take 1.wav' && doc.audio.vox_take_1.src === 'audio/vox take 1.wav', 'saveBundle: audio/ made, the file copied, the bundle document points at audio/<file>');
           ok(host.document().audio.vox_take_1.src === '/home/me/vox take 1.wav', 'the live document is not changed');
           var h2 = H.create({ AudioContext: Ctx });
           return P.openBundle({ host: h2, shell: shell }).then(function (d) {
@@ -262,11 +262,11 @@ function realShellBundles(H, P, host) {
   host.document().audio.vox_take_1.src = path.join(src, 'vox take 1.wav');
   var s1 = shellFor(proj);
   return P.saveBundle({ host: host, shell: s1 }).then(function (r) {
-    var doc = P.parse(fs.readFileSync(path.join(proj, 'project.havantechno.json'), 'utf8'));
+    var doc = P.parse(fs.readFileSync(path.join(proj, 'project.recut.json'), 'utf8'));
     ok(r && r.flat === false && fs.statSync(path.join(proj, 'audio')).isDirectory() && fs.existsSync(path.join(proj, 'audio', 'vox take 1.wav')),
        'saveBundle on disk: audio/ made by the shell\'s makeDirectory, the file copied into it');
     ok(doc.audio.vox_take_1.src === 'audio/vox take 1.wav' && !path.isAbsolute(doc.audio.vox_take_1.src), 'the bundle\'s path is relative to the project file (' + doc.audio.vox_take_1.src + ')');
-    ok(fs.readdirSync(proj).sort().join(',') === 'audio,project.havantechno.json', 'the project folder holds the document and audio/ only');
+    ok(fs.readdirSync(proj).sort().join(',') === 'audio,project.recut.json', 'the project folder holds the document and audio/ only');
     var h3 = H.create({ AudioContext: Ctx }), s1b = shellFor(proj);
     return P.openBundle({ host: h3, shell: s1b }).then(function () {
       var a = h3.audio().filter(function (x) { return x.id === 'vox_take_1'; })[0];
@@ -274,17 +274,19 @@ function realShellBundles(H, P, host) {
       // the earlier flat layout: the files beside the document
       fs.writeFileSync(path.join(flatDir, 'vox take 1.wav'), Buffer.alloc(64, 5));
       var fdoc = JSON.parse(JSON.stringify(doc)); fdoc.audio.vox_take_1.src = 'vox take 1.wav';
-      fs.writeFileSync(path.join(flatDir, 'project.havantechno.json'), P.serialize(fdoc));
+      // written as the first bundles were: under the app's old name (project.havantechno.json, app: 'havantechno')
+      var fenv = JSON.parse(P.serialize(fdoc)); fenv.app = 'havantechno';
+      fs.writeFileSync(path.join(flatDir, 'project.havantechno.json'), JSON.stringify(fenv));
       var h4 = H.create({ AudioContext: Ctx }), s2 = shellFor(flatDir);
       return P.openBundle({ host: h4, shell: s2 }).then(function () {
         var b = h4.audio().filter(function (x) { return x.id === 'vox_take_1'; })[0];
-        ok(b && b.loaded === true && s2.reads.some(function (x) { return x[0] === 'vox take 1.wav' && x[1] === flatDir; }), 'openBundle (flat layout of the first bundles) reads the file beside the document');
+        ok(b && b.loaded === true && s2.reads.some(function (x) { return x[0] === 'vox take 1.wav' && x[1] === flatDir; }), 'openBundle (flat layout of the first bundles, saved under the old name) reads the file beside the document');
         // a shell without makeDirectory: flat, and the result says so
         return P.saveBundle({ host: host, shell: shellFor(noMk, { noMakeDirectory: true }) });
       });
     });
   }).then(function (r2) {
-    var d2 = P.parse(fs.readFileSync(path.join(noMk, 'project.havantechno.json'), 'utf8'));
+    var d2 = P.parse(fs.readFileSync(path.join(noMk, 'project.recut.json'), 'utf8'));
     ok(r2.flat === true && d2.audio.vox_take_1.src === 'vox take 1.wav' && fs.existsSync(path.join(noMk, 'vox take 1.wav')), 'without makeDirectory the bundle is flat (r.flat true) and still opens by relative path');
     fs.rmSync(tmp, { recursive: true, force: true });
   }, function (e) { fs.rmSync(tmp, { recursive: true, force: true }); throw e; });

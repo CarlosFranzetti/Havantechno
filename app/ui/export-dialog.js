@@ -109,7 +109,7 @@
 
   function open(host, o) {
     o = o || {};
-    var shell = o.shell !== undefined ? o.shell : (root.HavantechnoShell || null);
+    var shell = o.shell !== undefined ? o.shell : (root.RecutShell || null);
     function toast(t, ms) { if (isFn(o.toast)) o.toast(t, ms); }
     var av = available(host);
     if (!av.ok) { toast(av.why, 6000); return Promise.resolve(null); }
@@ -119,7 +119,7 @@
     var sections = isFn(host.sections) ? (safe(function () { return host.sections(); }, []) || []) : [];
     var total = isFn(host.totalBars) ? safe(function () { return host.totalBars(); }, 0) : 0;
     if (!total) sections.forEach(function (s) { total = Math.max(total, (s.start || 0) + (s.bars || 0)); });
-    var song = cleanName(safe(function () { return host.document().name; }, '')) || 'havantechno';
+    var song = cleanName(safe(function () { return host.document().name; }, '')) || 'recut';
 
     var prev = doc.activeElement;
     var overlay = el('div', 'hvs-modal');
@@ -401,7 +401,7 @@
   // ------------------------------------------------------------------ import audio files as audio tracks
   function importAudio(host, o) {
     o = o || {};
-    var shell = o.shell !== undefined ? o.shell : (root.HavantechnoShell || null);
+    var shell = o.shell !== undefined ? o.shell : (root.RecutShell || null);
     function toast(t, ms) { if (isFn(o.toast)) o.toast(t, ms); }
     if (!host || !isFn(host.addAudioTrack)) { toast('Audio tracks are not available in this engine yet (host.addAudioTrack is missing).', 6000); return Promise.resolve([]); }
     var P = root.Project;

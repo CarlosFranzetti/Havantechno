@@ -1,4 +1,4 @@
-/* Havantechno analysis - report.js (L2, Lab Crew)
+/* Recut analysis - report.js (L2, Lab Crew)
  * Global `Analysis.report`: one call that takes an element (a solo, a stem, or a band of a drum stem) and returns the
  * element report: every decision with its confidence and evidence, and the suggested recreation (an engine type with
  * starting parameters where they can be estimated, or "sampler"). Needs dsp.js, features.js, decide.js; drumlib.js is

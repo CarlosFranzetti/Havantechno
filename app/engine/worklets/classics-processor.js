@@ -1,4 +1,4 @@
-/* Havantechno app engine - worklets/classics-processor.js (AudioWorkletGlobalScope)
+/* Recut app engine - worklets/classics-processor.js (AudioWorkletGlobalScope)
  * Whole-voice processors for the classic monos (Patch Crew, P5): 'hvt-tb303' and 'hvt-modeld'.
  * Loaded by app/engine/worklets.js with audioWorklet.addModule; never loaded as a page script.
  *

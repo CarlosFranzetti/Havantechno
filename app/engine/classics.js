@@ -1,4 +1,4 @@
-/* Havantechno app engine - classics.js
+/* Recut app engine - classics.js
  * Global `Classics`: classic mono synths on the AudioWorklet infrastructure (Patch Crew, P5).
  *
  *   var inst = Classics.create(ctx, 'tb303', {cutoff: 600});      // or Synths.create(ctx, 'tb303') (fallback line)

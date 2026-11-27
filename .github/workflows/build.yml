@@ -1,4 +1,4 @@
-# Havantechno desktop builds (V3, Pressing Crew). Untested on real runners when written: see docs/BUILD.md.
+# Recut desktop builds (V3, Pressing Crew). Untested on real runners when written: see docs/BUILD.md.
 #
 # Triggers: a manual run (workflow_dispatch) and a pushed tag that starts with "v" (for example v0.2.0).
 # What it does on macOS, Windows and Linux runners: npm ci in app/, the Node checks that need no browser, the installer
@@ -149,5 +149,5 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" --clobber ./*
           else
-            gh release create "$TAG" --draft --verify-tag --title "Havantechno ${TAG#v}" --notes "$notes" ./*
+            gh release create "$TAG" --draft --verify-tag --title "Recut ${TAG#v}" --notes "$notes" ./*
           fi

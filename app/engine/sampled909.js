@@ -1,4 +1,4 @@
-/* Havantechno app engine - sampled909.js
+/* Recut app engine - sampled909.js
  * Global `Sampled909`: a second TR-909 beside the synthesized one in drums.js, playing Rob Roy Recordings' free
  * TR-909 sample set (1995) from app/assets/tr909-robroy/ (or from files the user supplies). Pressing Crew, K1.
  *

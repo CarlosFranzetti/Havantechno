@@ -3,14 +3,14 @@
  *
  * Main window: App.boot() -> control bar in #frame, view in #view, floating windows via Windows (ui/windows.js).
  * Device window (Electron child, index.html?device=<id>): renders only that device's window, bound to
- * window.opener.HavantechnoBridge, which this file defines on the main window.
+ * window.opener.RecutBridge, which this file defines on the main window.
  *
  * Design sources: CONTRACT.md "App (A6)" and "Shell (A6)"; round5-FO1 (one frame, two modes; Tab, V, Esc);
  * round5-FH2 (window rules); round5-FO2 (same-origin child windows share the process). */
 (function (root) {
   'use strict';
   var doc = root.document;
-  var shell = root.HavantechnoShell || null;
+  var shell = root.RecutShell || null;
 
   var LS_VIEW = 'hv.view';
   // Pressing Crew V2: Mixer (ui/mixer-view.js) and Clips (ui/clip-view.js) join the switch; Tab switches System Editor
@@ -263,7 +263,7 @@
     var b = S.bar.export;
     if (b) { b.disabled = true; b.textContent = 'Rendering…'; }
     toast('Rendering the whole song…', 60000);
-    var name = ((h.document() && h.document().name) || 'havantechno').replace(/[\\\/:*?"<>|]+/g, ' ').trim() || 'havantechno';
+    var name = ((h.document() && h.document().name) || 'recut').replace(/[\\\/:*?"<>|]+/g, ' ').trim() || 'recut';
     return Promise.resolve(h.render({})).then(function (buf) {
       var ab = h.wav(buf);
       if (shell && typeof shell.saveFile === 'function') {
@@ -453,7 +453,7 @@
     var bar = el('div', 'ap-bar');
     var B = S.bar = {};
 
-    bar.appendChild(el('span', 'ap-mark', 'HAVANTECHNO'));
+    bar.appendChild(el('span', 'ap-mark', 'RECUT'));
 
     var seg = el('div', 'ap-seg');
     seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'View');
@@ -805,8 +805,8 @@
       return;
     }
     S.host = host;
-    root.HavantechnoBridge = makeBridge(host);
-    root.HavantechnoApp = { host: host, app: App };
+    root.RecutBridge = makeBridge(host);
+    root.RecutApp = { host: host, app: App };
 
     S.toastEl = el('div', 'ap-toast');
     S.toastEl.setAttribute('role', 'status'); S.toastEl.setAttribute('aria-live', 'polite'); S.toastEl.hidden = true;
@@ -857,8 +857,8 @@
     function message(t) { holder.textContent = ''; holder.appendChild(el('div', 'ap-note', t)); }
 
     var op = null, bridge = null;
-    try { op = root.opener; bridge = op && op.HavantechnoBridge; } catch (e) { bridge = null; }
-    if (!bridge) { message('This window shows one device of a running Havantechno. Open it from the main window.'); return; }
+    try { op = root.opener; bridge = op && op.RecutBridge; } catch (e) { bridge = null; }
+    if (!bridge) { message('This window shows one device of a running Recut. Open it from the main window.'); return; }
 
     var subs = [];
     var h = {};

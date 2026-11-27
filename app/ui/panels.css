@@ -1,4 +1,4 @@
-/* Havantechno app - ui/panels.css: hardware-style instrument panels (ui/panels.js, Patch Crew P4).
+/* Recut app - ui/panels.css: hardware-style instrument panels (ui/panels.js, Patch Crew P4).
    The panel draws its own colours inside the SVG; this file only frames it, sets the type and the interaction states. */
 .pn-root { display: flex; align-items: center; justify-content: center; overflow: hidden; background: #0b0b0c; box-sizing: border-box; }
 .pn-svg { display: block; flex: 0 0 auto; max-width: 100%; max-height: 100%; user-select: none; -webkit-user-select: none; touch-action: none; }

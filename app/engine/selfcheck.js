@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Havantechno app engine - selfcheck.js
+/* Recut app engine - selfcheck.js
  * Smoke test with a fake AudioContext. Run: node app/engine/selfcheck.js
  * Checks: every module loads without a window, instruments and processors build on a fake context and on no
  * context, the song builds, all 200 bars schedule with every track playing, ducking fires, params clamp,
@@ -427,13 +427,17 @@ var section5 = (function () {
 
   // 5f. Project: serialize / parse round trips; autosave / restore; loadDocument
   var doc = host.document(), json = P.serialize(doc), env = JSON.parse(json);
-  ok(env.app === 'havantechno' && env.format === 1 && typeof env.savedAt === 'string' && env.song && env.song.v === 1 && P.savedAt(json) === env.savedAt, 'serialize wraps the SongDoc as {app, format, savedAt, song}');
+  ok(env.app === 'recut' && env.format === 1 && typeof env.savedAt === 'string' && env.song && env.song.v === 1 && P.savedAt(json) === env.savedAt, 'serialize wraps the SongDoc as {app, format, savedAt, song}');
   var back = P.parse(json);
   ok(SDoc.save(back) === SDoc.save(doc), 'parse(serialize(doc)) gives back the same document');
   ok(SDoc.save(P.parse(SDoc.save(doc))) === SDoc.save(doc), 'parse accepts a bare SongDoc');
-  var threw = 0; ['{"app":"other"}', '{"app":"havantechno","format":9,"song":{}}', 'not json', '{"v":2,"tracks":[]}'].forEach(function (j) { try { P.parse(j); } catch (e) { threw++; } });
+  var threw = 0; ['{"app":"other"}', '{"app":"recut","format":9,"song":{}}', 'not json', '{"v":2,"tracks":[]}'].forEach(function (j) { try { P.parse(j); } catch (e) { threw++; } });
   ok(threw === 4, 'parse rejects other files, unknown formats and bad JSON');
-  ok(P.fileName('Guidance edit / v2') === 'Guidance edit - v2.havantechno.json' && P.fileName('') === 'song.havantechno.json', 'file names are safe');
+  ok(P.fileName('Guidance edit / v2') === 'Guidance edit - v2.recut.json' && P.fileName('') === 'song.recut.json', 'file names are safe');
+  // files written while the app was called Havantechno still open; they are saved again under the new name
+  var oldEnv = JSON.parse(json); oldEnv.app = 'havantechno';
+  ok(SDoc.save(P.parse(JSON.stringify(oldEnv))) === SDoc.save(doc), 'parse reads a project written under the old name (app: havantechno)');
+  ok(P.fileName('My song.havantechno.json') === 'My song.recut.json' && P.fileName('x.recut.json') === 'x.recut.json', 'an old file name is saved with the new extension');
   ok(P.restore() === null && P.autosave(doc) === false, 'no localStorage: autosave and restore do nothing');
   var store = {}; sb.localStorage = { getItem: function (k) { return store.hasOwnProperty(k) ? store[k] : null; }, setItem: function (k, v) { store[k] = String(v); }, removeItem: function (k) { delete store[k]; } };
   ok(P.autosave(doc) === true && SDoc.save(P.restore()) === SDoc.save(doc), 'autosave / restore through localStorage');
@@ -452,7 +456,7 @@ var section5 = (function () {
   var shellCalls = [];
   var shell = {
     saveFile: function (o) { shellCalls.push(['save', o.name, o.text.length]); return Promise.resolve({ path: '/songs/' + o.name }); },
-    openFile: function () { shellCalls.push(['open']); return Promise.resolve({ path: '/songs/x.havantechno.json', text: json }); }
+    openFile: function () { shellCalls.push(['open']); return Promise.resolve({ path: '/songs/x.recut.json', text: json }); }
   };
   var cancel = { saveFile: function () { return Promise.resolve(null); }, openFile: function () { return Promise.resolve({ canceled: true }); } };
   var ctx = new FakeContext(48000);
@@ -473,8 +477,8 @@ var section5 = (function () {
     host.render({ from: 'nope' }).then(function () { return 'rendered'; }, function (e) { return e.message; }),
     live.start()
   ]).then(function (r) {
-    ok(r[0] && r[0].path === '/songs/My song.havantechno.json' && r[0].name === 'My song.havantechno.json' && shellCalls[0][0] === 'save', 'save goes through HavantechnoShell.saveFile');
-    ok(r[1] && SDoc.save(r[1]) === SDoc.save(back) && shellCalls[1][0] === 'open', 'open goes through HavantechnoShell.openFile and parses the file');
+    ok(r[0] && r[0].path === '/songs/My song.recut.json' && r[0].name === 'My song.recut.json' && shellCalls[0][0] === 'save', 'save goes through RecutShell.saveFile');
+    ok(r[1] && SDoc.save(r[1]) === SDoc.save(back) && shellCalls[1][0] === 'open', 'open goes through RecutShell.openFile and parses the file');
     ok(r[2] === null && r[3] === null, 'a cancelled dialog resolves null');
     ok(r[4] === 'rejected', 'save without a shell or a document rejects');
     ok(r[5] === 'OfflineAudioContext unavailable' && /unknown section/.test(r[6]), 'render rejects cleanly without OfflineAudioContext and for an unknown section');
@@ -616,7 +620,7 @@ function section6() {
       // 6d. Project.open with a shell and a host: readable files reload, the rest are missing; nothing throws
       var json = P.serialize(lh.document()), reads = [];
       var shell = {
-        openFile: function () { return Promise.resolve({ name: 'p.havantechno.json', path: '/songs/p.havantechno.json', text: json }); },
+        openFile: function () { return Promise.resolve({ name: 'p.recut.json', path: '/songs/p.recut.json', text: json }); },
         readFile: function (p, o) { reads.push(p + '|' + (o && o.base)); return Promise.resolve(p === '/samples/Vox Chop.wav' ? new ArrayBuffer(4800) : null); }
       };
       var h3 = H.create({ context: new FakeContext(48000) }), ev3 = [];
@@ -625,7 +629,7 @@ function section6() {
         var st = {}; h3.audio().forEach(function (a) { st[a.id] = a.loaded ? 'loaded' : 'missing'; });
         ok(doc === h3.document() && doc.tracks.length === 15 && Object.keys(doc.audio).length === 6, 'Project.open({shell, host}) loads the song into the Host');
         ok(st.vox_chop === 'loaded' && st.hat_one === 'loaded' && st.kick_loop === 'missing' && st.snare === 'missing' && st.clap_stack === 'missing', 'readable paths and URLs reload, the rest are missing (' + JSON.stringify(st) + ')');
-        ok(reads.indexOf('/samples/Vox Chop.wav|/songs') >= 0 && reads.indexOf('kick loop.wav|/songs') >= 0 && reads.every(function (x) { return x.indexOf('https:') < 0; }), 'paths go through HavantechnoShell.readFile with the project folder as base; URLs do not');
+        ok(reads.indexOf('/samples/Vox Chop.wav|/songs') >= 0 && reads.indexOf('kick loop.wav|/songs') >= 0 && reads.every(function (x) { return x.indexOf('https:') < 0; }), 'paths go through RecutShell.readFile with the project folder as base; URLs do not');
         ok(ev3.indexOf('kick_loop:missing') >= 0 && ev3.indexOf('vox_chop:loaded') >= 0 && h3.buffer('clap_stack') === null && h3.devices().length === 55, "'audio' events report each file; the missing ones leave their tracks silent");
         return P.open({ shell: shell }).then(function (bare) {
           ok(bare && bare.tracks.length === 15 && bare !== h3.document(), 'Project.open without a host still resolves the parsed document');
@@ -921,7 +925,7 @@ function section8() {
       // 8e. reload with the project: one sample readable, one missing
       var json = P.serialize(lh.document()), reads = [];
       var shell = {
-        openFile: function () { return Promise.resolve({ name: 'p.havantechno.json', path: '/songs/p.havantechno.json', text: json }); },
+        openFile: function () { return Promise.resolve({ name: 'p.recut.json', path: '/songs/p.recut.json', text: json }); },
         readFile: function (p) { reads.push(p); return Promise.resolve(p === '/kits/bd.wav' ? makeWav({ rate: 22050, frames: 50, unity: 36 }) : null); }
       };
       var h3 = H.create({ context: new FakeContext(48000) });
@@ -950,7 +954,7 @@ function section8() {
 }
 
 // ------------------------------------------------------------------ 9. batch-1 follow-ups (A1): host.detectPitch,
-// Project.pickFiles, SFZ #include through HavantechnoShell.readText and through a dropped file list
+// Project.pickFiles, SFZ #include through RecutShell.readText and through a dropped file list
 function file(rel, text, bytes) { return { name: rel.split('/').pop(), webkitRelativePath: rel, text: function () { return Promise.resolve(text); }, arrayBuffer: function () { return Promise.resolve(bytes); } }; }
 function section9() {
   console.log('9. detectPitch, pickFiles, SFZ includes (shell readText and dropped files)');
@@ -986,7 +990,7 @@ function section9() {
       ok(r[3] && r[3].length === 2 && r[3][0] === fakeFiles[0] && r[3][1] === fakeFiles[1] && input.multiple === true && input.webkitdirectory === true && input.attrs.webkitdirectory === '', 'pickFiles on the web: <input type=file multiple webkitdirectory> resolves the File list (fake DOM)');
     });
   }).then(function () {
-    // SFZ #include through HavantechnoShell.readText (Electron)
+    // SFZ #include through RecutShell.readText (Electron)
     var texts = [], reads = [];
     var shell = {
       readText: function (p, o) { texts.push(p); return Promise.resolve(p === '/kits/inc/common.sfz' ? '<region> sample=sd.wav key=38\n#include "inc/deeper.sfz"' : p === '/kits/inc/deeper.sfz' ? '<region> sample=hh.wav key=42' : null); },
@@ -1199,7 +1203,7 @@ function section10() {
       return P.importTrack({ file: { name: 'loop.wav', path: '/music/loop.wav', bytes: bytes(11) }, host: h, shell: shell, maxSeconds: 4, onProgress: function (e) { stages.push(e.stage); } });
     }).then(function (r) {
       var d = h.document();
-      ok(r && r.doc === d && r.saved && r.saved.path === '/songs/loop.havantechno.json' && saved.length === 1, 'importTrack saves the project at once through Project.save (' + (r.saved && r.saved.name) + ')');
+      ok(r && r.doc === d && r.saved && r.saved.path === '/songs/loop.recut.json' && saved.length === 1, 'importTrack saves the project at once through Project.save (' + (r.saved && r.saved.name) + ')');
       var f = P.parse(saved[0].text);
       ok(f.reference && f.reference.audio === h.reference().id && Math.abs(f.reference.offset - 0.05) < 0.002 && f.analysis && f.analysis.elements.length === 4 && f.tracks.length === 4, 'the saved file holds the reference (offset ' + (f.reference && f.reference.offset) + '), the analysis and the tracks');
       ok(r.analysis.separator && r.analysis.separator.model === 'htdemucs' && r.analysis.stems.map(function (s) { return s.name; }).join() === 'drums,bass' && d.audio[r.analysis.stems[0].audio].src === '/tmp/st/drums.wav', 'separation through the shell: stems by path (reloadable), the separator recorded');

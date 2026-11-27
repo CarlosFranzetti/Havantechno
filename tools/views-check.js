@@ -3,7 +3,7 @@
  *   app/ui/settings.js (Settings), mixer-view.js (MixerView), clip-view.js (ClipView), export-dialog.js (ExportDialog).
  *   node tools/views-check.js
  * Part 1 drives every control against a stub host that implements the BRIEF's frozen calls (exportAudio, addAudioTrack,
- * audioOptions, setAudioOptions, outputDevices; Project.exportAudio; HavantechnoShell.pickDirectory, writeFile, joinPath,
+ * audioOptions, setAudioOptions, outputDevices; Project.exportAudio; RecutShell.pickDirectory, writeFile, joinPath,
  * appVersion, readAppData, writeAppData) and against a bare host without them (every such control must disable itself
  * with a visible reason and never throw). Part 2 mounts the Mixer and the Clips on the real Host (app/engine, no
  * AudioContext) and checks that a fader move and a cell change each write the document and add exactly one undo entry.
@@ -92,7 +92,7 @@ var sb = {
 sb.window = sb; sb.document = fakeDoc; sb.globalThis = sb;
 // the shell (Electron): app data for Settings, a folder for exports, a version for About
 var shellLog = { written: [], appData: [], pick: 0 };
-sb.HavantechnoShell = {
+sb.RecutShell = {
   readAppData: function (name) { return Promise.resolve(name === 'settings.json' ? JSON.stringify({ 'view.meterDecay': 48, 'bogus.key': 1 }) : null); },
   writeAppData: function (name, text) { shellLog.appData.push([name, text]); return Promise.resolve(true); },
   pickDirectory: function () { shellLog.pick++; return Promise.resolve('/tmp/out'); },
@@ -240,7 +240,7 @@ function partSettings() {
 
     // the dialog on the full stub
     var h = stubHost();
-    Settings.attach(h, { shell: sb.HavantechnoShell });
+    Settings.attach(h, { shell: sb.RecutShell });
     var opener = new FakeNode('button'); body.appendChild(opener); opener.focus();
     Settings.open('audio');
     var dlg = byAttr(body, 'role', 'dialog')[0];
@@ -483,7 +483,7 @@ function partExport() {
   return ExportDialog.open(b, { toast: function (t) { toasts.push(t); } }).then(function (r) {
     ok(r === null && /host\.exportAudio is missing/.test(toasts[0]), 'open on a bare host only says why');
     Settings.set('export.bitDepth', 16); Settings.set('export.tail', 1.5);
-    var p = ExportDialog.open(h, { shell: sb.HavantechnoShell, toast: function (t) { toasts.push(t); } });
+    var p = ExportDialog.open(h, { shell: sb.RecutShell, toast: function (t) { toasts.push(t); } });
     var dlg = byClass(body, 'xd-dlg')[0];
     ok(dlg && dlg.getAttribute('role') === 'dialog', 'the export dialog opens');
     ok(/Bit depth/.test(dlg.textContent) && dlg.find(function (x) { return x.tagName === 'SELECT' && x.getAttribute('aria-label') === 'Bit depth'; })[0].value === '0', 'bit depth defaults from Settings (16-bit)');
@@ -551,11 +551,11 @@ function partExport() {
       // Project.exportAudio wins when present
       var called = null;
       sb.Project = { exportAudio: function (o) { called = o; return Promise.resolve([{ name: 'a.wav', path: '/x/a.wav' }]); } };
-      var p4 = ExportDialog.open(h, { shell: sb.HavantechnoShell });
+      var p4 = ExportDialog.open(h, { shell: sb.RecutShell });
       var dlg4 = byClass(body, 'xd-dlg')[0];
       byText(dlg4, 'BUTTON', /^Export$/)[0].click();
       return ticks(6).then(function () {
-        ok(called && called.host === h && called.shell === sb.HavantechnoShell && called.what === 'mix' && h.L.exp.length === 3, 'Project.exportAudio({host, shell, ...}) is used when present');
+        ok(called && called.host === h && called.shell === sb.RecutShell && called.what === 'mix' && h.L.exp.length === 3, 'Project.exportAudio({host, shell, ...}) is used when present');
         byText(dlg4, 'BUTTON', /^Close$/)[0].click();
         return p4;
       });

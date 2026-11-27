@@ -1,14 +1,14 @@
-/* Havantechno Electron main process.
- * - Serves app/ through the standard, secure custom scheme havantechno://app/ (stable origin, so
+/* Recut Electron main process.
+ * - Serves app/ through the standard, secure custom scheme recut://app/ (stable origin, so
  *   localStorage persists and device child windows are same-origin with the main window).
- *   Set HAVANTECHNO_URL=http://localhost:8000/app/index.html to load the dev server instead.
+ *   Set RECUT_URL=http://localhost:8000/app/index.html to load the dev server instead.
  * - One main BrowserWindow. Device windows are real child windows (parent set), opened with
- *   window.open from the main window so that window.opener.HavantechnoBridge works (see app/ui/app.js).
+ *   window.open from the main window so that window.opener.RecutBridge works (see app/ui/app.js).
  * - separate(path, {model}) / cancelSeparate: runs tools/separate.py with the system Python (shell/separation.js), progress on
  *   'shell:separateProgress'; stems go to <userData>/separation/<name>-<hash>/.
  * - pickDirectory({title}) grants a folder for writeFile / copyFile (shell/files.js): the page may write only inside folders
  *   chosen in a dialog during this run and inside <userData>. appVersion() answers app.getVersion().
- * - Permissions: only the app's own origin (the havantechno://app scheme, or HAVANTECHNO_URL in development) is granted
+ * - Permissions: only the app's own origin (the recut://app scheme, or RECUT_URL in development) is granted
  *   'media' (audio only, never video: device labels for the output-device list), 'speaker-selection' (setSinkId) and
  *   'midi' and 'midiSysex' (Electron 45 reports even a plain requestMIDIAccess() as midiSysex: observed). Everything else, and every other origin, is denied (installPermissions below).
  * - IPC: openFile, saveFile, appDataPath, readAppData, writeAppData, openDeviceWindow,
@@ -24,9 +24,9 @@ var Files = require('./files');
 var app = electron.app, BrowserWindow = electron.BrowserWindow, ipcMain = electron.ipcMain;
 var session = electron.session, dialog = electron.dialog, protocol = electron.protocol, screen = electron.screen, Menu = electron.Menu;
 
-var SCHEME = 'havantechno';
+var SCHEME = 'recut';
 var APP_DIR = path.resolve(__dirname, '..');
-var DEV_URL = process.env.HAVANTECHNO_URL || '';
+var DEV_URL = process.env.RECUT_URL || '';
 var MAIN_URL = DEV_URL || (SCHEME + '://app/index.html');
 
 var MIME = {
@@ -164,7 +164,7 @@ function createMainWindow() {
   mainWin = new BrowserWindow({
     x: b ? b.x : undefined, y: b ? b.y : undefined,
     width: b ? b.width : 1440, height: b ? b.height : 900, minWidth: 900, minHeight: 600,
-    backgroundColor: '#111114', title: 'Havantechno', autoHideMenuBar: true,
+    backgroundColor: '#111114', title: 'Recut', autoHideMenuBar: true,
     webPreferences: webPrefs()
   });
   if (state.main && state.main.maximized) mainWin.maximize();
@@ -177,7 +177,7 @@ function createMainWindow() {
     if (!id || !sameOrigin(details.url)) return { action: 'deny' };
     var nb = clampBounds(state.devices[id]);
     var opts = {
-      parent: mainWin, title: 'Havantechno', backgroundColor: '#111114', autoHideMenuBar: true,
+      parent: mainWin, title: 'Recut', backgroundColor: '#111114', autoHideMenuBar: true,
       minimizable: false, show: true, webPreferences: webPrefs()
     };
     if (nb) { opts.x = nb.x; opts.y = nb.y; opts.width = nb.width; opts.height = nb.height; }

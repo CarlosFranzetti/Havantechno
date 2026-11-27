@@ -1,4 +1,4 @@
-/* Havantechno engine - programs.js
+/* Recut engine - programs.js
  * Global `Programs`: sampler programs as plain data (Kontakt-class zones). Pure: no AudioContext, runs in Node.
  *
  *   Programs.normalize(program)                         -> program with every region field filled in

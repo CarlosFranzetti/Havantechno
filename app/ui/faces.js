@@ -1,4 +1,4 @@
-/* Havantechno app - ui/faces.js
+/* Recut app - ui/faces.js
  * Global `Faces`: the face registry and renderer. A face is DATA (facedefs.js): sections of parameter names in signal
  * order, one hero graph drawn from the parameters, a glyph, a few size hints. Min, max, unit and default are always read
  * from device.spec, never restated by a face, so a changed range in the engine reaches every face with no edit.

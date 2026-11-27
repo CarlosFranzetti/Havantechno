@@ -1,6 +1,6 @@
 # Third-party code and material
 
-Havantechno is licensed under the GNU Affero General Public License v3.0 or later (see `LICENSE`). Code ported from other projects is listed here with its origin and licence. Add a row before porting anything.
+Recut (called Havantechno until 27 November 2026; the repository keeps that name) is licensed under the GNU Affero General Public License v3.0 or later (see `LICENSE`). Code ported from other projects is listed here with its origin and licence. Add a row before porting anything.
 
 | Component in this repo | Origin | Licence | Notes |
 |---|---|---|---|

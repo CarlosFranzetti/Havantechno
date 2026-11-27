@@ -1,4 +1,4 @@
-/* Havantechno app engine - host.js
+/* Recut app engine - host.js
  * Global `Host`: the one object the UI talks to. The UI never touches the Sequencer or the AudioContext directly,
  * so a native engine can replace this file later. Contract: app/CONTRACT.md, "Host (A1)".
  *
@@ -571,7 +571,7 @@
     }
     function baseName(s) { s = String(s || ''); s = s.split(/[?#]/)[0]; var n = s.split(/[\\/]/).pop(); try { n = decodeURIComponent(n); } catch (e) {} return n || 'audio'; }
     function sourceInfo(src, o) {
-      var name = null, path = null, sh = (o && o.shell) || root.HavantechnoShell || null;
+      var name = null, path = null, sh = (o && o.shell) || root.RecutShell || null;
       if (typeof src === 'string') { name = baseName(src); path = src; }
       else if (src && !isBuf(src) && !isView(src) && src.bytes != null) { name = src.name || baseName(src.path); path = src.path || null; }
       else if (src && !isBuf(src) && !isView(src) && typeof src === 'object') {
@@ -754,10 +754,10 @@
       return true;
     };
     // load every audio entry of the document that has no buffer: URLs through fetch, file paths through
-    // HavantechnoShell.readFile(path, {base}) (Electron). Anything else is missing: the track stays silent. Never rejects.
+    // RecutShell.readFile(path, {base}) (Electron). Anything else is missing: the track stays silent. Never rejects.
     host.reloadAudio = function (o) {
       o = o || lastAudioOpts || {};
-      var a = audioMap(), ids = missingIds(), sh = o.shell || root.HavantechnoShell || null, res = { loaded: [], missing: [] }, g = gen;
+      var a = audioMap(), ids = missingIds(), sh = o.shell || root.RecutShell || null, res = { loaded: [], missing: [] }, g = gen;
       var page = root.location && /^https?:$/.test(root.location.protocol || '');
       var jobs = ids.map(function (id) {
         var e = a[id], src = e.src || '', p, lo = { id: id, name: e.name, src: src };
@@ -949,7 +949,7 @@
         return Promise.resolve(sh.readFile(abs, {})).then(function (b) { return b ? { data: b, src: abs } : null; }, function () { return null; });
       }
       if (asText && sh && typeof sh.readText === 'function' && abs) {
-        // HavantechnoShell.readText(path, {base}): .sfz .txt .json, 4 MiB, null when missing or refused (A6)
+        // RecutShell.readText(path, {base}): .sfz .txt .json, 4 MiB, null when missing or refused (A6)
         return Promise.resolve(sh.readText(abs, {})).then(function (t) { return t == null ? null : { data: t, src: abs }; }, function () { return null; });
       }
       return Promise.resolve(null);
@@ -987,7 +987,7 @@
       if (o.files) { var fm = filesMap(o.files); o = clone2(o); o.files = fm; }
       var M;
       try { M = needP('parseSfz'); } catch (e) { return Promise.reject(e); }
-      var sh = o.shell || root.HavantechnoShell || null, g = gen;
+      var sh = o.shell || root.RecutShell || null, g = gen;
       return sfzSource(source, o).then(function (src) {
         var incs = {};
         return prefetchIncludes(src.text, src, o, sh, incs, 0).then(function () {
@@ -1065,7 +1065,7 @@
         var aud = ed.doc.audio || {};
         var text = M.toSfz(p, { src: function (bid) { return (aud[bid] && aud[bid].src) || bid; }, defaultPath: o.defaultPath, params: params }), seen = {}, files = [];
         p.regions.forEach(function (r) { if (r.buffer && !seen[r.buffer]) { seen[r.buffer] = 1; files.push({ id: r.buffer, src: (audioMap()[r.buffer] || {}).src || null }); } });
-        var sh = o.shell || root.HavantechnoShell || null, out = { text: text, files: files, id: id };
+        var sh = o.shell || root.RecutShell || null, out = { text: text, files: files, id: id };
         if (o.save !== false && sh && typeof sh.saveFile === 'function') {
           Promise.resolve(sh.saveFile({ name: String(p.name || id) + '.sfz', text: text, filters: [{ name: 'SFZ', extensions: ['sfz'] }] })).then(function (r) {
             if (r && r.path) out.path = r.path;

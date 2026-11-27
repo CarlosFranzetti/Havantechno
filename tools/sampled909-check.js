@@ -291,7 +291,7 @@ async function nodeChecks() {
   // ---------------------------------------------------------------- 5c. Assets: manifest gating, what is fetched
   console.log('5c. Assets.ready (G1)');
   async function assetsRun(manifest, doc, shellRoms) {
-    var asked = [], sba = load(['core', 'drums', 'sampled909', 'assets'], shellRoms ? { HavantechnoShell: { readRoms: function () { asked.push('shell:readRoms'); return Promise.resolve(shellRoms); } } } : null);
+    var asked = [], sba = load(['core', 'drums', 'sampled909', 'assets'], shellRoms ? { RecutShell: { readRoms: function () { asked.push('shell:readRoms'); return Promise.resolve(shellRoms); } } } : null);
     sba.fetch = function (u) {
       asked.push(u);
       if (/manifest\.json$/.test(u)) return Promise.resolve(manifest ? { ok: true, json: function () { return Promise.resolve(manifest); } } : { ok: false });
@@ -318,7 +318,7 @@ async function nodeChecks() {
   var a7 = await assetsRun(null, kitDoc);
   ok(a7.r.manifest === null && a7.r.robroy && a7.asked.filter(function (u) { return /tr909-rom/.test(u); }).length === 0, 'no manifest: the Rob Roy set is still asked for (as before), the ROMs never');
   var a8 = await assetsRun({ 'tr909-rom': false, 'tr909-robroy': false }, kitDoc, [new ArrayBuffer(16)]);
-  ok(a8.asked.indexOf('shell:readRoms') >= 0 && a8.r.rom && a8.r.rom.source === 'shell' && a8.r.rom.chips.length === 0, 'in the shell with the ROMs false: HavantechnoShell.readRoms is asked; a wrong image loads nothing and nothing throws');
+  ok(a8.asked.indexOf('shell:readRoms') >= 0 && a8.r.rom && a8.r.rom.source === 'shell' && a8.r.rom.chips.length === 0, 'in the shell with the ROMs false: RecutShell.readRoms is asked; a wrong image loads nothing and nothing throws');
   ok(a1.A.romWanted({ tracks: { a: { inst: { type: 'cr909', params: { rom: 1 } } } } }) && !a1.A.romWanted({ tracks: { a: { inst: { type: 'cr909', params: { rom: 0 } } } } }), 'romWanted reads a Sequencer\'s instruments too');
   var tracked = JSON.parse(fs.readFileSync(path.join(ROOT, 'app', 'assets', 'manifest.json'), 'utf8'));
   ok(tracked['tr909-rom'] === false && tracked['tr909-robroy'] === true, 'the tracked app/assets/manifest.json says ROMs false, Rob Roy true');

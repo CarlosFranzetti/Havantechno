@@ -1,4 +1,4 @@
-/* Havantechno app engine - audiotrack.js
+/* Recut app engine - audiotrack.js
  * Global `AudioTrack`: the player behind a track of type 'audio' (Pressing Crew, V1). Contract: app/CONTRACT.md, "Host".
  *
  *   var inst = AudioTrack.create(ctx, {getBuffer: fn(id) -> AudioBuffer|null, clips: [{audio, bar, offset, length, gain}]});

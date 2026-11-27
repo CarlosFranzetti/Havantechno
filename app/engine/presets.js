@@ -1,4 +1,4 @@
-/* Havantechno app engine - presets.js
+/* Recut app engine - presets.js
  * Global `Presets`: a preset and pattern bank for the instruments (Showroom Crew, W1; frozen interface in
  * docs/research/2026-11-26-showroom-crew/BRIEF.md). Load after host.js (it uses only the Host's public calls) and before
  * ui/windows.js. Nothing throws without a DOM, an AudioContext or storage.
@@ -12,7 +12,7 @@
  *   Presets.patterns.list / get / save / rename / remove / exportText / importText (same shapes); pattern for a synth {bars, cells},
  *     for a machine {voices: {'<voice type>': {bars, cells}}, bpm, swing}
  *   Presets.storage(adapter)    {get(key) -> string|null, set(key, string), remove(key)}; default localStorage in try/catch, else memory;
- *                               in Electron (HavantechnoShell.readAppData/writeAppData) one JSON file, presets.json in the app data folder
+ *                               in Electron (RecutShell.readAppData/writeAppData) one JSON file, presets.json in the app data folder
  *   Presets.on('change', fn) / Presets.off('change', fn)    fn({what: 'preset'|'pattern'|'storage', action, type, id})
  * Additions (outside the frozen interface): Presets.patterns.apply(host, track, id, {tempo}) and .capture(host, track),
  *   Presets.applyData(host, track, params), Presets.current(host, track), Presets.patterns.current(host, track), Presets.machineOf(type),
@@ -459,7 +459,7 @@
     var cache = {}, loaded = false, writing = null, again = false;
     function flush() {
       if (writing) { again = true; return; }
-      var text = JSON.stringify({ app: 'havantechno', format: 'presets-store', version: VERSION, data: cache });
+      var text = JSON.stringify({ app: 'recut', format: 'presets-store', version: VERSION, data: cache });
       writing = Promise.resolve().then(function () { return shell.writeAppData(FILE, text); })
         .catch(function (e) { warn('could not write ' + FILE + ': ' + (e && e.message ? e.message : e)); })
         .then(function () { writing = null; if (again) { again = false; flush(); } });
@@ -490,7 +490,7 @@
   }
   var store = null, readyP = null;
   function defaultAdapter() {
-    var sh = root.HavantechnoShell;
+    var sh = root.RecutShell;
     if (sh && isFn(sh.readAppData) && isFn(sh.writeAppData)) return shellAdapter(sh);
     return localAdapter();
   }
@@ -527,7 +527,7 @@
     if (loadProblems.length) warn('stored bank: ' + loadProblems.join('; '));
   }
   function writeUser() {
-    var o = { app: 'havantechno', version: VERSION, presets: {}, patterns: {} };
+    var o = { app: 'recut', version: VERSION, presets: {}, patterns: {} };
     ['presets', 'patterns'].forEach(function (what) {
       for (var t in user[what]) if (has(user[what], t) && user[what][t].length) {
         o[what][t] = user[what][t].map(function (e) {
@@ -711,17 +711,18 @@
 
   // ------------------------------------------------------------------ export / import
   function parseText(text, format) {
-    if (typeof text !== 'string') throw new Error('Nothing to import: expected the text of a Havantechno ' + format + '.');
+    if (typeof text !== 'string') throw new Error('Nothing to import: expected the text of a Recut ' + format + '.');
     if (text.length > MAX_TEXT) throw new Error('That text is too long to be a ' + format + ' (more than 1 MB).');
     var o;
-    try { o = JSON.parse(text.replace(/^﻿/, '').trim()); } catch (e) { throw new Error('That is not valid JSON, so it is not a Havantechno ' + format + ' (' + (e && e.message ? e.message : e) + ').'); }
-    if (!isObj(o) || o.app !== 'havantechno') throw new Error('That JSON is not from Havantechno (it has no "app": "havantechno").');
+    try { o = JSON.parse(text.replace(/^﻿/, '').trim()); } catch (e) { throw new Error('That is not valid JSON, so it is not a Recut ' + format + ' (' + (e && e.message ? e.message : e) + ').'); }
+    // 'havantechno' was the app's name until 27 November 2026: text copied from it still imports
+    if (!isObj(o) || (o.app !== 'recut' && o.app !== 'havantechno')) throw new Error('That JSON is not from Recut (it has no "app": "recut").');
     if (o.format !== format) {
       if (o.format === 'preset' || o.format === 'pattern') { var err = new Error('That is a ' + o.format + ', not a ' + format + ': import it as a ' + o.format + '.'); err.format = o.format; throw err; }
       throw new Error('Unknown format "' + o.format + '": expected a ' + format + '.');
     }
     if (!isNum(o.version) || o.version < 1) throw new Error('The ' + format + ' has no version number.');
-    if (o.version > VERSION) throw new Error('The ' + format + ' was made by a newer version of Havantechno (format version ' + o.version + ').');
+    if (o.version > VERSION) throw new Error('The ' + format + ' was made by a newer version of Recut (format version ' + o.version + ').');
     if (typeof o.type !== 'string' || !o.type) throw new Error('The ' + format + ' does not say which instrument it is for.');
     if (!knownType(o.type)) throw new Error('Unknown instrument type "' + o.type + '".');
     return o;
@@ -808,7 +809,7 @@
 
     exportText: function (type, id) {
       var e = PB.find(String(type), String(id)); if (!e) return null;
-      var o = { app: 'havantechno', format: 'preset', version: VERSION, type: e.type, name: e.name };
+      var o = { app: 'recut', format: 'preset', version: VERSION, type: e.type, name: e.name };
       if (e.voices) o.voices = clone(e.voices); else o.params = clone(e.params);
       return JSON.stringify(o, null, 2);
     },
@@ -942,7 +943,7 @@
     },
     exportText: function (type, id) {
       var e = TB.find(String(type), String(id)); if (!e) return null;
-      return JSON.stringify({ app: 'havantechno', format: 'pattern', version: VERSION, type: e.type, name: e.name, pattern: e.pattern });
+      return JSON.stringify({ app: 'recut', format: 'pattern', version: VERSION, type: e.type, name: e.name, pattern: e.pattern });
     },
     importText: function (text) {
       var o = parseText(text, 'pattern');
@@ -1112,8 +1113,8 @@
     function field(form, label, control) { var l = el('label'); l.appendChild(el('span', '', label)); l.appendChild(control); form.appendChild(l); return control; }
     function button_(row, text, fn) { var b = el('button', 'pm-b', text); b.type = 'button'; b.addEventListener('click', function (ev) { ev.preventDefault(); fn(); }); row.appendChild(b); return b; }
     function download(name, text) {
-      var sh = root.HavantechnoShell;
-      if (sh && isFn(sh.saveFile)) return Promise.resolve(sh.saveFile({ name: name, text: text, filters: [{ name: 'Havantechno', extensions: ['json'] }] })).then(function (r) { return r ? 'Saved.' : 'Not saved.'; });
+      var sh = root.RecutShell;
+      if (sh && isFn(sh.saveFile)) return Promise.resolve(sh.saveFile({ name: name, text: text, filters: [{ name: 'Recut', extensions: ['json'] }] })).then(function (r) { return r ? 'Saved.' : 'Not saved.'; });
       try {
         var blob = new root.Blob([text], { type: 'application/json' }), url = root.URL.createObjectURL(blob), a = d.createElement('a');
         a.href = url; a.download = name; a.rel = 'noopener'; d.body.appendChild(a); a.click(); d.body.removeChild(a);
@@ -1220,7 +1221,7 @@
         fillOut(); es.addEventListener('change', fillOut);
         first = es;
         button_(row, 'Copy as text', function () { copyText(out).then(function (m) { say(msg, m); }); });
-        button_(row, root.HavantechnoShell && isFn(root.HavantechnoShell.saveFile) ? 'Save file…' : 'Download', function () {
+        button_(row, root.RecutShell && isFn(root.RecutShell.saveFile) ? 'Save file…' : 'Download', function () {
           var e = cur(); if (!e) return;
           download(slug(e.name) + '.' + noun + '.json', out.value).then(function (m) { say(msg, m); });
         });

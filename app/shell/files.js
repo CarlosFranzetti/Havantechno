@@ -88,7 +88,7 @@ function createGuard(o) {
     var ok = false;
     for (var i = 0; i < list.length; i++) if (inside(realParent, list[i])) { ok = true; break; }
     if (!ok) {
-      throw fail('not-granted', 'Havantechno may only write into a folder you chose in a folder dialog during this session, or into its own data folder. ' +
+      throw fail('not-granted', 'Recut may only write into a folder you chose in a folder dialog during this session, or into its own data folder. ' +
         parent + ' is neither. Choose the folder again.');
     }
     var lst = null;
@@ -144,7 +144,7 @@ function createGuard(o) {
     var realParent = await fsp.realpath(parent), list = await allowedRoots(), ok = false;
     for (var i = 0; i < list.length; i++) if (inside(realParent, list[i])) { ok = true; break; }
     if (!ok) {
-      throw fail('not-granted', 'Havantechno may only make folders inside a folder you chose in a folder dialog during this session, or inside its own data folder. ' +
+      throw fail('not-granted', 'Recut may only make folders inside a folder you chose in a folder dialog during this session, or inside its own data folder. ' +
         parent + ' is neither. Choose the folder again.');
     }
     var target = path.join(realParent, name), lst = null;

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* app/build/make-icon.js: draws the Havantechno app icon (original artwork, no third-party material) as a 1024 px PNG
+/* app/build/make-icon.js: draws the Recut app icon (original artwork, no third-party material) as a 1024 px PNG
  * with headless Chromium (Playwright). The mark is the initial H in the app's brand pink (#ff5fa2) on its dark ground
  * (#0b0b10): two stems and a crossbar made of four step-sequencer cells, one of them lit.
  * electron-builder derives the .icns, .ico and Linux sizes from build/icon.png.

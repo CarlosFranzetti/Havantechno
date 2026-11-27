@@ -1,4 +1,4 @@
-/* Havantechno analysis - decide.js
+/* Recut analysis - decide.js
  * Global `Analysis.decide`: one function per classification decision. Each returns
  *   { value, confidence: 'high'|'medium'|'low'|'none', p: 0..1, evidence: [strings], alternatives: [{value, p}] }
  * Thresholds are the L1 transcript's (docs/research/2026-11-09-lab-crew/transcripts/L1-methods.md); they are starting

@@ -1,4 +1,4 @@
-/* Havantechno app - ui/panels.js
+/* Recut app - ui/panels.js
  * Global `Panels`: hardware-style instrument panels for the floating device windows (Patch Crew, P4).
  * A panel is one SVG drawn after the original machine (looks, not marks: no maker's logo or model badge; Havantechno's
  * wordmark and a plain HVT model name), whose controls are live: they write the same parameters as the faces.

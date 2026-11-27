@@ -1,4 +1,4 @@
-/* Havantechno app engine - project.js
+/* Recut app engine - project.js
  * Global `Project`: song files. Contract: app/CONTRACT.md, "Project (A1)".
  *
  *   var json = Project.serialize(doc);  var doc = Project.parse(json);
@@ -6,11 +6,12 @@
  *   Project.open({shell}).then(function (doc) { if (doc) host.loadDocument(doc); });
  *   Project.autosave(doc);  var doc = Project.restore();                       // null when there is nothing saved
  *
- * File format (version 1): {app: 'havantechno', format: 1, savedAt: ISO time, song: <SongDoc v1>}.
- * parse() also accepts a bare SongDoc (v: 1). `shell` defaults to window.HavantechnoShell (Electron only);
+ * File format (version 1): {app: 'recut', format: 1, savedAt: ISO time, song: <SongDoc v1>} (app: 'havantechno', the
+ * app's earlier name, is read too).
+ * parse() also accepts a bare SongDoc (v: 1). `shell` defaults to window.RecutShell (Electron only);
  * the shell hooks are called only when present: saveFile, openFile, appDataPath, writeAppData, readAppData.
  * Audio files (sampler) are referenced in doc.audio, never embedded: Project.open({shell, host}) loads the song into the
- * Host and waits while it reloads them (HavantechnoShell.readFile for paths, fetch for URLs); unreadable ones are missing.
+ * Host and waits while it reloads them (RecutShell.readFile for paths, fetch for URLs); unreadable ones are missing.
  * Sampler programs (doc.programs) reload with their region samples; Project.missing(host) lists what is still missing.
  * Project.importTrack({file, stems, shell, host, onProgress}) makes a project from an audio file (Dubplate Crew).
  */
@@ -18,10 +19,14 @@
   'use strict';
 
   var root = (typeof window !== 'undefined') ? window : (typeof globalThis !== 'undefined' ? globalThis : this);
-  var APP = 'havantechno', FORMAT = 1, EXT = '.havantechno.json', AUTOSAVE_KEY = 'havantechno.autosave', AUTOSAVE_FILE = 'autosave' + EXT;
+  var APP = 'recut', FORMAT = 1, EXT = '.recut.json', AUTOSAVE_KEY = 'recut.autosave', AUTOSAVE_FILE = 'autosave' + EXT;
+  // The app was called Havantechno until 27 November 2026: files it wrote ({app: 'havantechno'}, *.havantechno.json, a
+  // bundle's project.havantechno.json, the autosave under 'havantechno.autosave') are still read; everything is written
+  // under the new name.
+  var OLD_APP = 'havantechno', OLD_EXT = '.havantechno.json', OLD_AUTOSAVE_KEY = 'havantechno.autosave';
 
   function SD() { if (!root.SongDoc) throw new Error('Project: SongDoc is not loaded'); return root.SongDoc; }
-  function shellOf(o) { return (o && o.shell) || root.HavantechnoShell || null; }
+  function shellOf(o) { return (o && o.shell) || root.RecutShell || null; }
   function fn(obj, name) { return obj && typeof obj[name] === 'function'; }
   function warn(msg) { try { if (typeof console !== 'undefined' && console.warn) console.warn('[Project] ' + msg); } catch (e) {} }
   function storage() { try { return root.localStorage || null; } catch (e) { return null; } }
@@ -30,7 +35,8 @@
   // 'Guidance edit / v2' -> 'Guidance edit - v2' (safe on every file system)
   function fileName(name) {
     var base = String(name || 'song').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' - ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'song';
-    return /\.havantechno\.json$/i.test(base) ? base : base + EXT;
+    base = base.replace(/\.havantechno\.json$/i, '') || 'song';
+    return /\.recut\.json$/i.test(base) ? base : base + EXT;
   }
 
   function serialize(doc) {
@@ -39,14 +45,14 @@
   }
   function parse(json) {
     var o = typeof json === 'string' ? JSON.parse(json) : json;
-    if (!o || typeof o !== 'object') throw new Error('Project: not a Havantechno project');
-    if (o.app === APP) {
+    if (!o || typeof o !== 'object') throw new Error('Project: not a Recut project');
+    if (o.app === APP || o.app === OLD_APP) {
       if (o.format !== FORMAT) throw new Error('Project: unsupported file format ' + o.format);
       if (!o.song) throw new Error('Project: the file has no song');
       return SD().load(o.song);
     }
     if (o.v === 1 && o.tracks) return SD().load(o);
-    throw new Error('Project: not a Havantechno project');
+    throw new Error('Project: not a Recut project');
   }
   // when the file was saved, or null
   function savedAt(json) {
@@ -70,7 +76,7 @@
       try {
         var text = serialize(doc), name = fileName(o.name || (doc && doc.name)), sh = shellOf(o);
         if (fn(sh, 'saveFile')) {
-          asPromise(sh.saveFile({ name: name, text: text, filters: [{ name: 'Havantechno project', extensions: ['json'] }] })).then(function (r) {
+          asPromise(sh.saveFile({ name: name, text: text, filters: [{ name: 'Recut project', extensions: ['json'] }] })).then(function (r) {
             if (r == null || r === false || (r && r.canceled)) { resolve(null); return; }      // the user cancelled the dialog
             var path = typeof r === 'string' ? r : (r.path || r.filePath || null);
             resolve({ name: path ? String(path).split(/[\\/]/).pop() : name, path: path });
@@ -124,7 +130,7 @@
     o = o || {};
     var sh = shellOf(o), p, filePath = null;
     if (fn(sh, 'openFile')) {
-      p = asPromise(sh.openFile({ filters: [{ name: 'Havantechno project', extensions: ['json'] }] })).then(function (r) {
+      p = asPromise(sh.openFile({ filters: [{ name: 'Recut project', extensions: ['json'] }] })).then(function (r) {
         if (r == null || r === false || (r && r.canceled)) return null;
         if (typeof r === 'string') return r;
         if (typeof r.text === 'string') { filePath = r.path || null; return r.text; }
@@ -161,7 +167,7 @@
 
   // pick several files or a whole folder (A4: "Sampler track from folder...", "Import SFZ..."). o: {shell, directory,
   // multiple, accept}. The web resolves [File] (folder picks carry webkitRelativePath); Electron resolves the shell's
-  // [{name, path, bytes, relativePath}] through HavantechnoShell.openFiles({directory, multiple, filters, binary}) when
+  // [{name, path, bytes, relativePath}] through RecutShell.openFiles({directory, multiple, filters, binary}) when
   // A6 provides it, else openFile({multiple, directory, ...}) if that returns an array, else one file. null on cancel.
   function pickFiles(o) {
     o = o || {};
@@ -236,10 +242,10 @@
   // ------------------------------------------------------------ import a track (Dubplate Crew, D1)
   // o: {file, stems, shell, host, onProgress, signal, name, model, matchLevel, maxSeconds (the classifier's excerpt,
   // default 30)}. signal (an AbortSignal) is checked between stages and right before the save; when aborted the call
-  // rejects with an error named 'AbortError', saves nothing, calls HavantechnoShell.cancelSeparate() during a
+  // rejects with an error named 'AbortError', saves nothing, calls RecutShell.cancelSeparate() during a
   // separation, and the host gets back the document it had (as on any other failure). file: as host.loadAudio takes (a File, the
   // shell's {name, path, bytes}, bytes, a URL). stems: [{name, source}] or [File] (names read from the file names:
-  // drums, bass, other, vocals). Without stems, Electron's HavantechnoShell.separate(path) splits the file when the
+  // drums, bass, other, vocals). Without stems, Electron's RecutShell.separate(path) splits the file when the
   // shell has it; else the analysis reads the mix in bands. Then: a new document, the file as its reference (offset =
   // the first downbeat), host.analyze, a level match over at most 32 bars (o.matchLevel !== false and the context can
   // render), and Project.save at once. Resolves {doc, saved: {name, path?} | null (cancelled), analysis, level}.
@@ -404,11 +410,11 @@
     used[n.toLowerCase()] = true;
     return n;
   }
-  // Electron: a project folder (chosen with pickDirectory) holding project.havantechno.json and audio/ with every file
+  // Electron: a project folder (chosen with pickDirectory) holding project.recut.json and audio/ with every file
   // of doc.audio copied in (copyFile from its path, absolute or relative to o.base / the folder the project was opened
   // from; a file with no readable path is written as a 32-bit float WAV of its decoded audio), the bundle's document
   // pointing at audio/<file> (paths relative to the project file) with a content hash per file (doc.audio[id].hash,
-  // listed by Project.missing for a locate-missing flow), so the folder opens on another machine. audio/ needs HavantechnoShell.makeDirectory; without
+  // listed by Project.missing for a locate-missing flow), so the folder opens on another machine. audio/ needs RecutShell.makeDirectory; without
   // it the files go beside the document. The live document is not changed. Web: the document alone through save(); the
   // audio is relinked by file name when the files are added again (the existing flow). Resolves {path, dir, files,
   // missing, flat} (web: {path: null, name, missing}), null on cancel.
@@ -464,7 +470,7 @@
       });
     });
   }
-  // Electron: a folder chosen with pickDirectory, its project.havantechno.json read with readText and loaded into
+  // Electron: a folder chosen with pickDirectory, its project.recut.json read with readText and loaded into
   // o.host with the folder as the base for audio/ paths; when the folder has no such file (or the shell cannot read
   // it) the open dialog is shown instead (open()). Web: open() (the document; missing audio relinks by name).
   // Resolves the document (after the host's audio reload when o.host is given), null on cancel.
@@ -475,6 +481,9 @@
     return asPromise(sh.pickDirectory({ title: 'Open a project folder' })).then(function (dir) {
       if (!dir) return null;
       return asPromise(sh.readText(join(sh, dir, BUNDLE_FILE), {})).then(null, function () { return null; }).then(function (text) {
+        if (text != null) return text;
+        return asPromise(sh.readText(join(sh, dir, 'project' + OLD_EXT), {})).then(null, function () { return null; });   // a folder saved under the old name
+      }).then(function (text) {
         if (text == null) return open(o);
         var doc = parse(text), host = o.host;
         lastBase = dir;
@@ -500,7 +509,7 @@
   }
   function restore() {
     var ls = storage(), text = null;
-    if (ls) { try { text = ls.getItem(AUTOSAVE_KEY); } catch (e) { text = null; } }
+    if (ls) { try { text = ls.getItem(AUTOSAVE_KEY) || ls.getItem(OLD_AUTOSAVE_KEY); } catch (e) { text = null; } }
     if (!text) return null;
     try { return parse(text); } catch (e) { warn('restore: ' + (e && e.message)); return null; }
   }
@@ -514,7 +523,7 @@
     }, function () { return restore(); });
   }
   function clearAutosave(o) {
-    var ls = storage(); if (ls) { try { ls.removeItem(AUTOSAVE_KEY); } catch (e) {} }
+    var ls = storage(); if (ls) { try { ls.removeItem(AUTOSAVE_KEY); ls.removeItem(OLD_AUTOSAVE_KEY); } catch (e) {} }
     var sh = shellOf(o); if (fn(sh, 'writeAppData')) { try { var r = sh.writeAppData(AUTOSAVE_FILE, ''); if (r && r.catch) r.catch(function () {}); } catch (e) {} }
   }
   // the folder the shell keeps app data in (Electron), or null

@@ -1,4 +1,4 @@
-/* Havantechno solo pages (app/solo/*.html): the shared framework. Global `Solo`.
+/* Recut solo pages (app/solo/*.html): the shared framework. Global `Solo`.
  *
  *   Solo.boot(opts) -> api        one call per page, after the engine and panel scripts
  *   Solo.parse(line) -> cells     note tokens for stored patterns (below)

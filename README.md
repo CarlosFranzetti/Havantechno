@@ -1,10 +1,14 @@
-# Havantechno
+# Recut
 
-Havantechno is a music program that takes a record apart and builds it again with its own instruments. You give it a
+Recut is a music program that takes a record apart and builds it again with its own instruments. You give it a
 song; it separates the song into parts (drums, bass, the rest), guesses what made each sound, and sets up a project in
 which its own drum machines, synths and sampler play those parts. You then edit, mix and export the result. It runs in
 a web browser (Chrome or Edge) and as a desktop app built with Electron. It is written for the owner and a few friends,
 not for sale. The code is in `app/`.
+
+Recut was called Havantechno until 27 November 2026. The instruments keep the Havantechno mark and their HVT model
+names, and the repository keeps its name for now. Projects, presets and patterns saved under the old name still open;
+new files are written as `<name>.recut.json`.
 
 Five of its instruments also exist as **single pages** that play on their own in a browser, on a computer or a phone:
 the HVT-303 bass line synth, the HVT-D mono synth, the HVT-106 poly synth, and the HVT-808 and HVT-909 drum machines.
@@ -238,7 +242,7 @@ agents is **the Soundsystem**. Everything is in `docs/research/`, with a README 
 
 ## Licence
 
-Havantechno is licensed under the GNU Affero General Public License, version 3 or later (`LICENSE`). Some material is
+Recut is licensed under the GNU Affero General Public License, version 3 or later (`LICENSE`). Some material is
 not under that licence, or came from elsewhere; `THIRD_PARTY.md` lists each piece. In short:
 
 - **The Rob Roy TR-909 sample set** (`app/assets/tr909-robroy/`): its own terms (free to copy, not to be changed, not for profit). Leave it out of any commercial release.

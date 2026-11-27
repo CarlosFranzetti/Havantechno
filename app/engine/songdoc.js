@@ -1,4 +1,4 @@
-/* Havantechno app engine - songdoc.js
+/* Recut app engine - songdoc.js
  * Global `SongDoc`: the song as one editable, saveable document, with a record per step.
  *
  *   var doc = SongDoc.fromLegacy(Song.GUIDANCE);      // strings -> cells

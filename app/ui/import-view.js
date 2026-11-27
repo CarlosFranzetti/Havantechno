@@ -3,7 +3,7 @@
  * Editor's band classes se-band, se-bandl, se-area, se-ph so it lines up with the section ruler).
  *
  *   ImportView.importTrack(host, {shell, toast, onDone(result)}) -> Promise<result|null>
- *       pick an audio file (Project.pickAudio), optionally stems (Electron: HavantechnoShell.separate; browser: drop or
+ *       pick an audio file (Project.pickAudio), optionally stems (Electron: RecutShell.separate; browser: drop or
  *       pick stem files, or skip), then Project.importTrack({file, stems, shell, host, onProgress, signal}) with staged
  *       progress and a cancel that restores the document as it was before the import.
  *   ImportView.mount(el, host, {onClose}) -> {el, update(), refresh(), dispose()}      the report view
@@ -63,7 +63,7 @@
 
   // ------------------------------------------------------------------ availability (one place for every reason)
   function availability(host, shell) {
-    var P = root.Project, sh = shell !== undefined ? shell : (root.HavantechnoShell || null), h = host || {};
+    var P = root.Project, sh = shell !== undefined ? shell : (root.RecutShell || null), h = host || {};
     function a(ok, why) { return { ok: !!ok, why: ok ? '' : why }; }
     return {
       pickAudio: a(P && isFn(P.pickAudio), 'No audio file picker: Project.pickAudio is missing.'),
@@ -597,7 +597,7 @@
 
   function importTrack(host, o) {
     o = o || {};
-    var shell = o.shell !== undefined ? o.shell : (root.HavantechnoShell || null);
+    var shell = o.shell !== undefined ? o.shell : (root.RecutShell || null);
     function toast(t, ms) { if (isFn(o.toast)) o.toast(t, ms); }
     var av = availability(host);
     if (active) { toast('An import is already running.'); if (active.focus) active.focus(); return Promise.resolve(null); }

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Havantechno - processors-check.js (A8)
+/* Recut - processors-check.js (A8)
  * Node check for app/engine/processors.js with a fake AudioContext. Run: node tools/processors-check.js
  *
  * The fake context is not copied: the section "fake Web Audio" of app/engine/selfcheck.js is read and run here.

@@ -65,7 +65,7 @@ function checkArgs(script, model) { return ['-u', script, '--check', '--model', 
 // ------------------------------------------------------------------ Python
 function pythonCandidates(env, platform) {
   var list = [];
-  if (env && env.HAVANTECHNO_PYTHON) list.push(env.HAVANTECHNO_PYTHON);
+  if (env && env.RECUT_PYTHON) list.push(env.RECUT_PYTHON);
   if (platform === 'win32') list.push('py', 'python', 'python3');
   else list.push('python3', 'python');
   return list;
@@ -125,7 +125,7 @@ function mapFailure(r, model, py) {
     return fail('packages-missing', 'Python package missing: ' + top + '. Install with: ' + installCommand(py, [top]));
   }
   if (/hash [0-9a-f]+ does not match|is not the Zenodo original/.test(text)) {
-    return fail('weights-bad', 'A downloaded MDX-Net model file failed its checksum (' + last + '). Delete the .onnx files in ~/.cache/havantechno/models (or $HAVANTECHNO_MODELS) and run again.');
+    return fail('weights-bad', 'A downloaded MDX-Net model file failed its checksum (' + last + '). Delete the .onnx files in ~/.cache/recut/models (or $RECUT_MODELS) and run again.');
   }
   if (NET.test(text) || (r.code === 3 && /demucs failed/.test(text))) {
     var host = /fbaipublicfiles/.test(text) || model === 'htdemucs' ? 'dl.fbaipublicfiles.com (HT-Demucs weights)' : /downloading kuielab|githubusercontent|github\.com/i.test(text) || model === 'mdx' ? 'github.com (MDX-Net model files from TRvlvr/model_repo)' : 'dl.fbaipublicfiles.com or github.com';

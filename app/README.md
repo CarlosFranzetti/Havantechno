@@ -1,6 +1,6 @@
 # app/
 
-The next Havantechno: a desktop DAW (Electron shell) built on the Web Audio engine from the archived studio. The same `app/index.html` runs in a browser and in Electron. The plan is `docs/plans/2026-10-23-desktop-build-plan.md`; the decisions behind it are in `prd.md` section 6b; the module contract is `app/CONTRACT.md`.
+The next Recut: a desktop DAW (Electron shell) built on the Web Audio engine from the archived studio. The same `app/index.html` runs in a browser and in Electron. The plan is `docs/plans/2026-10-23-desktop-build-plan.md`; the decisions behind it are in `prd.md` section 6b; the module contract is `app/CONTRACT.md`.
 
 ## Where it stands (27 November 2026)
 
@@ -65,7 +65,7 @@ Open `http://localhost:8000/app/index.html`. Click "Start audio": browsers start
 - Space plays and pauses. Four views: System Editor, Step View, Mixer, Sections. Tab switches within a pair (System Editor and Step View, or Mixer and Sections); Alt+1..4 and Ctrl/Cmd+1..4 pick one. Ctrl/Cmd+comma opens Settings, Ctrl/Cmd+Shift+E opens Export.
 - The instrument pages are at `http://localhost:8000/app/solo/303.html` (and `d.html`, `106.html`, `808.html`, `909.html`).
 - V hides or shows the device windows. Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redoes.
-- Ctrl/Cmd+S saves a `<name>.havantechno.json` file (a download on the web). Ctrl/Cmd+O opens one (a file picker on the web). The browser autosaves to localStorage.
+- Ctrl/Cmd+S saves a `<name>.recut.json` file (a download on the web). Ctrl/Cmd+O opens one (a file picker on the web). The browser autosaves to localStorage.
 
 ## Run the desktop app
 
@@ -75,7 +75,7 @@ npm install
 npm start                      # electron . with shell/main.js
 ```
 
-`npm start` loads the same `index.html` through the `havantechno://app/` scheme. Set `HAVANTECHNO_URL=http://localhost:8000/app/index.html` before `npm start` to load the dev server instead. Device windows are real child windows there. `window.HavantechnoShell` exists only in Electron (`shell/preload.js`).
+`npm start` loads the same `index.html` through the `recut://app/` scheme. Set `RECUT_URL=http://localhost:8000/app/index.html` before `npm start` to load the dev server instead. Device windows are real child windows there. `window.RecutShell` exists only in Electron (`shell/preload.js`).
 
 Electron 45.0.0 has been run on Linux under Xvfb by A6 (log-A6.md, wave 2 parts 2 to 4): child windows, retargeting, bypass, `readFile`, `pathForFile`. It has not been run on macOS or Windows. On 2026-11-09 A6 also ran `shell.readText` and `shell.openFiles` under Xvfb, with the native dialog stubbed in the main process (log-A6.md, batches 1 and 2).
 
@@ -289,7 +289,7 @@ One line per module, from `app/CONTRACT.md`:
 | `solo/solo.js`, `solo/*.js`, `solo/*.html` | `Solo.boot(opts)`: the instrument pages' framework (W2; `sections` option for the machine pages); the pages (W2, W3). |
 | `ui/app.js` | Frame, control bar, view switch, keys, the start gate, open, save, export, relink. |
 | `index.html` | Page skeleton and the script load order. |
-| `shell/main.js`, `shell/preload.js` | Electron main process and the `HavantechnoShell` bridge (dialogs, `readFile`, `readText`, `openFiles`, `pathForFile`, device windows). |
+| `shell/main.js`, `shell/preload.js` | Electron main process and the `RecutShell` bridge (dialogs, `readFile`, `readText`, `openFiles`, `pathForFile`, device windows). |
 | `package.json` | Scripts `start` and `web`; `electron` 45.0.0 as a dev dependency. |
 | `tools/serve.js` | Static server for the repo root with COOP and COEP headers. |
 | `tools/browser-check.js` | Headless Chromium smoke test of the web app. |
