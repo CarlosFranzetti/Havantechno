@@ -198,3 +198,37 @@ Rulings given to agents in messages are written into the coordinator's log at th
 Listen to the Render Room (nobody has listened to anything). HVT-D note priority: last-note as built or low-note as on the hardware. Dry recordings or panel photos of a 303, Model D or Juno if available. Files for the Crate Crew's picks. GitHub default branch to main. Earlier items stand.
 
 <!-- next dump goes here -->
+
+## Dump 7 at 2026-11-27 02:25 EST (2026-11-27 07:25 UTC)
+
+Owner updates since Dump 6: "Let's workshop a new name"; "Let's focus on the 303"; a request for step-by-step setup help (the README quick start was rewritten; how to install and check Node and Git); the research request of 21 November (stem separation, how iZotope RX works, open engines, chips and schematics, open emulations, a better detection engine, synths closer to Arturia's methods); the request of 26 November (a PDF of what was said, the list of what the owner must supply, the questions again as multiple choice, a web page per instrument with a step sequencer and presets, version 0.2 with save and load, audio import and export and compiled downloads, version 0.3 with VST and AU hosting, several views, settings, memory.md, prd.md, future.md, README); the answers to the questions; three zip files of 909 samples and ROM images with "include the samples as well as a loading option"; "Same goes for the artifact 909 samples loaded"; "Continue".
+
+### Repo
+
+`CarlosFranzetti/Havantechno`, branch main, last verified commit at this dump: the Selector Crew's brief (72b31bf). GitHub's default branch is still an old `claude/` branch. AassMaster is not touched. Commit trailers carry no model name.
+
+### Built since Dump 6
+
+- **Dubplate Crew (batch 4), done:** import of a track with separation and analysis into a project, a reference lane, A/B with level match (`app/engine/importer.js`, `Project.importTrack`, `app/ui/import-view.js`).
+- **The 303, second round:** a bench (`tools/tb303-bench.js`) and corrections to the accent network, feedback, slide and gate; a three-band panel layout; a playable page.
+- **Research round of 21 November:** Stem Crew and Circuit Crew reports; `docs/plans/2026-11-21-strategy.md` (stages A to D).
+- **Showroom Crew:** a page per instrument under `app/solo/` on one framework (`solo.js`), step sequencers on all five panels, a presets engine (`app/engine/presets.js`: patches, kits, patterns, copy and paste as text), a bundler for publishing (`tools/solo-bundle.js`). Five pages published for the owner.
+- **Pressing Crew, version 0.2.0:** audio export (mix, stems, chosen tracks; bit depths; sample rates), audio tracks and clips, project bundles, Mixer and Sections views, Settings, an export dialog; electron-builder packaging and a GitHub workflow (never run); the HVT-D's note priority; the Juno's bucket-brigade chorus; the 909's accent fixed; the Rob Roy sampled 909 (`app/engine/sampled909.js`, `app/assets/tr909-robroy/`); ROM-driven hats and cymbals (`Drums.loadRom`), an asset manifest and `Assets.ready`; a source switch on the 909's panel; the mid-song render mismatch traced to frame rounding and one random stream, and fixed. Research for 0.3 (plug-in hosting: a separate native process slaved to the audio clock).
+- **Renamed to Recut on 27 November** (the owner's choice): the app's title, bridge (`RecutShell`), file formats (`.recut.json`), scheme and application id; Havantechno stays as the maker's mark on the instruments and as the repository's name; files written under the old name still open.
+- **Documents:** memory.md rewritten as a living file, prd.md sections 4e and 6d, future.md, README rewritten for the owner, a transcript PDF delivered on 26 November.
+
+### Checks at this dump (coordinator's runs, exit 0 unless noted)
+
+selfcheck 475, analysis 26, browser 30, classics 131, drums 372, export 51, faces 2499, import-view 122, importer 20, panels 202, presets 1908, processors 92, rom909 12, sampled909 116, shell-files 227, shell-separate 92, solo 151, step-view 72, synths 169, system-editor 105, views 144, widgets 157; drums-score exit 1 (86/19).
+
+### In flight
+
+Selector Crew (`docs/research/2026-11-27-selector-crew/BRIEF.md`): T1 the separator's float output and residual, T2 oversampling and seeded variance in the Juno and a tuning row on the 303, T3 fitting by synthesis on the app's own solo renders. A scribe is writing the reports of the Dubplate, Showroom and Pressing crews from their records.
+
+### Rules added
+
+The ROM images and the unlicensed sample pack stay in the git-ignored `local/` folder until the owner says the repository is private; `app/assets/tr909-robroy/` is never modified. Published pages are private to the owner; the 909 page carries the samples and the ROM images, so sharing it shares them. The session may not start a GitHub build by a route around a refusal: the first build run is the owner's to start.
+
+### Open with the owner
+
+Make the repository private (then the ROM images are committed); set the default branch to `main`; start the first build (Actions, build, Run workflow, or the tag `v0.2.0`); upload again the Guidance recording and the three Roland manuals; recordings of real units and panel photos if available; a list of VST and AU plug-ins wanted; listen to the five pages and the Render Room.
